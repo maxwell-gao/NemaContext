@@ -1,0 +1,24 @@
+[project]
+name = "nemacontext"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+"torch>=2.0.0",
+    "scanpy",
+    "anndata",
+    "geoopt",
+    "torch-geometric",
+    "torchsde",
+    "pandas",
+    "scipy",
+
+]
+
+[tool.uv]
+dev-dependencies = [
+    "ipykernel",
+    "matplotlib",
+    "seaborn",
+]
