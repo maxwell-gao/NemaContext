@@ -1,11 +1,11 @@
 [project]
 name = "nemacontext"
 version = "0.1.0"
-description = "Add your description here"
+description = "Modeling C. elegans Development as Token Tree Generation"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
-"torch>=2.0.0",
+    "torch>=2.0.0",
     "scanpy",
     "anndata",
     "geoopt",
@@ -13,7 +13,8 @@ dependencies = [
     "torchsde",
     "pandas",
     "scipy",
-
+    "requests",
+    "tqdm",
 ]
 
 [tool.uv]
@@ -21,4 +22,12 @@ dev-dependencies = [
     "ipykernel",
     "matplotlib",
     "seaborn",
+    "pytest",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
