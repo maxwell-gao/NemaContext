@@ -13,7 +13,6 @@ Usage:
 """
 
 import gzip
-from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -199,7 +198,7 @@ def analyze_wormguides_matching(df: pd.DataFrame, wg_cells: set[str]) -> None:
         print("   Run: uv run python -m src.data.downloader --source wormguides")
         return
 
-    print(f"\n📍 WormGUIDES spatial data:")
+    print("\n📍 WormGUIDES spatial data:")
     print(f"   Unique cell names: {len(wg_cells):,}")
 
     # Get cell types from Large 2025
@@ -207,12 +206,12 @@ def analyze_wormguides_matching(df: pd.DataFrame, wg_cells: set[str]) -> None:
 
     # Direct matching by cell type name
     direct_matches = set(cell_types) & wg_cells
-    print(f"\n📊 Direct cell type → WormGUIDES matching:")
+    print("\n📊 Direct cell type → WormGUIDES matching:")
     print(f"   Large 2025 cell types: {len(cell_types)}")
     print(f"   Direct matches: {len(direct_matches)}")
 
     if direct_matches:
-        print(f"\n   Sample matched cell types:")
+        print("\n   Sample matched cell types:")
         for ct in sorted(direct_matches)[:15]:
             count = (df["cell_type"] == ct).sum()
             print(f"     {ct}: {count:,} cells")
@@ -229,7 +228,7 @@ def analyze_wormguides_matching(df: pd.DataFrame, wg_cells: set[str]) -> None:
 
         lineage_matches = clean_lineages & wg_cells
 
-        print(f"\n📊 Clean lineage → WormGUIDES matching:")
+        print("\n📊 Clean lineage → WormGUIDES matching:")
         print(f"   Clean lineages in Large 2025: {len(clean_lineages)}")
         print(f"   Matched to WormGUIDES: {len(lineage_matches)}")
         print(f"   Match rate: {100 * len(lineage_matches) / len(clean_lineages):.1f}%")
@@ -239,7 +238,7 @@ def analyze_wormguides_matching(df: pd.DataFrame, wg_cells: set[str]) -> None:
         print(f"\n   Cells with matched lineage: {len(matched_cells):,}")
 
         if lineage_matches:
-            print(f"\n   Sample matched lineages:")
+            print("\n   Sample matched lineages:")
             for ling in sorted(lineage_matches)[:15]:
                 count = (lin == ling).sum()
                 print(f"     {ling}: {count:,} cells")
@@ -258,7 +257,7 @@ def analyze_time_coverage(df: pd.DataFrame) -> None:
 
     time = df[time_col].dropna()
 
-    print(f"\n📊 Time distribution (minutes post-fertilization):")
+    print("\n📊 Time distribution (minutes post-fertilization):")
     print(f"   Min: {time.min():.1f}")
     print(f"   Max: {time.max():.1f}")
     print(f"   Mean: {time.mean():.1f}")
