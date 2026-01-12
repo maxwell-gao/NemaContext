@@ -23,7 +23,7 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from typing import Dict, List, Optional, Tuple
+from typing import List
 
 import numpy as np
 
@@ -333,7 +333,7 @@ def analyze_embeddings(
     print("\n=== Embedding Analysis ===")
     print(f"Embedding dimension: {embeddings.shape[1]}")
     print(f"Number of cells: {N}")
-    print(f"\nCorrelation between embedding distance and:")
+    print("\nCorrelation between embedding distance and:")
     print(f"  - Lineage distance: {corr_lineage:.3f}")
     print(f"  - Spatial distance: {corr_spatial:.3f}")
 

@@ -90,7 +90,7 @@ class WormGUIDESDownloader(BaseDownloader):
         timepoints = list(range(start_tp, end_tp + 1, step))
         total = len(timepoints)
 
-        print(f"\n📍 Downloading nuclei 4D position files...")
+        print("\n📍 Downloading nuclei 4D position files...")
         print(
             f"   Timepoints: {start_tp} to {end_tp} (step={step}, total={total} files)"
         )

@@ -11,7 +11,6 @@ The data can be used for:
 - Developmental trajectory analysis
 """
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple

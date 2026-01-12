@@ -13,12 +13,11 @@ spatial context (what cells are nearby) rather than absolute position.
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .spatial import CellPosition, SpatialDataParser, compute_cell_distances
+from .spatial import SpatialDataParser, compute_cell_distances
 
 
 @dataclass
