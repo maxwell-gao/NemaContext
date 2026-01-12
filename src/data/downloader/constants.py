@@ -15,6 +15,45 @@ DEFAULT_MIN_FILE_SIZE = 100  # bytes
 DOWNLOAD_CHUNK_SIZE = 8192
 
 # =============================================================================
+# Large et al. 2025 (GSE292756) - Lineage-Resolved Embryo Atlas
+# =============================================================================
+# Science 2025, PMID: 40536976
+# This is the RECOMMENDED dataset for transcriptome-spatial-lineage integration.
+# Supersedes Packer et al. 2019 with improved lineage annotations.
+
+LARGE2025_SUBDIR = "large2025"
+LARGE2025_TIMEOUT = 300  # Large files, need longer timeout
+
+LARGE2025_FILES = {
+    "expression_matrix": {
+        "filename": "GSE292756_expression_matrix.mtx.gz",
+        "url": "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE292756&format=file&file=GSE292756%5Fexpression%5Fmatrix%2Emtx%2Egz",
+        "description": "Expression matrix in MTX format (~1.1 GB) - C. elegans + C. briggsae",
+    },
+    "cell_annotations": {
+        "filename": "GSE292756_cell_annotations.csv.gz",
+        "url": "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE292756&format=file&file=GSE292756%5Fcell%5Fannotations%2Ecsv%2Egz",
+        "description": "Cell annotations with lineage-resolved cell types (~11.7 MB)",
+    },
+    "gene_annotations": {
+        "filename": "GSE292756_gene_annotations.csv.gz",
+        "url": "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE292756&format=file&file=GSE292756%5Fgene%5Fannotations%2Ecsv%2Egz",
+        "description": "Gene annotations (~364 KB)",
+    },
+}
+
+# Additional resources (not downloaded, for reference)
+LARGE2025_RESOURCES = {
+    "github": "https://github.com/livinlrg/C.elegans_C.briggsae_Embryo_Single_Cell",
+    "shiny_app": "https://cello.shinyapps.io/cel_cbr_embryo_single_cell/",
+    "gexplore": "https://genome.science.sfu.ca/gexplore",
+    "dryad": "https://doi.org/10.5061/dryad.1rn8pk15n",
+    "zenodo": "https://doi.org/10.5281/zenodo.15091632",
+    "paper_doi": "10.1126/science.adu8249",
+    "pmid": "40536976",
+}
+
+# =============================================================================
 # Packer et al. 2019 (GSE126954) - Single-cell Transcriptomics
 # =============================================================================
 
@@ -230,7 +269,8 @@ SULSTON_DIVISION_TIMES = {
 # =============================================================================
 
 MESSAGES = {
-    "packer_header": "📊 Packer et al. 2019 - Single-cell Transcriptomics",
+    "large2025_header": "🧬 Large et al. 2025 - Lineage-Resolved Embryo Atlas (RECOMMENDED)",
+    "packer_header": "📊 Packer et al. 2019 - Single-cell Transcriptomics (Legacy)",
     "openworm_header": "🧠 OpenWorm/c302 - Connectome & Neuron Data",
     "wormbase_header": "🌳 WormBase - Lineage Tree Data",
     "wormguides_header": "🔬 WormGUIDES - 4D Embryo & Cell Data",

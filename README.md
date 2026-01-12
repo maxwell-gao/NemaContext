@@ -2,6 +2,8 @@
 
 **NemaContext** is a machine learning framework that models the complete developmental trajectory of *Caenorhabditis elegans* — from a single fertilized egg to a 959-cell adult — by treating **each cell as a token** and development as a **binary tree generation process**.
 
+> 🆕 **Update**: Now using **Large et al. 2025** (GSE292756) as the primary transcriptome dataset with lineage-resolved annotations for >425,000 cells!
+
 ---
 
 ## 🧬 Core Paradigm: Cell as Token
@@ -60,14 +62,21 @@ Each cell-token is encoded by three modalities:
 
 #### 2. Single-Cell Transcriptomics (Token State)
 
-| Dataset | Cells | Time Range | Features |
-|---------|-------|------------|----------|
-| **Packer et al. 2019** (GSE126954) | ~86,000 | 100-650 min (embryo) | Lineage annotations |
-| **Cao et al. 2017** (sci-RNA-seq) | ~50,000 | L2 larva | Whole-body coverage |
-| **Taylor et al. 2021** (CeNGEN) | ~100,000 | Adult | Neuron-focused, fine cell types |
-| **Ben-David et al. 2021** | Multi-stage | Full lifespan | Embryo to adult |
+| Dataset | Cells | Time Range | Features | Status |
+|---------|-------|------------|----------|--------|
+| **🌟 Large et al. 2025** (GSE292756) | ~425,000 | 120-600 min | **Lineage-resolved**, C. elegans + C. briggsae | **RECOMMENDED** |
+| **Packer et al. 2019** (GSE126954) | ~86,000 | 100-650 min | Lineage annotations (10% clean) | Legacy |
+| **Taylor et al. 2021** (CeNGEN) | ~100,000 | Adult | Neuron-focused, fine cell types | Optional |
+| **Cao et al. 2017** (sci-RNA-seq) | ~50,000 | L2 larva | Whole-body coverage | Optional |
 
 **Provides**: Gene expression vectors + cell identity labels
+
+**Large 2025 Key Advantages**:
+- 2.8x more C. elegans cells than Packer 2019
+- **Direct cell-to-lineage mapping** (vs ~10% clean annotations in Packer)
+- 152 annotated cell types with 429 progenitor/terminal classifications
+- Cross-species comparison with C. briggsae data
+- 98.4% lineage match rate to WormGUIDES spatial data
 
 #### 3. 3D Spatial Coordinates (Token Relationships)
 
@@ -111,8 +120,10 @@ WormGUIDES        ──┘    Bridge between datasets
 
 ### Phase 1: Data Engineering & Backbone (Current)
 
-- [x] **Automated Downloader**: Fetch Packer et al. (2019) from GEO
-- [ ] **WormGUIDES Integration**: Download and parse 4D spatial coordinates
+- [x] **Automated Downloader**: Fetch Large et al. (2025) from GEO (recommended)
+- [x] **Legacy Support**: Packer et al. (2019) also available
+- [x] **WormGUIDES Integration**: Download and parse 4D spatial coordinates (360 timepoints)
+- [x] **WormBase Lineage**: Generate lineage tree, timing, and fate data
 - [ ] **Lineage Parser**: Convert cell names (e.g., `ABala`) to binary tree paths
 - [ ] **AnnData Construction**: Unify RNA + lineage + spatial into `.h5ad`
 
@@ -177,8 +188,19 @@ NemaContext/
 # Initialize environment
 uv sync
 
-# Download datasets
-uv run python -m src.data.downloader
+# Download core datasets (Large 2025 + WormGUIDES + WormBase)
+uv run python -m src.data.downloader --source core
+
+# Or download all datasets including connectome
+uv run python -m src.data.downloader --source all
+
+# Download specific datasets
+uv run python -m src.data.downloader --source large2025   # Transcriptome (recommended)
+uv run python -m src.data.downloader --source wormguides  # Spatial coordinates
+uv run python -m src.data.downloader --source packer      # Legacy transcriptome
+
+# Analyze Large 2025 dataset
+uv run python examples/analyze_large2025.py
 
 # Process and integrate data
 uv run python -m src.data.processor
@@ -193,11 +215,12 @@ uv run python -m experiments.train
 
 ### Core Datasets
 
-1. **Packer, J. S., et al. (2019).** A lineage-resolved molecular atlas of *C. elegans* embryogenesis at single-cell resolution. *Science*.
-2. **Sulston, J. E., et al. (1983).** The embryonic cell lineage of the nematode *Caenorhabditis elegans*. *Developmental Biology*.
-3. **Bao, Z., et al. (2006).** Automated cell lineage tracing in *Caenorhabditis elegans*. *PNAS*.
-4. **Taylor, S. R., et al. (2021).** Molecular topography of an entire nervous system. *Cell* (CeNGEN).
-5. **Cao, J., et al. (2017).** Comprehensive single-cell transcriptional profiling of a multicellular organism. *Science*.
+1. **Large, C. R. L., et al. (2025).** Lineage-resolved analysis of embryonic gene expression evolution in *C. elegans* and *C. briggsae*. *Science* 388:eadu8249. DOI: 10.1126/science.adu8249
+2. **Packer, J. S., et al. (2019).** A lineage-resolved molecular atlas of *C. elegans* embryogenesis at single-cell resolution. *Science*.
+3. **Sulston, J. E., et al. (1983).** The embryonic cell lineage of the nematode *Caenorhabditis elegans*. *Developmental Biology*.
+4. **Bao, Z., et al. (2006).** Automated cell lineage tracing in *Caenorhabditis elegans*. *PNAS*.
+5. **Taylor, S. R., et al. (2021).** Molecular topography of an entire nervous system. *Cell* (CeNGEN).
+6. **Cao, J., et al. (2017).** Comprehensive single-cell transcriptional profiling of a multicellular organism. *Science*.
 
 ### Methods
 
