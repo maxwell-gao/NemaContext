@@ -30,6 +30,7 @@ class BaseDownloader(ABC):
         subdir: str | None = None,
         timeout: int = DEFAULT_TIMEOUT,
         min_size: int = DEFAULT_MIN_FILE_SIZE,
+        verbose: bool = True,
     ) -> bool:
         """
         Download a file with progress bar.
@@ -40,6 +41,7 @@ class BaseDownloader(ABC):
             subdir: Optional subdirectory within data_dir
             timeout: Request timeout in seconds
             min_size: Minimum file size to consider valid (bytes)
+            verbose: Whether to print status messages
 
         Returns:
             True if download successful, False otherwise
@@ -54,10 +56,12 @@ class BaseDownloader(ABC):
 
         # Skip if file already exists and is valid
         if save_path.exists() and save_path.stat().st_size > min_size:
-            print(f"✅ {filename} already exists. Skipping...")
+            if verbose:
+                print(f"✅ {filename} already exists. Skipping...")
             return True
 
-        print(f"🚀 Downloading {filename}...")
+        if verbose:
+            print(f"🚀 Downloading {filename}...")
 
         try:
             response = requests.get(url, stream=True, timeout=timeout)
@@ -65,25 +69,33 @@ class BaseDownloader(ABC):
 
             total_size = int(response.headers.get("content-length", 0))
 
-            with (
-                open(save_path, "wb") as f,
-                tqdm(
-                    total=total_size,
-                    unit="B",
-                    unit_scale=True,
-                    desc=filename,
-                ) as pbar,
-            ):
-                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                    if chunk:
-                        f.write(chunk)
-                        pbar.update(len(chunk))
+            if verbose:
+                with (
+                    open(save_path, "wb") as f,
+                    tqdm(
+                        total=total_size,
+                        unit="B",
+                        unit_scale=True,
+                        desc=filename,
+                    ) as pbar,
+                ):
+                    for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                        if chunk:
+                            f.write(chunk)
+                            pbar.update(len(chunk))
+            else:
+                with open(save_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                        if chunk:
+                            f.write(chunk)
 
-            print(f"✅ Successfully downloaded {filename}")
+            if verbose:
+                print(f"✅ Successfully downloaded {filename}")
             return True
 
         except requests.exceptions.RequestException as e:
-            print(f"❌ Failed to download {filename}: {e}")
+            if verbose:
+                print(f"❌ Failed to download {filename}: {e}")
             if save_path.exists():
                 save_path.unlink()  # Clean up partial downloads
             return False

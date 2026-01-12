@@ -135,6 +135,21 @@ CELL_FATE_KEYWORDS = {
 WORMGUIDES_SUBDIR = "wormguides"
 WORMGUIDES_BASE_URL = "https://raw.githubusercontent.com/zhirongbaolab/WormGUIDES/master/src/application_src/application_model/data/CElegansData"
 
+# Nuclei 4D data (spatiotemporal positions)
+WORMGUIDES_NUCLEI_BASE_URL = "https://raw.githubusercontent.com/zhirongbaolab/WormGUIDES/master/src/atlas_model/data/nuclei_files"
+WORMGUIDES_TOTAL_TIMEPOINTS = 360
+WORMGUIDES_TIME_RESOLUTION_SEC = 60  # seconds per timepoint
+WORMGUIDES_START_TIME_MIN = 20  # minutes from first cleavage
+
+# Nuclei file column indices (0-based)
+NUCLEI_COL_ID = 0
+NUCLEI_COL_FLAG = 1
+NUCLEI_COL_X = 5
+NUCLEI_COL_Y = 6
+NUCLEI_COL_Z = 7
+NUCLEI_COL_DIAMETER = 8
+NUCLEI_COL_CELL_NAME = 9
+
 WORMGUIDES_FILES = {
     "anatomy": {
         "filename": "anatomy.csv",
@@ -161,6 +176,53 @@ WORMGUIDES_FILES = {
         "url_path": "AnalogousCells/EmbryonicAnalogousCells.csv",
         "description": "Embryonic analogous cells mapping",
     },
+}
+
+# =============================================================================
+# Lineage Timing Data
+# =============================================================================
+
+# Classic Sulston lineage division times (minutes after first cleavage)
+# Based on Sulston et al. 1983 and refined measurements
+SULSTON_DIVISION_TIMES = {
+    # Founder cells
+    "P0": {"birth": 0, "division": 0},
+    "AB": {"birth": 0, "division": 15},
+    "P1": {"birth": 0, "division": 20},
+    # 2-cell to 4-cell
+    "ABa": {"birth": 15, "division": 25},
+    "ABp": {"birth": 15, "division": 25},
+    "EMS": {"birth": 20, "division": 30},
+    "P2": {"birth": 20, "division": 35},
+    # 4-cell to 8-cell
+    "ABal": {"birth": 25, "division": 35},
+    "ABar": {"birth": 25, "division": 35},
+    "ABpl": {"birth": 25, "division": 35},
+    "ABpr": {"birth": 25, "division": 35},
+    "MS": {"birth": 30, "division": 45},
+    "E": {"birth": 30, "division": 50},
+    "C": {"birth": 35, "division": 50},
+    "P3": {"birth": 35, "division": 55},
+    # 8-cell to 16-cell
+    "ABala": {"birth": 35, "division": 50},
+    "ABalp": {"birth": 35, "division": 50},
+    "ABara": {"birth": 35, "division": 50},
+    "ABarp": {"birth": 35, "division": 50},
+    "ABpla": {"birth": 35, "division": 50},
+    "ABplp": {"birth": 35, "division": 50},
+    "ABpra": {"birth": 35, "division": 50},
+    "ABprp": {"birth": 35, "division": 50},
+    "MSa": {"birth": 45, "division": 60},
+    "MSp": {"birth": 45, "division": 60},
+    "Ea": {"birth": 50, "division": 90},
+    "Ep": {"birth": 50, "division": 90},
+    "Ca": {"birth": 50, "division": 65},
+    "Cp": {"birth": 50, "division": 65},
+    "D": {"birth": 55, "division": 90},
+    "P4": {"birth": 55, "division": None},  # Germline precursor, divides much later
+    # Germline
+    "Z2": {"birth": 100, "division": None},  # Post-embryonic
+    "Z3": {"birth": 100, "division": None},  # Post-embryonic
 }
 
 # =============================================================================

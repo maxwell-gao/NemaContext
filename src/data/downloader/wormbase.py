@@ -2,7 +2,7 @@
 WormBase-style lineage data downloader.
 
 Extracts lineage information from WormGUIDES partslist and generates
-structured lineage tree data.
+structured lineage tree data with timing information.
 """
 
 import json
@@ -12,9 +12,18 @@ from .base import BaseDownloader
 from .constants import (
     CELL_FATE_KEYWORDS,
     MESSAGES,
+    NUCLEI_COL_CELL_NAME,
+    NUCLEI_COL_X,
+    NUCLEI_COL_Y,
+    NUCLEI_COL_Z,
+    SULSTON_DIVISION_TIMES,
     WORMBASE_FOUNDER_CELLS,
     WORMBASE_PARTSLIST_URL,
     WORMBASE_SUBDIR,
+    WORMGUIDES_NUCLEI_BASE_URL,
+    WORMGUIDES_START_TIME_MIN,
+    WORMGUIDES_TIME_RESOLUTION_SEC,
+    WORMGUIDES_TOTAL_TIMEPOINTS,
 )
 
 
@@ -46,6 +55,7 @@ class WormBaseDownloader(BaseDownloader):
         self._generate_cell_lineage_map(save_dir, partslist_path)
         self._generate_lineage_tree(save_dir)
         self._generate_cell_fates(save_dir, partslist_path)
+        self._generate_cell_timing(save_dir)
 
     def _generate_cell_lineage_map(self, save_dir: Path, partslist_path: Path) -> None:
         """Generate cell-to-lineage mapping from partslist."""
@@ -171,6 +181,105 @@ class WormBaseDownloader(BaseDownloader):
         print(
             f"✅ Created cell_fates.json ({len(cell_fates)} fates, {total_cells} cells)"
         )
+
+    def _generate_cell_timing(self, save_dir: Path) -> None:
+        """Generate cell birth/division timing data."""
+        timing_path = save_dir / "cell_timing.json"
+        if timing_path.exists():
+            print("✅ cell_timing.json already exists. Skipping...")
+            return
+
+        print("📝 Generating cell_timing.json...")
+
+        # Start with known Sulston timing data
+        cell_timing = {}
+        for cell, times in SULSTON_DIVISION_TIMES.items():
+            cell_timing[cell] = {
+                "birth_time_min": times["birth"],
+                "division_time_min": times["division"],
+                "source": "sulston_1983",
+            }
+
+        # Try to extract additional timing from WormGUIDES nuclei data
+        # by finding first appearance of each cell
+        nuclei_timing = self._extract_nuclei_timing(save_dir)
+
+        # Merge nuclei timing (for cells not in Sulston data)
+        for cell, info in nuclei_timing.items():
+            if cell not in cell_timing:
+                cell_timing[cell] = {
+                    "birth_time_min": info["first_seen_min"],
+                    "division_time_min": None,  # Unknown from nuclei data
+                    "source": "wormguides_nuclei",
+                    "first_position": info.get("first_position"),
+                }
+
+        with open(timing_path, "w") as f:
+            json.dump(cell_timing, f, indent=2)
+
+        sulston_count = sum(
+            1 for v in cell_timing.values() if v["source"] == "sulston_1983"
+        )
+        nuclei_count = sum(
+            1 for v in cell_timing.values() if v["source"] == "wormguides_nuclei"
+        )
+        print(
+            f"✅ Created cell_timing.json ({sulston_count} from Sulston, {nuclei_count} from nuclei data)"
+        )
+
+    def _extract_nuclei_timing(self, save_dir: Path) -> dict:
+        """
+        Extract cell first-appearance timing from WormGUIDES nuclei files.
+        Downloads a subset of timepoints to find when cells first appear.
+        """
+        nuclei_timing = {}
+
+        # Sample timepoints to check (every 10th timepoint for efficiency)
+        # This covers the full developmental range while being fast
+        sample_timepoints = list(range(1, WORMGUIDES_TOTAL_TIMEPOINTS + 1, 10))
+
+        print(f"   Sampling {len(sample_timepoints)} timepoints for cell timing...")
+
+        import requests
+
+        for tp in sample_timepoints:
+            url = f"{WORMGUIDES_NUCLEI_BASE_URL}/t{tp:03d}-nuclei"
+            try:
+                response = requests.get(url, timeout=30)
+                if response.status_code != 200:
+                    continue
+
+                # Parse nuclei data
+                for line in response.text.strip().split("\n"):
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) > NUCLEI_COL_CELL_NAME:
+                        cell_name = parts[NUCLEI_COL_CELL_NAME]
+                        if cell_name and cell_name not in nuclei_timing:
+                            # Calculate time in minutes
+                            time_min = (
+                                WORMGUIDES_START_TIME_MIN
+                                + (tp - 1) * WORMGUIDES_TIME_RESOLUTION_SEC / 60
+                            )
+
+                            # Get position
+                            try:
+                                position = {
+                                    "x": float(parts[NUCLEI_COL_X]),
+                                    "y": float(parts[NUCLEI_COL_Y]),
+                                    "z": float(parts[NUCLEI_COL_Z]),
+                                }
+                            except (ValueError, IndexError):
+                                position = None
+
+                            nuclei_timing[cell_name] = {
+                                "first_seen_min": time_min,
+                                "first_timepoint": tp,
+                                "first_position": position,
+                            }
+            except requests.exceptions.RequestException:
+                continue
+
+        return nuclei_timing
 
     @staticmethod
     def _classify_cell_fate(description: str) -> str:
