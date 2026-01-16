@@ -427,10 +427,10 @@ class TrimodalAnnDataBuilder:
         adata.uns["build_params"] = {
             "variant": variant,
             "source": source,
-            "wormguides_time_range": (
+            "wormguides_time_range": [
                 self.WORMGUIDES_TIME_MIN,
                 self.WORMGUIDES_TIME_MAX,
-            ),
+            ],
         }
 
         # Lineage tree (if available)
@@ -496,14 +496,23 @@ class TrimodalAnnDataBuilder:
             nn.fit(valid_coords)
             graph = nn.kneighbors_graph(mode="distance")
 
-        # Expand to full size (with zeros for invalid cells)
+        # Expand to full size using efficient sparse matrix indexing
         n_cells = len(adata)
-        full_graph = csr_matrix((n_cells, n_cells), dtype=np.float32)
-
         valid_indices = np.where(valid_mask)[0]
-        for i, vi in enumerate(valid_indices):
-            for j, vj in enumerate(valid_indices):
-                full_graph[vi, vj] = graph[i, j]
+
+        # Convert small graph to COO format for efficient remapping
+        graph_coo = graph.tocoo()
+
+        # Remap indices to full matrix indices
+        new_row = valid_indices[graph_coo.row]
+        new_col = valid_indices[graph_coo.col]
+
+        # Build full-size sparse matrix directly from COO data
+        full_graph = csr_matrix(
+            (graph_coo.data, (new_row, new_col)),
+            shape=(n_cells, n_cells),
+            dtype=np.float32
+        )
 
         adata.obsp["spatial_distances"] = full_graph
         adata.obsp["spatial_connectivities"] = (full_graph > 0).astype(np.float32)
@@ -547,18 +556,26 @@ class TrimodalAnnDataBuilder:
             lineages, include_parent=True
         )
 
-        # Expand to full size
+        # Expand to full size using efficient sparse matrix indexing
         n_cells = len(adata)
-        full_adj = np.zeros((n_cells, n_cells), dtype=np.float32)
-
         valid_indices = np.where(valid_mask)[0]
-        for name, local_idx in name_to_idx.items():
-            global_idx = valid_indices[local_idx]
-            for name2, local_idx2 in name_to_idx.items():
-                global_idx2 = valid_indices[local_idx2]
-                full_adj[global_idx, global_idx2] = adj[local_idx, local_idx2]
 
-        adata.obsp["lineage_adjacency"] = csr_matrix(full_adj)
+        # Convert adjacency to sparse COO format
+        adj_sparse = csr_matrix(adj)
+        adj_coo = adj_sparse.tocoo()
+
+        # Remap indices to full matrix indices
+        new_row = valid_indices[adj_coo.row]
+        new_col = valid_indices[adj_coo.col]
+
+        # Build full-size sparse matrix directly from COO data
+        full_adj = csr_matrix(
+            (adj_coo.data, (new_row, new_col)),
+            shape=(n_cells, n_cells),
+            dtype=np.float32
+        )
+
+        adata.obsp["lineage_adjacency"] = full_adj
 
         logger.info(f"Built lineage graph for {len(lineages)} cells")
         return adata

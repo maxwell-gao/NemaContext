@@ -15,6 +15,7 @@ dependencies = [
     "scipy",
     "requests",
     "tqdm",
+    "scikit-misc",  # Required for scanpy seurat_v3 HVG
 ]
 
 [dependency-groups]
