@@ -107,6 +107,19 @@ def parse_args() -> argparse.Namespace:
     )
     
     parser.add_argument(
+        "--no-ancestor-mapping",
+        action="store_true",
+        help="Disable ancestor mapping (only use direct CShaper matches)",
+    )
+    
+    parser.add_argument(
+        "--max-ancestor-distance",
+        type=int,
+        default=5,
+        help="Max divisions to search for ancestors. Default: 5",
+    )
+    
+    parser.add_argument(
         "--compare-graphs",
         action="store_true",
         help="Compare contact graph with k-NN spatial graph",
@@ -187,6 +200,9 @@ def main() -> int:
         logger.info(f"  Include morphology: {not args.no_morphology}")
         logger.info(f"  Include contact graph: {not args.no_contact_graph}")
         logger.info(f"  Include CShaper spatial: {args.use_cshaper_spatial}")
+        logger.info(f"  Use ancestor mapping: {not args.no_ancestor_mapping}")
+        if not args.no_ancestor_mapping:
+            logger.info(f"  Max ancestor distance: {args.max_ancestor_distance}")
         
         adata = builder.build_with_cshaper(
             variant=args.variant,
@@ -194,6 +210,8 @@ def main() -> int:
             include_morphology=not args.no_morphology,
             include_contact_graph=not args.no_contact_graph,
             use_cshaper_spatial=args.use_cshaper_spatial,
+            use_ancestor_mapping=not args.no_ancestor_mapping,
+            max_ancestor_distance=args.max_ancestor_distance,
             contact_threshold=args.contact_threshold,
             save=not args.no_save,
         )

@@ -122,6 +122,480 @@ def cshaper_frame_to_embryo_time(frame: int) -> float:
     return CSHAPER_START_TIME_MIN + fraction * (CSHAPER_END_TIME_MIN - CSHAPER_START_TIME_MIN)
 
 
+def get_lineage_ancestors(lineage: str) -> List[str]:
+    """
+    Get all ancestors of a lineage name, from closest to root.
+    
+    The lineage name encodes division history:
+    - Each character after founder represents one division (a/l=left, p/r=right)
+    - Removing characters from the end gives parent lineages
+    
+    Example:
+        >>> get_lineage_ancestors("ABplpa")
+        ['ABplp', 'ABpl', 'ABp', 'AB']
+    
+    Args:
+        lineage: Lineage name (e.g., "ABplpa")
+        
+    Returns:
+        List of ancestor lineage names (closest first)
+    """
+    lineage = normalize_lineage_name(lineage)
+    if not lineage:
+        return []
+    
+    # Find founder prefix
+    founder = None
+    path = ""
+    for f in sorted(FOUNDER_PREFIXES, key=len, reverse=True):
+        if lineage.upper().startswith(f.upper()):
+            founder = f
+            path = lineage[len(f):]
+            break
+    
+    if founder is None:
+        return []
+    
+    # Generate ancestors by removing path characters one by one
+    ancestors = []
+    for i in range(len(path) - 1, -1, -1):
+        ancestor = founder + path[:i]
+        ancestors.append(ancestor)
+    
+    return ancestors
+
+
+def get_ancestor_distance(lineage: str, ancestor: str) -> int:
+    """
+    Get the number of divisions between a cell and its ancestor.
+    
+    Args:
+        lineage: Descendant lineage name
+        ancestor: Ancestor lineage name
+        
+    Returns:
+        Number of divisions (0 if same cell, -1 if not an ancestor)
+    """
+    lineage = normalize_lineage_name(lineage)
+    ancestor = normalize_lineage_name(ancestor)
+    
+    if not lineage or not ancestor:
+        return -1
+    
+    if lineage == ancestor:
+        return 0
+    
+    # Check if ancestor is actually an ancestor
+    if not lineage.startswith(ancestor):
+        return -1
+    
+    # Count extra characters = number of divisions
+    return len(lineage) - len(ancestor)
+
+
+def expand_uncertain_lineage(lineage: str) -> List[str]:
+    """
+    Expand a lineage with 'x' markers into all possible combinations.
+    
+    The 'x' in lineage names indicates uncertain position (could be 'a' or 'p').
+    This function expands to all combinations.
+    
+    Example:
+        >>> expand_uncertain_lineage("ABxap")
+        ['ABaap', 'ABpap']
+        >>> expand_uncertain_lineage("MSxxp")
+        ['MSaap', 'MSapp', 'MSpap', 'MSppp']
+    
+    Args:
+        lineage: Lineage string possibly containing 'x' markers
+        
+    Returns:
+        List of all possible lineage expansions
+    """
+    lineage = normalize_lineage_name(lineage)
+    if not lineage:
+        return []
+    
+    # Count x's
+    x_count = lineage.lower().count('x')
+    if x_count == 0:
+        return [lineage]
+    
+    if x_count > 10:  # Safety limit (2^10 = 1024 combinations)
+        return [lineage]
+    
+    # Find founder prefix
+    founder = None
+    path_start = 0
+    for f in sorted(FOUNDER_PREFIXES, key=len, reverse=True):
+        if lineage.upper().startswith(f.upper()):
+            founder = f
+            path_start = len(f)
+            break
+    
+    if founder is None:
+        return [lineage]
+    
+    path = lineage[path_start:]
+    
+    # Generate all combinations
+    results = []
+    n_combinations = 2 ** x_count
+    
+    for combo in range(n_combinations):
+        new_path = []
+        x_idx = 0
+        for char in path.lower():
+            if char == 'x':
+                # Use bit from combo to decide 'a' or 'p'
+                new_path.append('a' if (combo >> x_idx) & 1 == 0 else 'p')
+                x_idx += 1
+            else:
+                new_path.append(char)
+        results.append(founder + ''.join(new_path))
+    
+    return results
+
+
+def expand_slash_lineage(lineage: str) -> List[str]:
+    """
+    Split a lineage with '/' into individual options.
+    
+    Example:
+        >>> expand_slash_lineage("ABa/ABp")
+        ['ABa', 'ABp']
+    
+    Args:
+        lineage: Lineage string possibly containing '/' separators
+        
+    Returns:
+        List of individual lineage options
+    """
+    if not lineage or pd.isna(lineage):
+        return []
+    
+    parts = [normalize_lineage_name(p.strip()) for p in lineage.split('/')]
+    return [p for p in parts if p]
+
+
+def resolve_ambiguous_lineage(
+    lineage: str,
+    valid_cells: set,
+    max_expansions: int = 100,
+) -> Tuple[Optional[str], str]:
+    """
+    Resolve an ambiguous lineage (with 'x' or '/') to a valid cell.
+    
+    Tries all expansions and returns the first match found in valid_cells.
+    
+    Args:
+        lineage: Possibly ambiguous lineage string
+        valid_cells: Set of valid cell names to match against
+        max_expansions: Maximum number of expansions to try
+        
+    Returns:
+        Tuple of (matched_cell, resolution_type) where resolution_type is:
+        - 'direct': exact match
+        - 'slash': matched one of the '/' alternatives
+        - 'x_expand': matched an 'x' expansion
+        - 'none': no match found
+    """
+    lineage = normalize_lineage_name(lineage)
+    if not lineage:
+        return (None, 'none')
+    
+    # Direct match
+    if lineage in valid_cells:
+        return (lineage, 'direct')
+    
+    # Try slash expansion first (fewer combinations)
+    if '/' in lineage:
+        for alt in expand_slash_lineage(lineage):
+            if alt in valid_cells:
+                return (alt, 'slash')
+            # Also try x-expansion of each alternative
+            for expanded in expand_uncertain_lineage(alt)[:max_expansions]:
+                if expanded in valid_cells:
+                    return (expanded, 'slash+x_expand')
+    
+    # Try x expansion
+    if 'x' in lineage.lower():
+        expansions = expand_uncertain_lineage(lineage)
+        for exp in expansions[:max_expansions]:
+            if exp in valid_cells:
+                return (exp, 'x_expand')
+    
+    return (None, 'none')
+
+
+# =============================================================================
+# Ancestor Mapper for CShaper Data
+# =============================================================================
+
+class AncestorMapper:
+    """
+    Maps cells to their closest CShaper ancestor with fuzzy matching support.
+    
+    Since CShaper tracks early embryonic development (~4-350 cells) while
+    scRNA-seq datasets often have later-stage cells, many cells won't have
+    direct CShaper data. This class:
+    
+    1. First tries fuzzy matching (expand 'x' wildcards and '/' alternatives)
+    2. Then searches for ancestors in the CShaper cell set
+    
+    This handles the common case where lineage annotations have uncertainty
+    markers (e.g., "MSxpappp" where x could be 'a' or 'p').
+    
+    Usage:
+        >>> mapper = AncestorMapper(cshaper_cells={"AB", "ABa", "ABp", "ABal", ...})
+        >>> mapper.find_ancestor("ABalapapaap")  # Returns "ABalap" or similar
+        ('ABalap', 5, 'ancestor')  # ancestor name, distance, match_type
+    """
+    
+    def __init__(
+        self,
+        cshaper_cells: set,
+        max_ancestor_distance: int = 10,
+        enable_fuzzy: bool = True,
+        max_fuzzy_expansions: int = 64,
+    ):
+        """
+        Initialize the ancestor mapper.
+        
+        Args:
+            cshaper_cells: Set of cell names present in CShaper data
+            max_ancestor_distance: Maximum divisions to search backwards
+            enable_fuzzy: Whether to expand 'x' and '/' in lineage names
+            max_fuzzy_expansions: Maximum number of fuzzy expansions to try
+        """
+        # Normalize all CShaper cell names
+        self.cshaper_cells = {normalize_lineage_name(c) for c in cshaper_cells if c}
+        self.max_distance = max_ancestor_distance
+        self.enable_fuzzy = enable_fuzzy
+        self.max_fuzzy_expansions = max_fuzzy_expansions
+        
+        # Cache for ancestor lookups: (matched_name, distance, match_type)
+        self._cache: Dict[str, Tuple[Optional[str], int, str]] = {}
+        
+        # Statistics
+        self._stats = {
+            'direct': 0,
+            'fuzzy_x': 0,
+            'fuzzy_slash': 0,
+            'ancestor': 0,
+            'fuzzy_ancestor': 0,
+            'none': 0,
+        }
+    
+    def find_ancestor(self, lineage: str) -> Tuple[Optional[str], int]:
+        """
+        Find the closest CShaper ancestor for a given cell.
+        
+        Args:
+            lineage: Lineage name to find ancestor for
+            
+        Returns:
+            Tuple of (ancestor_name, distance), or (None, -1) if not found
+        """
+        result = self._find_ancestor_with_type(lineage)
+        return (result[0], result[1])
+    
+    def _find_ancestor_with_type(self, lineage: str) -> Tuple[Optional[str], int, str]:
+        """
+        Find ancestor with match type information.
+        
+        Returns:
+            Tuple of (ancestor_name, distance, match_type)
+            match_type: 'direct', 'fuzzy_x', 'fuzzy_slash', 'ancestor', 'fuzzy_ancestor', 'none'
+        """
+        lineage = normalize_lineage_name(lineage)
+        if not lineage or lineage == 'unassigned':
+            return (None, -1, 'none')
+        
+        # Check cache
+        if lineage in self._cache:
+            return self._cache[lineage]
+        
+        # 1. Direct match
+        if lineage in self.cshaper_cells:
+            self._cache[lineage] = (lineage, 0, 'direct')
+            self._stats['direct'] += 1
+            return (lineage, 0, 'direct')
+        
+        # 2. Fuzzy matching (expand x and /)
+        if self.enable_fuzzy:
+            fuzzy_match = self._try_fuzzy_match(lineage)
+            if fuzzy_match[0] is not None:
+                self._cache[lineage] = fuzzy_match
+                self._stats[fuzzy_match[2]] += 1
+                return fuzzy_match
+        
+        # 3. Ancestor search on original lineage
+        ancestor_result = self._search_ancestors(lineage)
+        if ancestor_result[0] is not None:
+            self._cache[lineage] = ancestor_result
+            self._stats['ancestor'] += 1
+            return ancestor_result
+        
+        # 4. Ancestor search on fuzzy-expanded lineages
+        if self.enable_fuzzy:
+            expanded = self._get_fuzzy_expansions(lineage)
+            for exp_lineage in expanded[:self.max_fuzzy_expansions]:
+                anc_result = self._search_ancestors(exp_lineage)
+                if anc_result[0] is not None:
+                    result = (anc_result[0], anc_result[1], 'fuzzy_ancestor')
+                    self._cache[lineage] = result
+                    self._stats['fuzzy_ancestor'] += 1
+                    return result
+        
+        # No match found
+        self._cache[lineage] = (None, -1, 'none')
+        self._stats['none'] += 1
+        return (None, -1, 'none')
+    
+    def _get_fuzzy_expansions(self, lineage: str) -> List[str]:
+        """Get all fuzzy expansions for a lineage."""
+        expansions = []
+        
+        # Handle slash first
+        if '/' in lineage:
+            slash_parts = expand_slash_lineage(lineage)
+            for part in slash_parts:
+                if 'x' in part.lower():
+                    expansions.extend(expand_uncertain_lineage(part))
+                else:
+                    expansions.append(part)
+        elif 'x' in lineage.lower():
+            expansions = expand_uncertain_lineage(lineage)
+        
+        return expansions
+    
+    def _try_fuzzy_match(self, lineage: str) -> Tuple[Optional[str], int, str]:
+        """Try to match via fuzzy expansion (x or /)."""
+        # Try slash expansion
+        if '/' in lineage:
+            for alt in expand_slash_lineage(lineage):
+                alt_norm = normalize_lineage_name(alt)
+                if alt_norm in self.cshaper_cells:
+                    return (alt_norm, 0, 'fuzzy_slash')
+                # Also try x-expansion of slash alternatives
+                if 'x' in alt_norm.lower():
+                    for exp in expand_uncertain_lineage(alt_norm)[:self.max_fuzzy_expansions]:
+                        if exp in self.cshaper_cells:
+                            return (exp, 0, 'fuzzy_x')
+        
+        # Try x expansion
+        if 'x' in lineage.lower():
+            for exp in expand_uncertain_lineage(lineage)[:self.max_fuzzy_expansions]:
+                if exp in self.cshaper_cells:
+                    return (exp, 0, 'fuzzy_x')
+        
+        return (None, -1, 'none')
+    
+    def _search_ancestors(self, lineage: str) -> Tuple[Optional[str], int, str]:
+        """Search ancestors of a lineage."""
+        ancestors = get_lineage_ancestors(lineage)
+        for i, ancestor in enumerate(ancestors):
+            if i >= self.max_distance:
+                break
+            if ancestor in self.cshaper_cells:
+                distance = i + 1  # +1 because first ancestor is 1 step away
+                return (ancestor, distance, 'ancestor')
+        return (None, -1, 'none')
+    
+    def map_cells(
+        self,
+        lineage_names: List[str],
+    ) -> Tuple[List[Optional[str]], np.ndarray]:
+        """
+        Map a list of cells to their CShaper ancestors.
+        
+        Args:
+            lineage_names: List of lineage names
+            
+        Returns:
+            Tuple of:
+            - List of ancestor names (None if no ancestor found)
+            - Array of distances (-1 if no ancestor found)
+        """
+        ancestors = []
+        distances = []
+        
+        for name in lineage_names:
+            ancestor, distance = self.find_ancestor(name)
+            ancestors.append(ancestor)
+            distances.append(distance)
+        
+        return ancestors, np.array(distances, dtype=np.int32)
+    
+    def map_cells_detailed(
+        self,
+        lineage_names: List[str],
+    ) -> Tuple[List[Optional[str]], np.ndarray, List[str]]:
+        """
+        Map cells with detailed match type information.
+        
+        Returns:
+            Tuple of:
+            - List of ancestor names (None if no ancestor found)
+            - Array of distances (-1 if no ancestor found)
+            - List of match types ('direct', 'fuzzy_x', 'ancestor', etc.)
+        """
+        ancestors = []
+        distances = []
+        match_types = []
+        
+        for name in lineage_names:
+            matched, dist, mtype = self._find_ancestor_with_type(name)
+            ancestors.append(matched)
+            distances.append(dist)
+            match_types.append(mtype)
+        
+        return ancestors, np.array(distances, dtype=np.int32), match_types
+    
+    def get_matching_stats(self) -> Dict[str, int]:
+        """Get cumulative matching statistics."""
+        return dict(self._stats)
+    
+    def get_mapping_stats(self, lineage_names: List[str]) -> Dict[str, any]:
+        """
+        Get statistics about ancestor mapping for a set of cells.
+        
+        Args:
+            lineage_names: List of lineage names
+            
+        Returns:
+            Dictionary with mapping statistics
+        """
+        ancestors, distances, match_types = self.map_cells_detailed(lineage_names)
+        
+        valid_mask = np.array([a is not None for a in ancestors])
+        valid_distances = distances[valid_mask]
+        
+        # Count match types
+        type_counts = {}
+        for mt in match_types:
+            type_counts[mt] = type_counts.get(mt, 0) + 1
+        
+        return {
+            "total_cells": len(lineage_names),
+            "matched_cells": int(valid_mask.sum()),
+            "match_rate": float(valid_mask.sum() / max(len(lineage_names), 1)),
+            "direct_matches": type_counts.get('direct', 0),
+            "fuzzy_x_matches": type_counts.get('fuzzy_x', 0),
+            "fuzzy_slash_matches": type_counts.get('fuzzy_slash', 0),
+            "ancestor_matches": type_counts.get('ancestor', 0),
+            "fuzzy_ancestor_matches": type_counts.get('fuzzy_ancestor', 0),
+            "unmatched": type_counts.get('none', 0),
+            "mean_distance": float(np.mean(valid_distances)) if len(valid_distances) > 0 else 0,
+            "max_distance": int(np.max(valid_distances)) if len(valid_distances) > 0 else 0,
+            "distance_distribution": {
+                int(d): int((valid_distances == d).sum()) 
+                for d in range(min(self.max_distance + 1, int(np.max(valid_distances)) + 1 if len(valid_distances) > 0 else 1))
+            },
+        }
+
+
 # =============================================================================
 # Contact Matrix Loader
 # =============================================================================
@@ -725,21 +1199,36 @@ class MorphologyLoader:
                 'surface': surf_df[cell_name].values if cell_name in surf_df.columns else np.array([]),
             }
         
-        # Average across samples
-        all_volumes = []
-        all_surfaces = []
+        # Average across samples - handle different frame ranges
+        volume_by_frame: Dict[int, List[float]] = {}
+        surface_by_frame: Dict[int, List[float]] = {}
         
         for sid in self.get_available_samples():
             vol_df, surf_df = self.load_sample(sid)
             if cell_name in vol_df.columns:
-                all_volumes.append(vol_df[cell_name].values)
+                for frame in vol_df.index:
+                    val = vol_df.loc[frame, cell_name]
+                    if not pd.isna(val):
+                        if frame not in volume_by_frame:
+                            volume_by_frame[frame] = []
+                        volume_by_frame[frame].append(val)
             if cell_name in surf_df.columns:
-                all_surfaces.append(surf_df[cell_name].values)
+                for frame in surf_df.index:
+                    val = surf_df.loc[frame, cell_name]
+                    if not pd.isna(val):
+                        if frame not in surface_by_frame:
+                            surface_by_frame[frame] = []
+                        surface_by_frame[frame].append(val)
+        
+        # Get all frames and compute means
+        all_frames = sorted(set(volume_by_frame.keys()) | set(surface_by_frame.keys()))
+        volumes = np.array([np.mean(volume_by_frame.get(f, [np.nan])) for f in all_frames])
+        surfaces = np.array([np.mean(surface_by_frame.get(f, [np.nan])) for f in all_frames])
         
         return {
-            'frames': np.arange(CSHAPER_FRAMES),
-            'volume': np.nanmean(all_volumes, axis=0) if all_volumes else np.array([]),
-            'surface': np.nanmean(all_surfaces, axis=0) if all_surfaces else np.array([]),
+            'frames': np.array(all_frames),
+            'volume': volumes,
+            'surface': surfaces,
         }
     
     def get_morphology_at_frame(
@@ -1668,6 +2157,7 @@ class CShaperProcessor:
         lineage_names: List[str],
         embryo_times: Optional[np.ndarray] = None,
         sample_id: Optional[str] = None,
+        use_consensus: bool = True,
     ) -> pd.DataFrame:
         """
         Get morphology features for cells.
@@ -1676,6 +2166,8 @@ class CShaperProcessor:
             lineage_names: List of cell lineage names
             embryo_times: Array of embryo times in minutes (optional)
             sample_id: Specific sample to use (None = average)
+            use_consensus: If True, use consensus values when time-based
+                lookup returns NaN or when embryo_times is outside CShaper range
             
         Returns:
             DataFrame with columns: volume, surface, sphericity
@@ -1686,11 +2178,76 @@ class CShaperProcessor:
         else:
             frames = None
         
-        return self.morphology_loader.get_features_for_cells(
+        # Get time-based morphology
+        result = self.morphology_loader.get_features_for_cells(
             lineage_names,
             time_frames=frames,
             sample_id=sample_id,
         )
+        
+        # If use_consensus, fill NaN values with consensus morphology
+        if use_consensus:
+            missing_mask = result['volume'].isna()
+            if missing_mask.any():
+                consensus_df = self.get_consensus_morphology(lineage_names)
+                for col in ['volume', 'surface', 'sphericity']:
+                    result.loc[missing_mask, col] = consensus_df.loc[missing_mask, col]
+        
+        return result
+    
+    def get_consensus_morphology(
+        self,
+        lineage_names: List[str],
+        sample_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Get consensus morphology features (averaged across all time points).
+        
+        This is useful when embryo time is unknown or outside CShaper's
+        temporal coverage. It returns the mean morphology for each cell
+        across all frames where that cell exists.
+        
+        Args:
+            lineage_names: List of cell lineage names
+            sample_id: Specific sample to use (None = average across samples)
+            
+        Returns:
+            DataFrame with columns: volume, surface, sphericity
+        """
+        n_cells = len(lineage_names)
+        result = pd.DataFrame(
+            index=range(n_cells),
+            columns=['volume', 'surface', 'sphericity'],
+            dtype=np.float64,
+        )
+        result[:] = np.nan
+        
+        # Normalize names
+        cell_names_norm = [normalize_lineage_name(c) for c in lineage_names]
+        
+        # Get all available cells from morphology loader
+        all_morph_cells = self.morphology_loader.get_all_cell_names()
+        
+        # For each cell, get average morphology across all frames
+        for i, cell in enumerate(cell_names_norm):
+            if not cell or cell not in all_morph_cells:
+                continue
+            
+            try:
+                ts = self.morphology_loader.get_cell_timeseries(cell, sample_id)
+                if len(ts['volume']) > 0:
+                    vol = np.nanmean(ts['volume'])
+                    surf = np.nanmean(ts['surface'])
+                    if not np.isnan(vol) and not np.isnan(surf) and surf > 0:
+                        result.iloc[i, 0] = vol
+                        result.iloc[i, 1] = surf
+                        # Sphericity: (36π V²)^(1/3) / S
+                        sphericity = np.power(36 * np.pi * vol**2, 1/3) / surf
+                        result.iloc[i, 2] = np.clip(sphericity, 0, 1)
+            except Exception:
+                pass
+        
+        return result
     
     # === Spatial Coordinates ===
     

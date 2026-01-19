@@ -24,6 +24,7 @@ from scipy.sparse import csr_matrix
 
 from .anndata_builder import TrimodalAnnDataBuilder
 from .cshaper_processor import (
+    AncestorMapper,
     CShaperProcessor,
     embryo_time_to_cshaper_frame,
     normalize_lineage_name,
@@ -78,6 +79,8 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         include_morphology: bool = True,
         include_contact_graph: bool = True,
         use_cshaper_spatial: bool = False,
+        use_ancestor_mapping: bool = True,
+        max_ancestor_distance: int = 5,
         contact_threshold: float = 0.0,
         min_contact_samples: int = 1,
         save: bool = True,
@@ -92,6 +95,9 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             include_morphology: Whether to add cell morphology features
             include_contact_graph: Whether to add contact adjacency graph
             use_cshaper_spatial: Whether to add CShaper spatial coordinates
+            use_ancestor_mapping: Whether to use ancestor mapping for cells
+                not directly in CShaper (inherits data from closest ancestor)
+            max_ancestor_distance: Maximum generations to search for ancestors
             contact_threshold: Minimum contact area to include edge (μm²)
             min_contact_samples: Minimum samples for consensus contact
             save: Whether to save the result
@@ -116,10 +122,23 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 self._save_enhanced(adata, variant, source)
             return adata
         
+        # Initialize ancestor mapper if requested
+        ancestor_mapper = None
+        if use_ancestor_mapping:
+            cshaper_cells = self.cshaper.get_all_cell_names()
+            ancestor_mapper = AncestorMapper(
+                cshaper_cells=cshaper_cells,
+                max_ancestor_distance=max_ancestor_distance,
+            )
+            logger.info(
+                f"Ancestor mapping enabled: {len(cshaper_cells)} CShaper cells, "
+                f"max distance={max_ancestor_distance}"
+            )
+        
         # Step 2: Add CShaper enhancements
         if include_morphology and self.cshaper.has_morphology:
             logger.info("Adding morphology features...")
-            adata = self._add_morphology_features(adata)
+            adata = self._add_morphology_features(adata, ancestor_mapper=ancestor_mapper)
         
         if include_contact_graph and self.cshaper.has_contact:
             logger.info("Adding contact graph...")
@@ -127,6 +146,7 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 adata,
                 threshold=contact_threshold,
                 min_samples=min_contact_samples,
+                ancestor_mapper=ancestor_mapper,
             )
         
         if use_cshaper_spatial and self.cshaper.has_standard_spatial:
@@ -139,6 +159,8 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             include_morphology=include_morphology,
             include_contact_graph=include_contact_graph,
             use_cshaper_spatial=use_cshaper_spatial,
+            use_ancestor_mapping=use_ancestor_mapping,
+            max_ancestor_distance=max_ancestor_distance,
         )
         
         # Step 4: Save if requested
@@ -161,12 +183,21 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 return col
         return None
     
-    def _add_morphology_features(self, adata: ad.AnnData) -> ad.AnnData:
+    def _add_morphology_features(
+        self,
+        adata: ad.AnnData,
+        ancestor_mapper: Optional[AncestorMapper] = None,
+    ) -> ad.AnnData:
         """
         Add cell morphology features (volume, surface, sphericity).
         
         Matches cells to CShaper morphology data by lineage name and
-        developmental time.
+        developmental time. If ancestor_mapper is provided, cells without
+        direct CShaper data will inherit from their closest ancestor.
+        
+        Args:
+            adata: AnnData object to enhance
+            ancestor_mapper: Optional mapper for ancestor-based matching
         """
         n_cells = adata.n_obs
         
@@ -181,10 +212,35 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         else:
             embryo_times = None
         
+        # Apply ancestor mapping if available
+        query_lineages = lineages
+        ancestor_distances = None
+        
+        if ancestor_mapper is not None:
+            # Map cells to their CShaper ancestors
+            mapped_ancestors, ancestor_distances = ancestor_mapper.map_cells(lineages)
+            
+            # Use ancestor names for query (keep original for unmapped)
+            query_lineages = [
+                anc if anc is not None else orig
+                for anc, orig in zip(mapped_ancestors, lineages)
+            ]
+            
+            # Log mapping statistics
+            stats = ancestor_mapper.get_mapping_stats(lineages)
+            fuzzy_matches = stats.get('fuzzy_x_matches', 0) + stats.get('fuzzy_slash_matches', 0)
+            ancestor_matches = stats.get('ancestor_matches', 0) + stats.get('fuzzy_ancestor_matches', 0)
+            logger.info(
+                f"Ancestor mapping: {stats['matched_cells']}/{stats['total_cells']} cells "
+                f"({100*stats['match_rate']:.1f}%), "
+                f"{stats['direct_matches']} direct, {fuzzy_matches} fuzzy, "
+                f"{ancestor_matches} via ancestor, mean distance={stats['mean_distance']:.1f}"
+            )
+        
         # Get morphology features from CShaper
         try:
             morph_df = self.cshaper.get_morphology_features(
-                lineages,
+                query_lineages,
                 embryo_times=embryo_times,
             )
             
@@ -193,6 +249,10 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             adata.obs["cell_surface"] = morph_df["surface"].values.astype(np.float32)
             adata.obs["sphericity"] = morph_df["sphericity"].values.astype(np.float32)
             adata.obs["has_morphology"] = ~np.isnan(morph_df["volume"].values)
+            
+            # Add ancestor distance if ancestor mapping was used
+            if ancestor_distances is not None:
+                adata.obs["morphology_ancestor_distance"] = ancestor_distances
             
             # Add CShaper frame mapping
             if embryo_times is not None:
@@ -203,13 +263,22 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 adata.obs["cshaper_frame"] = frames
             
             n_matched = adata.obs["has_morphology"].sum()
+            n_direct = 0
+            n_ancestor = 0
+            if ancestor_distances is not None:
+                n_direct = int(((ancestor_distances == 0) & adata.obs["has_morphology"].values).sum())
+                n_ancestor = int(((ancestor_distances > 0) & adata.obs["has_morphology"].values).sum())
+            
             logger.info(
                 f"Added morphology features: {n_matched}/{n_cells} cells matched "
                 f"({100*n_matched/n_cells:.1f}%)"
+                + (f" [{n_direct} direct, {n_ancestor} via ancestor]" if ancestor_mapper else "")
             )
             
         except Exception as e:
             logger.warning(f"Failed to add morphology features: {e}")
+            import traceback
+            traceback.print_exc()
             # Add empty columns
             adata.obs["cell_volume"] = np.nan
             adata.obs["cell_surface"] = np.nan
@@ -223,6 +292,7 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         adata: ad.AnnData,
         threshold: float = 0.0,
         min_samples: int = 1,
+        ancestor_mapper: Optional[AncestorMapper] = None,
     ) -> ad.AnnData:
         """
         Add cell-cell contact adjacency graph.
@@ -230,6 +300,15 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         Creates two graphs:
         - contact_adjacency: Weighted by contact surface area
         - contact_binary: Binary (connected/not connected)
+        
+        If ancestor_mapper is provided, cells are mapped to their CShaper
+        ancestors, and contacts between ancestors are projected to descendants.
+        
+        Args:
+            adata: AnnData object to enhance
+            threshold: Minimum contact area threshold
+            min_samples: Minimum samples for consensus
+            ancestor_mapper: Optional mapper for ancestor-based matching
         """
         n_cells = adata.n_obs
         
@@ -237,17 +316,26 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         lineage_col = self._get_lineage_column(adata)
         lineages = adata.obs[lineage_col].fillna("").tolist()
         
+        # Apply ancestor mapping if available
+        query_lineages = lineages
+        if ancestor_mapper is not None:
+            mapped_ancestors, _ = ancestor_mapper.map_cells(lineages)
+            query_lineages = [
+                anc if anc is not None else orig
+                for anc, orig in zip(mapped_ancestors, lineages)
+            ]
+        
         try:
-            # Build weighted adjacency matrix
+            # Build weighted adjacency matrix using ancestor-mapped lineages
             contact_weighted = self.cshaper.get_contact_adjacency(
-                lineages,
+                query_lineages,
                 threshold=threshold,
                 binary=False,
             )
             
             # Build binary adjacency matrix
             contact_binary = self.cshaper.get_contact_adjacency(
-                lineages,
+                query_lineages,
                 threshold=threshold,
                 binary=True,
             )
@@ -265,10 +353,13 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 f"Added contact graph: {n_edges} edges, "
                 f"{n_cells_with_contacts}/{n_cells} cells with contacts, "
                 f"mean degree {mean_degree:.1f}"
+                + (" (with ancestor mapping)" if ancestor_mapper else "")
             )
             
         except Exception as e:
             logger.warning(f"Failed to add contact graph: {e}")
+            import traceback
+            traceback.print_exc()
             # Add empty sparse matrices
             adata.obsp["contact_adjacency"] = csr_matrix((n_cells, n_cells), dtype=np.float32)
             adata.obsp["contact_binary"] = csr_matrix((n_cells, n_cells), dtype=np.float32)
@@ -320,6 +411,8 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         include_morphology: bool,
         include_contact_graph: bool,
         use_cshaper_spatial: bool,
+        use_ancestor_mapping: bool = False,
+        max_ancestor_distance: int = 5,
     ) -> ad.AnnData:
         """Add CShaper-related metadata to uns."""
         
@@ -329,6 +422,8 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             "include_morphology": include_morphology,
             "include_contact_graph": include_contact_graph,
             "use_cshaper_spatial": use_cshaper_spatial,
+            "use_ancestor_mapping": use_ancestor_mapping,
+            "max_ancestor_distance": max_ancestor_distance,
         }
         
         # Add morphology statistics
@@ -341,6 +436,15 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 cshaper_info["mean_volume"] = float(adata.obs.loc[valid_mask, "cell_volume"].mean())
                 cshaper_info["mean_surface"] = float(adata.obs.loc[valid_mask, "cell_surface"].mean())
                 cshaper_info["mean_sphericity"] = float(adata.obs.loc[valid_mask, "sphericity"].mean())
+            
+            # Add ancestor mapping statistics if available
+            if "morphology_ancestor_distance" in adata.obs.columns:
+                distances = adata.obs["morphology_ancestor_distance"].values
+                valid_distances = distances[valid_mask]
+                cshaper_info["n_direct_morphology_matches"] = int((valid_distances == 0).sum())
+                cshaper_info["n_ancestor_morphology_matches"] = int((valid_distances > 0).sum())
+                if len(valid_distances) > 0:
+                    cshaper_info["mean_ancestor_distance"] = float(np.mean(valid_distances[valid_distances >= 0]))
         
         # Add contact graph statistics
         if include_contact_graph and "contact_binary" in adata.obsp:
@@ -401,7 +505,17 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         if "has_morphology" in adata.obs.columns:
             n_morph = adata.obs["has_morphology"].sum()
             pct = 100 * n_morph / adata.n_obs
-            cshaper_lines.append(f"  Morphology: {n_morph:,} cells ({pct:.1f}%)")
+            morph_info = f"  Morphology: {n_morph:,} cells ({pct:.1f}%)"
+            
+            # Add ancestor mapping breakdown if available
+            if "morphology_ancestor_distance" in adata.obs.columns:
+                distances = adata.obs["morphology_ancestor_distance"].values
+                has_morph = adata.obs["has_morphology"].values
+                n_direct = int(((distances == 0) & has_morph).sum())
+                n_ancestor = int(((distances > 0) & has_morph).sum())
+                morph_info += f" [{n_direct:,} direct, {n_ancestor:,} via ancestor]"
+            
+            cshaper_lines.append(morph_info)
         
         if "contact_binary" in adata.obsp:
             n_edges = adata.obsp["contact_binary"].nnz // 2
