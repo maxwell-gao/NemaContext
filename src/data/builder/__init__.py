@@ -8,6 +8,7 @@ Also includes CShaper integration for morphological data.
 """
 
 from .anndata_builder import TrimodalAnnDataBuilder
+from .expression_matcher import ExpressionMatcher, CellTypeMapper
 from .cshaper_processor import (
     CShaperProcessor,
     ContactLoader,
@@ -36,6 +37,9 @@ __all__ = [
     # Core builders
     "TrimodalAnnDataBuilder",
     "EnhancedAnnDataBuilder",
+    # Expression matching
+    "ExpressionMatcher",
+    "CellTypeMapper",
     # Loaders
     "ExpressionLoader",
     "SpatialMatcher",

@@ -120,6 +120,12 @@ def parse_args() -> argparse.Namespace:
     )
     
     parser.add_argument(
+        "--use-expression-matching",
+        action="store_true",
+        help="Use expression-based matching to validate/improve lineage matches",
+    )
+    
+    parser.add_argument(
         "--compare-graphs",
         action="store_true",
         help="Compare contact graph with k-NN spatial graph",
@@ -203,6 +209,7 @@ def main() -> int:
         logger.info(f"  Use ancestor mapping: {not args.no_ancestor_mapping}")
         if not args.no_ancestor_mapping:
             logger.info(f"  Max ancestor distance: {args.max_ancestor_distance}")
+        logger.info(f"  Use expression matching: {args.use_expression_matching}")
         
         adata = builder.build_with_cshaper(
             variant=args.variant,
@@ -211,6 +218,7 @@ def main() -> int:
             include_contact_graph=not args.no_contact_graph,
             use_cshaper_spatial=args.use_cshaper_spatial,
             use_ancestor_mapping=not args.no_ancestor_mapping,
+            use_expression_matching=args.use_expression_matching,
             max_ancestor_distance=args.max_ancestor_distance,
             contact_threshold=args.contact_threshold,
             save=not args.no_save,

@@ -29,6 +29,7 @@ from .cshaper_processor import (
     embryo_time_to_cshaper_frame,
     normalize_lineage_name,
 )
+from .expression_matcher import ExpressionMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         include_contact_graph: bool = True,
         use_cshaper_spatial: bool = False,
         use_ancestor_mapping: bool = True,
+        use_expression_matching: bool = False,
         max_ancestor_distance: int = 5,
         contact_threshold: float = 0.0,
         min_contact_samples: int = 1,
@@ -97,6 +99,8 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             use_cshaper_spatial: Whether to add CShaper spatial coordinates
             use_ancestor_mapping: Whether to use ancestor mapping for cells
                 not directly in CShaper (inherits data from closest ancestor)
+            use_expression_matching: Whether to use expression-based matching
+                to validate and improve lineage matches
             max_ancestor_distance: Maximum generations to search for ancestors
             contact_threshold: Minimum contact area to include edge (μm²)
             min_contact_samples: Minimum samples for consensus contact
@@ -124,8 +128,8 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         
         # Initialize ancestor mapper if requested
         ancestor_mapper = None
+        cshaper_cells = self.cshaper.get_all_cell_names()
         if use_ancestor_mapping:
-            cshaper_cells = self.cshaper.get_all_cell_names()
             ancestor_mapper = AncestorMapper(
                 cshaper_cells=cshaper_cells,
                 max_ancestor_distance=max_ancestor_distance,
@@ -135,10 +139,29 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 f"max distance={max_ancestor_distance}"
             )
         
+        # Initialize expression matcher if requested
+        expression_matcher = None
+        if use_expression_matching:
+            logger.info("Building expression reference profiles...")
+            expression_matcher = ExpressionMatcher(data_dir=self.data_dir)
+            try:
+                expression_matcher.build_reference_profiles(
+                    adata,
+                    cshaper_cells=cshaper_cells,
+                )
+                logger.info("Expression matching enabled")
+            except Exception as e:
+                logger.warning(f"Failed to build expression profiles: {e}")
+                expression_matcher = None
+        
         # Step 2: Add CShaper enhancements
         if include_morphology and self.cshaper.has_morphology:
             logger.info("Adding morphology features...")
-            adata = self._add_morphology_features(adata, ancestor_mapper=ancestor_mapper)
+            adata = self._add_morphology_features(
+                adata, 
+                ancestor_mapper=ancestor_mapper,
+                expression_matcher=expression_matcher,
+            )
         
         if include_contact_graph and self.cshaper.has_contact:
             logger.info("Adding contact graph...")
@@ -187,6 +210,7 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         self,
         adata: ad.AnnData,
         ancestor_mapper: Optional[AncestorMapper] = None,
+        expression_matcher: Optional[ExpressionMatcher] = None,
     ) -> ad.AnnData:
         """
         Add cell morphology features (volume, surface, sphericity).
@@ -194,16 +218,24 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         Matches cells to CShaper morphology data by lineage name and
         developmental time. If ancestor_mapper is provided, cells without
         direct CShaper data will inherit from their closest ancestor.
+        If expression_matcher is provided, matches are validated/improved
+        using gene expression similarity.
         
         Args:
             adata: AnnData object to enhance
             ancestor_mapper: Optional mapper for ancestor-based matching
+            expression_matcher: Optional matcher for expression-based validation
         """
         n_cells = adata.n_obs
         
         # Get lineage names
         lineage_col = self._get_lineage_column(adata)
-        lineages = adata.obs[lineage_col].fillna("").tolist()
+        # Handle categorical columns properly
+        lineage_series = adata.obs[lineage_col]
+        if hasattr(lineage_series, 'cat'):
+            lineages = lineage_series.astype(str).replace('nan', '').tolist()
+        else:
+            lineages = lineage_series.fillna("").tolist()
         
         # Get embryo times
         time_col = self._get_time_column(adata)
@@ -237,6 +269,37 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
                 f"{ancestor_matches} via ancestor, mean distance={stats['mean_distance']:.1f}"
             )
         
+        # Apply expression matching validation if available
+        expression_confidence = None
+        expression_match_types = None
+        if expression_matcher is not None:
+            logger.info("Validating matches with expression profiles...")
+            try:
+                validated_lineages, expression_confidence, expression_match_types = \
+                    expression_matcher.validate_lineage_match(
+                        adata,
+                        query_lineages,
+                        lineage_col=lineage_col,
+                    )
+                
+                # Count expression improvements
+                n_confirmed = sum(1 for t in expression_match_types if t == 'confirmed')
+                n_corrected = sum(1 for t in expression_match_types if t == 'expression_corrected')
+                n_expr_only = sum(1 for t in expression_match_types if t == 'expression_only')
+                
+                logger.info(
+                    f"Expression validation: {n_confirmed} confirmed, "
+                    f"{n_corrected} corrected, {n_expr_only} expression-only matches"
+                )
+                
+                # Use validated lineages
+                query_lineages = validated_lineages
+                
+            except Exception as e:
+                logger.warning(f"Expression validation failed: {e}")
+                import traceback
+                traceback.print_exc()
+        
         # Get morphology features from CShaper
         try:
             morph_df = self.cshaper.get_morphology_features(
@@ -253,6 +316,12 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             # Add ancestor distance if ancestor mapping was used
             if ancestor_distances is not None:
                 adata.obs["morphology_ancestor_distance"] = ancestor_distances
+            
+            # Add expression confidence if expression matching was used
+            if expression_confidence is not None:
+                adata.obs["morphology_confidence"] = expression_confidence.astype(np.float32)
+            if expression_match_types is not None:
+                adata.obs["morphology_match_type"] = expression_match_types
             
             # Add CShaper frame mapping
             if embryo_times is not None:
