@@ -13,8 +13,13 @@ from .cshaper_processor import (
     ContactLoader,
     MorphologyLoader,
     StandardSpatialLoader,
+    Segmentation3DLoader,
     normalize_lineage_name,
     embryo_time_to_cshaper_frame,
+    cshaper_frame_to_embryo_time,
+    CSHAPER_FRAMES,
+    CSHAPER_START_TIME_MIN,
+    CSHAPER_END_TIME_MIN,
 )
 from .enhanced_builder import EnhancedAnnDataBuilder
 from .expression_loader import ExpressionLoader
@@ -36,7 +41,13 @@ __all__ = [
     "ContactLoader",
     "MorphologyLoader",
     "StandardSpatialLoader",
+    "Segmentation3DLoader",
     # Utilities
     "normalize_lineage_name",
     "embryo_time_to_cshaper_frame",
+    "cshaper_frame_to_embryo_time",
+    # Constants
+    "CSHAPER_FRAMES",
+    "CSHAPER_START_TIME_MIN",
+    "CSHAPER_END_TIME_MIN",
 ]

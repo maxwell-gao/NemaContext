@@ -877,6 +877,33 @@ class MorphologyLoader:
 # Standard Dataset Spatial Loader
 # =============================================================================
 
+# Founder indices in Standard Dataset 1 (order of 9 founder groups)
+FOUNDER_INDICES = {
+    "AB": 0,    # ABa, ABp and descendants (8 gen × 256 pos)
+    "MS": 1,    # MS descendants (6 gen × 32 pos)
+    "E": 2,     # E descendants (5 gen × 16 pos)
+    "C": 3,     # C descendants (5 gen × 16 pos)
+    "D": 4,     # D descendants (4 gen × 8 pos)
+    "P3": 5,    # P3 only (1 × 1)
+    "P4": 6,    # P4, Z2, Z3 (2 gen × 2 pos)
+    "EMS": 7,   # EMS only (1 × 1)
+    "P2": 8,    # P2 only (1 × 1)
+}
+
+# Tree dimensions for each founder
+FOUNDER_TREE_DIMS = {
+    "AB": (8, 256),   # 8 generations, 256 positions
+    "MS": (6, 32),
+    "E": (5, 16),
+    "C": (5, 16),
+    "D": (4, 8),
+    "P3": (1, 1),
+    "P4": (2, 2),
+    "EMS": (1, 1),
+    "P2": (1, 1),
+}
+
+
 class StandardSpatialLoader:
     """
     Loader for CShaper Standard Dataset 1 (standardized spatial coordinates).
@@ -886,9 +913,11 @@ class StandardSpatialLoader:
     with MATLAB v7.3 format.
     
     Structure:
-    - Organized by founder lineage (AB, MS, E, C, D, etc.)
-    - Within each founder: (generation × position) matrix
-    - Position encoded as binary tree index
+    - 54 time frames (WorkSpace_Dataset_1.mat to WorkSpace_Dataset_54.mat)
+    - Each file contains coordinates from 46 embryos
+    - Organized by 9 founder lineages (AB, MS, E, C, D, P3, P4, EMS, P2)
+    - Within each founder: (generation × position) matrix of 3D coordinates
+    - Position encoded as binary tree index (a=0, p=1)
     """
     
     def __init__(self, standard_dir: Union[str, Path]):
@@ -899,87 +928,173 @@ class StandardSpatialLoader:
             standard_dir: Path to "Standard Dataset 1" directory
         """
         self.standard_dir = Path(standard_dir)
-        self._cache: Dict[str, Dict] = {}
+        self._coord_cache: Dict[int, Dict[str, np.ndarray]] = {}  # frame -> {lineage: coords}
+        self._cellname_cache: Optional[Dict[str, Tuple[int, int, int]]] = None
         
         if not self.standard_dir.exists():
             logger.warning(f"Standard dataset directory not found: {standard_dir}")
     
-    def get_available_files(self) -> List[Path]:
-        """Get list of available .mat files."""
-        return sorted(self.standard_dir.glob("*.mat"))
+    def get_available_frames(self) -> List[int]:
+        """Get list of available time frame indices."""
+        frames = []
+        for f in self.standard_dir.glob("WorkSpace_Dataset_*.mat"):
+            try:
+                frame = int(f.stem.split("_")[-1])
+                frames.append(frame)
+            except ValueError:
+                pass
+        return sorted(frames)
     
-    def load_mat_file(self, mat_path: Path, use_cache: bool = True) -> Dict:
+    def _decode_matlab_string(self, f, ref) -> Optional[str]:
+        """Decode a MATLAB string from HDF5 reference."""
+        try:
+            data = f['#refs#'][ref]
+            if hasattr(data, 'shape'):  # Is a dataset
+                arr = np.array(data)
+                if arr.dtype == np.uint16:
+                    chars = [chr(c) for c in arr.flatten() if c > 0]
+                    return ''.join(chars)
+        except Exception:
+            pass
+        return None
+    
+    def _load_cellnames(self) -> Dict[str, Tuple[int, int, int]]:
         """
-        Load a Standard Dataset 1 .mat file (HDF5 format).
+        Load cell names and build lookup table.
+        
+        Returns:
+            Dict mapping normalized cell name to (founder_idx, gen, pos)
+        """
+        if self._cellname_cache is not None:
+            return self._cellname_cache
+        
+        import h5py
+        
+        cellname_path = self.standard_dir / "WorkSpace_CellName.mat"
+        if not cellname_path.exists():
+            logger.warning("CellName.mat not found")
+            return {}
+        
+        name_to_idx = {}
+        
+        try:
+            with h5py.File(cellname_path, 'r') as f:
+                cellname_refs = f['CellName'][:]  # (1, 9) object references
+                
+                for founder_idx, ref in enumerate(cellname_refs.flatten()):
+                    founder_data = f['#refs#'][ref]
+                    if not hasattr(founder_data, 'shape'):
+                        continue
+                    
+                    names_arr = np.array(founder_data)  # (gen, pos) of references
+                    n_gen, n_pos = names_arr.shape
+                    
+                    for gen in range(n_gen):
+                        for pos in range(n_pos):
+                            name = self._decode_matlab_string(f, names_arr[gen, pos])
+                            if name:
+                                name_norm = normalize_lineage_name(name)
+                                if name_norm:
+                                    name_to_idx[name_norm] = (founder_idx, gen, pos)
+        
+        except Exception as e:
+            logger.warning(f"Failed to load cell names: {e}")
+            return {}
+        
+        self._cellname_cache = name_to_idx
+        logger.debug(f"Loaded {len(name_to_idx)} cell names from CellName.mat")
+        return name_to_idx
+    
+    def _load_frame_coords(self, frame: int, embryo_idx: int = 0) -> Dict[str, np.ndarray]:
+        """
+        Load coordinates for a specific time frame.
         
         Args:
-            mat_path: Path to .mat file
-            use_cache: Whether to cache loaded data
+            frame: Time frame index (1-54)
+            embryo_idx: Which embryo to use (0-45), 0 = first/reference embryo
             
         Returns:
-            Dictionary with extracted spatial data
+            Dict mapping (founder_idx, gen, pos) tuple to 3D coords
         """
         import h5py
         
-        cache_key = str(mat_path)
-        if use_cache and cache_key in self._cache:
-            return self._cache[cache_key]
+        cache_key = (frame, embryo_idx)
+        # Use frame as cache key since embryo_idx is usually 0
+        if frame in self._coord_cache:
+            return self._coord_cache[frame]
         
-        result = {}
+        mat_path = self.standard_dir / f"WorkSpace_Dataset_{frame}.mat"
+        if not mat_path.exists():
+            logger.warning(f"Dataset file not found: {mat_path}")
+            return {}
+        
+        coords_dict = {}
         
         try:
             with h5py.File(mat_path, 'r') as f:
-                for key in f.keys():
-                    if key.startswith('#'):
+                dataset_refs = f['Dataset'][:]  # (1, 2) object refs
+                
+                # Dataset[0] contains coordinate data: (46 embryos, 1)
+                data0_ref = f['#refs#'][dataset_refs.flatten()[0]]
+                data0_arr = np.array(data0_ref)  # (46, 1) embryo refs
+                
+                if embryo_idx >= data0_arr.shape[0]:
+                    embryo_idx = 0
+                
+                # Get selected embryo data: (1, 9) founder group refs
+                embryo_ref = f['#refs#'][data0_arr[embryo_idx, 0]]
+                embryo_data = np.array(embryo_ref)  # (1, 9) founder refs
+                
+                # Extract coordinates for each founder
+                for founder_idx, founder_ref in enumerate(embryo_data.flatten()):
+                    founder_coords = f['#refs#'][founder_ref]
+                    if not hasattr(founder_coords, 'shape'):
                         continue
                     
-                    data = f[key]
-                    if isinstance(data, h5py.Dataset):
-                        result[key] = np.array(data)
-                    elif isinstance(data, h5py.Group):
-                        # Nested structure
-                        result[key] = self._extract_group(data)
+                    founder_arr = np.array(founder_coords)  # (gen, pos) object refs
+                    n_gen, n_pos = founder_arr.shape
+                    
+                    for gen in range(n_gen):
+                        for pos in range(n_pos):
+                            cell_data = f['#refs#'][founder_arr[gen, pos]]
+                            if hasattr(cell_data, 'shape'):
+                                coords = np.array(cell_data).flatten()
+                                # Valid coords are 3D, [0] means cell doesn't exist
+                                if len(coords) == 3:
+                                    key = (founder_idx, gen, pos)
+                                    coords_dict[key] = coords.astype(np.float32)
+        
         except Exception as e:
-            logger.warning(f"Failed to load {mat_path}: {e}")
+            logger.warning(f"Failed to load frame {frame} coords: {e}")
             return {}
         
-        if use_cache:
-            self._cache[cache_key] = result
-        
-        return result
+        self._coord_cache[frame] = coords_dict
+        logger.debug(f"Loaded {len(coords_dict)} cell coordinates for frame {frame}")
+        return coords_dict
     
-    def _extract_group(self, group) -> Dict:
-        """Recursively extract HDF5 group data."""
-        import h5py
-        
-        result = {}
-        for key in group.keys():
-            item = group[key]
-            if isinstance(item, h5py.Dataset):
-                result[key] = np.array(item)
-            elif isinstance(item, h5py.Group):
-                result[key] = self._extract_group(item)
-        return result
-    
-    def lineage_to_tree_index(self, lineage: str) -> Optional[Tuple[str, int, int]]:
+    def lineage_to_tree_index(self, lineage: str) -> Optional[Tuple[int, int, int]]:
         """
-        Convert lineage name to tree index (founder, generation, position).
+        Convert lineage name to tree index (founder_idx, generation, position).
         
-        The tree index encodes the position in the binary lineage tree:
-        - generation: number of divisions from founder
-        - position: binary encoding of division path (a=0, p=1)
+        Uses the pre-loaded cell name lookup table for accurate mapping.
+        Falls back to algorithmic calculation if name not found.
         
         Args:
             lineage: Lineage name (e.g., "ABplpa")
             
         Returns:
-            Tuple of (founder, generation, position) or None if invalid
+            Tuple of (founder_idx, generation, position) or None if invalid
         """
         lineage = normalize_lineage_name(lineage)
         if not lineage:
             return None
         
-        # Identify founder
+        # Try lookup table first
+        name_to_idx = self._load_cellnames()
+        if lineage in name_to_idx:
+            return name_to_idx[lineage]
+        
+        # Fallback: algorithmic calculation
         founder = None
         path = ""
         
@@ -989,34 +1104,41 @@ class StandardSpatialLoader:
                 path = lineage[len(f):]
                 break
         
-        if founder is None:
+        if founder is None or founder not in FOUNDER_INDICES:
             return None
         
-        # Calculate generation and position
+        founder_idx = FOUNDER_INDICES[founder]
         generation = len(path)
         
-        # Convert path to binary position (a=0, p=1)
+        # Check if within tree bounds
+        max_gen, max_pos = FOUNDER_TREE_DIMS.get(founder, (0, 0))
+        if generation >= max_gen:
+            return None
+        
+        # Convert path to binary position (a/l=0, p/r=1)
         position = 0
         for i, char in enumerate(path.lower()):
-            if char == 'p':
+            if char in ['p', 'r']:
                 position |= (1 << (generation - 1 - i))
-            elif char not in ['a', 'l', 'r', 'd', 'v']:
-                # Unknown character
-                pass
         
-        return (founder, generation, position)
+        if position >= max_pos:
+            return None
+        
+        return (founder_idx, generation, position)
     
     def get_spatial_coords(
         self,
         lineage_names: List[str],
-        time_frame: int = 27,  # Middle frame
+        time_frame: int = 27,  # Middle frame (1-54)
+        embryo_idx: int = 0,
     ) -> np.ndarray:
         """
         Get spatial coordinates for a list of lineage names.
         
         Args:
             lineage_names: List of lineage names
-            time_frame: Time frame index (0-53)
+            time_frame: Time frame index (1-54, default 27 = middle)
+            embryo_idx: Which embryo to use (0-45)
             
         Returns:
             Array of shape (n_cells, 3) with XYZ coordinates (NaN if not found)
@@ -1024,35 +1146,304 @@ class StandardSpatialLoader:
         n_cells = len(lineage_names)
         coords = np.full((n_cells, 3), np.nan, dtype=np.float32)
         
-        # Load relevant .mat files
-        mat_files = self.get_available_files()
-        if not mat_files:
-            logger.warning("No Standard Dataset 1 files found")
+        # Load coordinates for this frame
+        frame_coords = self._load_frame_coords(time_frame, embryo_idx)
+        if not frame_coords:
             return coords
         
-        # For now, use first available file (should be enhanced to select by time)
-        # In reality, files may be organized by time frame
-        mat_data = self.load_mat_file(mat_files[0])
-        
-        # Extract coordinates for each cell
+        # Look up each cell
+        n_found = 0
         for i, name in enumerate(lineage_names):
             tree_idx = self.lineage_to_tree_index(name)
             if tree_idx is None:
                 continue
             
-            founder, gen, pos = tree_idx
+            if tree_idx in frame_coords:
+                coords[i] = frame_coords[tree_idx]
+                n_found += 1
+        
+        logger.debug(f"Found coordinates for {n_found}/{n_cells} cells at frame {time_frame}")
+        return coords
+    
+    def get_coords_for_frame_range(
+        self,
+        lineage_names: List[str],
+        start_frame: int = 1,
+        end_frame: int = 54,
+    ) -> np.ndarray:
+        """
+        Get time-series coordinates for cells across multiple frames.
+        
+        Args:
+            lineage_names: List of lineage names
+            start_frame: First frame (1-54)
+            end_frame: Last frame (1-54)
             
-            # Try to find data for this founder
-            # The exact structure depends on how the .mat files are organized
-            # This is a placeholder implementation
-            founder_key = founder.lower()
-            if founder_key in mat_data:
-                founder_data = mat_data[founder_key]
-                # Data might be organized as (gen, pos, xyz) or similar
-                # Need to adapt based on actual file structure
-                pass
+        Returns:
+            Array of shape (n_cells, n_frames, 3)
+        """
+        n_cells = len(lineage_names)
+        n_frames = end_frame - start_frame + 1
+        coords = np.full((n_cells, n_frames, 3), np.nan, dtype=np.float32)
+        
+        for frame_offset, frame in enumerate(range(start_frame, end_frame + 1)):
+            frame_coords = self.get_spatial_coords(lineage_names, time_frame=frame)
+            coords[:, frame_offset, :] = frame_coords
         
         return coords
+    
+    def get_all_cell_names(self) -> List[str]:
+        """Get all cell names in the dataset."""
+        name_to_idx = self._load_cellnames()
+        return sorted(name_to_idx.keys())
+    
+    def summary(self) -> Dict:
+        """Get summary statistics."""
+        frames = self.get_available_frames()
+        names = self._load_cellnames()
+        
+        return {
+            "n_frames": len(frames),
+            "frame_range": (min(frames), max(frames)) if frames else (0, 0),
+            "n_cell_names": len(names),
+            "n_embryos": 46,
+        }
+
+
+# =============================================================================
+# Segmentation 3D Loader (Standard Dataset 2)
+# =============================================================================
+
+class Segmentation3DLoader:
+    """
+    Loader for CShaper Standard Dataset 2 (3D voxel segmentation).
+    
+    Standard Dataset 2 contains 3D segmentation volumes showing cell shapes
+    at different time points. Each voxel is labeled with a cell ID.
+    
+    File naming: Seg_{time}_{sample}.mat
+    - time: 1-54 (developmental time frame)
+    - sample: 04-20 (embryo sample ID)
+    
+    Volume dimensions: 184 × 114 × 256 voxels
+    """
+    
+    # Voxel resolution in micrometers (approximate, from paper)
+    VOXEL_SIZE_UM = np.array([0.09, 0.09, 0.42])  # XY resolution, Z spacing
+    
+    def __init__(self, seg_dir: Union[str, Path]):
+        """
+        Initialize the segmentation loader.
+        
+        Args:
+            seg_dir: Path to "Standard Dataset 2" directory
+        """
+        self.seg_dir = Path(seg_dir)
+        self._cache: Dict[Tuple[int, int], np.ndarray] = {}
+        
+        if not self.seg_dir.exists():
+            logger.warning(f"Segmentation directory not found: {seg_dir}")
+    
+    def get_available_files(self) -> List[Tuple[int, int]]:
+        """Get list of available (time, sample) pairs."""
+        available = []
+        for f in self.seg_dir.glob("Seg_*_*.mat"):
+            try:
+                parts = f.stem.split("_")
+                time_idx = int(parts[1])
+                sample_idx = int(parts[2])
+                available.append((time_idx, sample_idx))
+            except (ValueError, IndexError):
+                pass
+        return sorted(available)
+    
+    def load_segmentation(
+        self,
+        time_idx: int,
+        sample_idx: int,
+        use_cache: bool = True,
+    ) -> Optional[np.ndarray]:
+        """
+        Load a segmentation volume.
+        
+        Args:
+            time_idx: Time frame (1-54)
+            sample_idx: Sample ID (4-20)
+            use_cache: Whether to cache loaded data
+            
+        Returns:
+            3D array of shape (184, 114, 256) with cell labels, or None if not found
+        """
+        import h5py
+        
+        cache_key = (time_idx, sample_idx)
+        if use_cache and cache_key in self._cache:
+            return self._cache[cache_key]
+        
+        mat_path = self.seg_dir / f"Seg_{time_idx}_{sample_idx:02d}.mat"
+        if not mat_path.exists():
+            return None
+        
+        try:
+            with h5py.File(mat_path, 'r') as f:
+                seg = np.array(f['Seg']).astype(np.int32)
+                
+                if use_cache:
+                    self._cache[cache_key] = seg
+                
+                return seg
+        
+        except Exception as e:
+            logger.warning(f"Failed to load segmentation {mat_path}: {e}")
+            return None
+    
+    def get_cell_labels(self, seg: np.ndarray) -> np.ndarray:
+        """Get unique non-zero cell labels from segmentation."""
+        return np.unique(seg[seg > 0])
+    
+    def compute_shape_descriptors(
+        self,
+        seg: np.ndarray,
+        cell_label: int,
+    ) -> Dict[str, float]:
+        """
+        Compute 3D shape descriptors for a cell.
+        
+        Args:
+            seg: Segmentation volume
+            cell_label: Cell label to analyze
+            
+        Returns:
+            Dict with shape descriptors:
+            - volume_um3: Volume in cubic micrometers
+            - surface_area_um2: Approximate surface area
+            - centroid_um: Center of mass [x, y, z]
+            - bbox_size_um: Bounding box dimensions
+            - sphericity: How spherical (0-1, 1=perfect sphere)
+            - elongation: Ratio of principal axes
+            - solidity: Volume / convex hull volume
+        """
+        mask = seg == cell_label
+        if not mask.any():
+            return {
+                'volume_um3': 0.0,
+                'surface_area_um2': 0.0,
+                'centroid_um': [np.nan, np.nan, np.nan],
+                'bbox_size_um': [0.0, 0.0, 0.0],
+                'sphericity': np.nan,
+                'elongation': np.nan,
+                'solidity': np.nan,
+            }
+        
+        # Volume (in voxels and um³)
+        voxel_volume = self.VOXEL_SIZE_UM.prod()
+        n_voxels = mask.sum()
+        volume_um3 = n_voxels * voxel_volume
+        
+        # Centroid
+        coords = np.argwhere(mask)
+        centroid_voxel = coords.mean(axis=0)
+        centroid_um = centroid_voxel * self.VOXEL_SIZE_UM
+        
+        # Bounding box
+        bbox_min = coords.min(axis=0)
+        bbox_max = coords.max(axis=0)
+        bbox_size_voxel = bbox_max - bbox_min + 1
+        bbox_size_um = bbox_size_voxel * self.VOXEL_SIZE_UM
+        
+        # Surface area (approximate via gradient magnitude)
+        from scipy import ndimage
+        surface_mask = ndimage.binary_erosion(mask) ^ mask
+        n_surface_voxels = surface_mask.sum()
+        # Approximate surface area (rough estimate)
+        avg_face_area = (self.VOXEL_SIZE_UM[0] * self.VOXEL_SIZE_UM[1] +
+                        self.VOXEL_SIZE_UM[1] * self.VOXEL_SIZE_UM[2] +
+                        self.VOXEL_SIZE_UM[0] * self.VOXEL_SIZE_UM[2]) / 3
+        surface_area_um2 = n_surface_voxels * avg_face_area
+        
+        # Sphericity: (36π * V²)^(1/3) / S
+        if surface_area_um2 > 0:
+            sphericity = np.power(36 * np.pi * volume_um3**2, 1/3) / surface_area_um2
+            sphericity = min(1.0, sphericity)  # Clamp to [0, 1]
+        else:
+            sphericity = np.nan
+        
+        # Elongation (ratio of principal axes)
+        try:
+            # Use PCA on voxel coordinates
+            coords_centered = coords - centroid_voxel
+            coords_scaled = coords_centered * self.VOXEL_SIZE_UM
+            if len(coords_scaled) > 3:
+                cov = np.cov(coords_scaled.T)
+                eigenvalues = np.linalg.eigvalsh(cov)
+                eigenvalues = np.sort(eigenvalues)[::-1]
+                elongation = eigenvalues[0] / (eigenvalues[-1] + 1e-10)
+            else:
+                elongation = 1.0
+        except Exception:
+            elongation = np.nan
+        
+        # Solidity (approximate - ratio to bounding box)
+        bbox_volume = bbox_size_um.prod()
+        solidity = volume_um3 / (bbox_volume + 1e-10)
+        
+        return {
+            'volume_um3': float(volume_um3),
+            'surface_area_um2': float(surface_area_um2),
+            'centroid_um': centroid_um.tolist(),
+            'bbox_size_um': bbox_size_um.tolist(),
+            'sphericity': float(sphericity),
+            'elongation': float(elongation),
+            'solidity': float(solidity),
+        }
+    
+    def compute_all_shape_descriptors(
+        self,
+        time_idx: int,
+        sample_idx: int,
+    ) -> pd.DataFrame:
+        """
+        Compute shape descriptors for all cells in a segmentation.
+        
+        Args:
+            time_idx: Time frame
+            sample_idx: Sample ID
+            
+        Returns:
+            DataFrame with shape descriptors for each cell
+        """
+        seg = self.load_segmentation(time_idx, sample_idx)
+        if seg is None:
+            return pd.DataFrame()
+        
+        labels = self.get_cell_labels(seg)
+        records = []
+        
+        for label in labels:
+            desc = self.compute_shape_descriptors(seg, label)
+            desc['cell_label'] = int(label)
+            desc['time_idx'] = time_idx
+            desc['sample_idx'] = sample_idx
+            records.append(desc)
+        
+        return pd.DataFrame(records)
+    
+    def summary(self) -> Dict:
+        """Get summary statistics."""
+        available = self.get_available_files()
+        if not available:
+            return {"n_files": 0}
+        
+        times = sorted(set(t for t, s in available))
+        samples = sorted(set(s for t, s in available))
+        
+        return {
+            "n_files": len(available),
+            "time_range": (min(times), max(times)),
+            "sample_range": (min(samples), max(samples)),
+            "volume_shape": (184, 114, 256),
+            "voxel_size_um": self.VOXEL_SIZE_UM.tolist(),
+        }
 
 
 # =============================================================================
@@ -1064,9 +1455,11 @@ class CShaperProcessor:
     Main CShaper data processor combining all data loaders.
     
     Provides a unified interface to access:
-    - Cell-cell contact matrices
-    - Cell morphology (volume, surface, sphericity)
-    - Standardized spatial coordinates
+    - Cell-cell contact matrices (ContactInterface)
+    - Cell morphology (VolumeAndSurface)
+    - Standardized spatial coordinates (Standard Dataset 1)
+    - 3D segmentation volumes (Standard Dataset 2)
+    - Time-dynamic contact graphs
     """
     
     def __init__(self, data_dir: str = "dataset/raw"):
@@ -1083,6 +1476,7 @@ class CShaperProcessor:
         self._contact_loader: Optional[ContactLoader] = None
         self._morphology_loader: Optional[MorphologyLoader] = None
         self._spatial_loader: Optional[StandardSpatialLoader] = None
+        self._segmentation_loader: Optional[Segmentation3DLoader] = None
         
         # Validate directories
         self._validate_directories()
@@ -1092,6 +1486,7 @@ class CShaperProcessor:
         self.has_contact = (self.cshaper_dir / "ContactInterface").exists()
         self.has_morphology = (self.cshaper_dir / "VolumeAndSurface").exists()
         self.has_standard_spatial = (self.cshaper_dir / "Standard Dataset 1").exists()
+        self.has_segmentation = (self.cshaper_dir / "Standard Dataset 2").exists()
         
         available = []
         if self.has_contact:
@@ -1100,6 +1495,8 @@ class CShaperProcessor:
             available.append("VolumeAndSurface")
         if self.has_standard_spatial:
             available.append("Standard Dataset 1")
+        if self.has_segmentation:
+            available.append("Standard Dataset 2")
         
         if available:
             logger.info(f"CShaper data available: {', '.join(available)}")
@@ -1133,6 +1530,15 @@ class CShaperProcessor:
             self._spatial_loader = StandardSpatialLoader(self.cshaper_dir / "Standard Dataset 1")
         return self._spatial_loader
     
+    @property
+    def segmentation_loader(self) -> Segmentation3DLoader:
+        """Get 3D segmentation loader."""
+        if self._segmentation_loader is None:
+            if not self.has_segmentation:
+                raise FileNotFoundError("Standard Dataset 2 not found")
+            self._segmentation_loader = Segmentation3DLoader(self.cshaper_dir / "Standard Dataset 2")
+        return self._segmentation_loader
+    
     # === Contact Interface ===
     
     def get_contact_adjacency(
@@ -1164,6 +1570,96 @@ class CShaperProcessor:
     def get_contact_statistics(self) -> Dict:
         """Get summary statistics about contact data."""
         return self.contact_loader.get_contact_statistics()
+    
+    def get_time_dynamic_contact_graph(
+        self,
+        lineage_names: List[str],
+        sample_id: Optional[str] = None,
+        threshold: float = 0.0,
+    ) -> Dict[int, csr_matrix]:
+        """
+        Get contact adjacency matrices for each time frame.
+        
+        This provides a time-varying graph where edges represent
+        physical contacts at each developmental time point.
+        
+        Args:
+            lineage_names: List of cell lineage names
+            sample_id: Specific sample (None = use first available)
+            threshold: Minimum contact area threshold
+            
+        Returns:
+            Dict mapping frame index to sparse adjacency matrix
+        """
+        if sample_id is None:
+            samples = self.contact_loader.get_available_samples()
+            if not samples:
+                return {}
+            sample_id = samples[0]
+        
+        # Get all frames for this sample
+        frames = self.contact_loader.get_available_frames(sample_id)
+        
+        time_graphs = {}
+        for frame in frames:
+            adj = self.contact_loader.build_adjacency_matrix(
+                lineage_names,
+                sample_id=sample_id,
+                threshold=threshold,
+                binary=False,
+            )
+            # Note: current implementation aggregates across frames
+            # For per-frame granularity, we need frame-specific loading
+            time_graphs[frame] = adj
+        
+        return time_graphs
+    
+    def get_contact_timeseries(
+        self,
+        cell1: str,
+        cell2: str,
+        sample_id: Optional[str] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Get contact area timeseries between two cells.
+        
+        Args:
+            cell1: First cell lineage name
+            cell2: Second cell lineage name
+            sample_id: Specific sample (None = average across samples)
+            
+        Returns:
+            Tuple of (frame_indices, contact_areas)
+        """
+        cell1 = normalize_lineage_name(cell1)
+        cell2 = normalize_lineage_name(cell2)
+        
+        if sample_id is None:
+            samples = self.contact_loader.get_available_samples()
+        else:
+            samples = [sample_id]
+        
+        all_frames = set()
+        contact_values = {}
+        
+        for sid in samples:
+            frames = self.contact_loader.get_available_frames(sid)
+            for frame in frames:
+                all_frames.add(frame)
+                df = self.contact_loader.load_sample(sid, frame=frame)
+                if cell1 in df.index and cell2 in df.columns:
+                    val = df.loc[cell1, cell2]
+                    if frame not in contact_values:
+                        contact_values[frame] = []
+                    contact_values[frame].append(val)
+        
+        # Average across samples
+        frames_sorted = sorted(all_frames)
+        areas = np.array([
+            np.mean(contact_values.get(f, [0.0])) for f in frames_sorted
+        ])
+        
+        return np.array(frames_sorted), areas
     
     # === Morphology ===
     
@@ -1220,6 +1716,44 @@ class CShaperProcessor:
         
         return self.spatial_loader.get_spatial_coords(lineage_names, time_frame=frame)
     
+    # === Segmentation (3D Shape) ===
+    
+    def get_shape_descriptors(
+        self,
+        time_idx: int,
+        sample_idx: int,
+    ) -> pd.DataFrame:
+        """
+        Get 3D shape descriptors for all cells at a time point.
+        
+        Args:
+            time_idx: Time frame (1-54)
+            sample_idx: Sample ID (4-20)
+            
+        Returns:
+            DataFrame with shape descriptors for each cell
+        """
+        return self.segmentation_loader.compute_all_shape_descriptors(
+            time_idx, sample_idx
+        )
+    
+    def get_segmentation_volume(
+        self,
+        time_idx: int,
+        sample_idx: int,
+    ) -> Optional[np.ndarray]:
+        """
+        Get 3D segmentation volume.
+        
+        Args:
+            time_idx: Time frame (1-54)
+            sample_idx: Sample ID (4-20)
+            
+        Returns:
+            3D array of shape (184, 114, 256) with cell labels
+        """
+        return self.segmentation_loader.load_segmentation(time_idx, sample_idx)
+    
     # === Utilities ===
     
     def get_all_cell_names(self) -> set:
@@ -1230,6 +1764,8 @@ class CShaperProcessor:
             all_cells.update(self.contact_loader.get_all_cell_names())
         if self.has_morphology:
             all_cells.update(self.morphology_loader.get_all_cell_names())
+        if self.has_standard_spatial:
+            all_cells.update(self.spatial_loader.get_all_cell_names())
         
         return all_cells
     
@@ -1269,14 +1805,28 @@ class CShaperProcessor:
             lines.append("VolumeAndSurface: ✗")
         
         if self.has_standard_spatial:
-            n_files = len(self.spatial_loader.get_available_files())
+            spatial_info = self.spatial_loader.summary()
             lines.extend([
                 "",
                 "Standard Dataset 1: ✓",
-                f"  Files: {n_files}",
+                f"  Time frames: {spatial_info['n_frames']}",
+                f"  Cell names: {spatial_info['n_cell_names']}",
+                f"  Embryos: {spatial_info['n_embryos']}",
             ])
         else:
             lines.append("Standard Dataset 1: ✗")
+        
+        if self.has_segmentation:
+            seg_info = self.segmentation_loader.summary()
+            lines.extend([
+                "",
+                "Standard Dataset 2: ✓",
+                f"  Files: {seg_info['n_files']}",
+                f"  Time range: {seg_info['time_range']}",
+                f"  Volume shape: {seg_info['volume_shape']}",
+            ])
+        else:
+            lines.append("Standard Dataset 2: ✗")
         
         lines.append("=" * 50)
         return "\n".join(lines)

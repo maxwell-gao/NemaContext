@@ -1,16 +1,48 @@
-# CShaper 数据整合方案
+# CShaper Data Integration Guide
 
-## 概述
+This document describes how to integrate CShaper 4D morphological atlas data into the NemaContext trimodal framework.
 
-本文档详细规划如何将 CShaper 4D形态学图谱数据整合到 NemaContext 的三模态框架中。
+---
 
-## 1. 当前架构分析
+## Table of Contents
 
-### 1.1 数据流
+1. [Overview](#overview)
+2. [Current Architecture](#current-architecture)
+3. [CShaper Data Resources](#cshaper-data-resources)
+4. [Integration Design](#integration-design)
+5. [Implementation Details](#implementation-details)
+6. [Lineage Name Matching](#lineage-name-matching)
+7. [Time Alignment](#time-alignment)
+8. [Output Schema](#output-schema)
+9. [Implementation Status](#implementation-status)
+10. [Model Impact](#model-impact)
+11. [Validation Plan](#validation-plan)
+
+---
+
+## Overview
+
+CShaper (Cao et al. 2020) provides a 4D morphological atlas of C. elegans embryogenesis, including:
+- **Cell-cell contact matrices**: True physical contact surface areas between cells
+- **Cell morphology**: Volume, surface area, and derived sphericity
+- **Standardized spatial coordinates**: Averaged 3D positions from 46 embryos
+
+This data enhances NemaContext by:
+1. Replacing k-NN approximated spatial graphs with true contact-based graphs
+2. Adding morphological features for cell representation
+3. Providing standardized spatial coordinates for improved consistency
+
+**Paper**: Cao et al. 2020 "Establishment of a morphological atlas of the Caenorhabditis elegans embryo using deep-learning-based 4D segmentation" (DOI: 10.1038/s41467-020-19863-x)
+
+---
+
+## Current Architecture
+
+### Data Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         当前数据处理管线                                  │
+│                         Current Data Processing Pipeline                │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │   Large2025/Packer2019          WormGUIDES           WormBase          │
@@ -49,55 +81,60 @@
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 核心组件
+### Core Components
 
-| 组件 | 文件 | 职责 |
-|-----|-----|-----|
-| `ExpressionLoader` | `src/data/builder/expression_loader.py` | 加载Large2025/Packer2019表达矩阵 |
-| `SpatialMatcher` | `src/data/builder/spatial_matcher.py` | 匹配WormGUIDES空间坐标 |
-| `LineageEncoder` | `src/data/builder/lineage_encoder.py` | 解析/编码谱系名称 |
-| `WormAtlasMapper` | `src/data/builder/worm_atlas.py` | 细胞类型↔谱系映射 |
-| `TrimodalAnnDataBuilder` | `src/data/builder/anndata_builder.py` | 整合构建AnnData |
-| `SpatialGraphBuilder` | `src/model/spatial_graph.py` | 构建空间邻居图 (k-NN) |
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| `ExpressionLoader` | `src/data/builder/expression_loader.py` | Load Large2025/Packer2019 expression matrices |
+| `SpatialMatcher` | `src/data/builder/spatial_matcher.py` | Match WormGUIDES spatial coordinates |
+| `LineageEncoder` | `src/data/builder/lineage_encoder.py` | Parse/encode lineage names |
+| `WormAtlasMapper` | `src/data/builder/worm_atlas.py` | Cell type ↔ lineage mappings |
+| `TrimodalAnnDataBuilder` | `src/data/builder/anndata_builder.py` | Integrate and build AnnData |
+| `SpatialGraphBuilder` | `src/model/spatial_graph.py` | Build spatial neighbor graph (k-NN) |
 
-### 1.3 当前局限性
+### Current Limitations
 
-1. **空间数据仅为点坐标**: WormGUIDES只提供核心位置，无细胞形态
-2. **邻居图基于k-NN近似**: 非真实物理接触
-3. **缺少形态学特征**: 无体积、表面积、不规则度等
-4. **时间覆盖有限**: Large2025时间分布与WormGUIDES不完全对齐
-
----
-
-## 2. CShaper 数据资源
-
-### 2.1 可用数据
-
-| 数据文件 | 路径 | 内容 | 关键字段 |
-|---------|-----|-----|---------|
-| **ContactInterface/** | `dataset/raw/cshaper/ContactInterface/Sample*_Stat.csv` | 细胞-细胞接触面积矩阵 | 对称矩阵，非零值=接触面积(μm²) |
-| **VolumeAndSurface/** | `dataset/raw/cshaper/VolumeAndSurface/Sample*_Stat.csv` | 细胞体积/表面积时间序列 | 每行=时间帧，每列=细胞 |
-| **Standard Dataset 1** | `dataset/raw/cshaper/Standard Dataset 1/*.mat` | 标准化3D坐标 (46胚胎平均) | 按谱系树结构组织 (gen×pos) |
-| **Standard Dataset 2** | `dataset/raw/cshaper/Standard Dataset 2/*.mat` | 3D体素分割结果 | 184×114×256 矩阵 |
-
-### 2.2 数据特性
-
-```
-CShaper 时间范围: 4-350细胞期 (约20-380分钟)
-时间帧数: 54帧
-胚胎数: 17个(完整膜分割) + 29个(仅核追踪) = 46个标准数据集
-细胞命名: 标准C. elegans谱系命名 (ABa, ABp, MS, E, C, ...)
-```
+1. **Spatial data is point-only**: WormGUIDES only provides nuclear positions, no cell morphology
+2. **Neighbor graph is k-NN approximation**: Not true physical contacts
+3. **No morphological features**: Missing volume, surface area, irregularity, etc.
+4. **Limited time coverage**: Large2025 time distribution doesn't fully align with WormGUIDES
 
 ---
 
-## 3. 整合方案
+## CShaper Data Resources
 
-### 3.1 新组件设计
+### Available Data
+
+| Data File | Path | Content | Key Fields |
+|-----------|------|---------|------------|
+| **ContactInterface/** | `dataset/raw/cshaper/ContactInterface/Sample*_Stat.csv` | Cell-cell contact area matrices | Symmetric matrix, non-zero = contact area (μm²) |
+| **VolumeAndSurface/** | `dataset/raw/cshaper/VolumeAndSurface/Sample*_Stat.csv` | Cell volume/surface time series | Row = time frame, Column = cell |
+| **Standard Dataset 1** | `dataset/raw/cshaper/Standard Dataset 1/*.mat` | Standardized 3D coordinates (46 embryo average) | Organized by lineage tree structure (gen×pos) |
+| **Standard Dataset 2** | `dataset/raw/cshaper/Standard Dataset 2/*.mat` | 3D voxel segmentation results | 184×114×256 matrices |
+
+### Data Characteristics
+
+```
+CShaper time range: 4-350 cell stage (approximately 20-380 minutes)
+Time frames: 54 frames
+Embryos: 17 (complete membrane segmentation) + 29 (nuclear tracking only) = 46 standard dataset
+Cell naming: Standard C. elegans lineage naming (ABa, ABp, MS, E, C, ...)
+```
+
+### Sample Files Available
+
+ContactInterface and VolumeAndSurface each contain 17 sample files:
+- Sample04 through Sample20 (`Sample{04-20}_Stat.csv`)
+
+---
+
+## Integration Design
+
+### Enhanced Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         增强后的数据处理管线                              │
+│                     Enhanced Data Processing Pipeline                   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │   Large2025          WormGUIDES       WormBase        CShaper          │
@@ -106,7 +143,7 @@ CShaper 时间范围: 4-350细胞期 (约20-380分钟)
 │        ▼                 ▼                ▼               ▼            │
 │   ┌──────────┐     ┌──────────┐    ┌──────────┐    ┌──────────────┐   │
 │   │Expression│     │ Spatial  │    │ Lineage  │    │ CShaper      │   │
-│   │ Loader   │     │ Matcher  │    │ Encoder  │    │ Processor    │ NEW
+│   │ Loader   │     │ Matcher  │    │ Encoder  │    │ Processor    │   │
 │   └──────────┘     └──────────┘    └──────────┘    │              │   │
 │        │                 │                │        │-load_contact()│   │
 │        │                 │                │        │-load_volume() │   │
@@ -117,7 +154,7 @@ CShaper 时间范围: 4-350细胞期 (约20-380分钟)
 │                                   │                                    │
 │                                   ▼                                    │
 │                     ┌──────────────────────────────┐                   │
-│                     │  EnhancedAnnDataBuilder      │ NEW (extends)     │
+│                     │  EnhancedAnnDataBuilder      │                   │
 │                     │                              │                   │
 │                     │  - build_with_cshaper()      │                   │
 │                     │  - _add_morphology()         │                   │
@@ -131,99 +168,126 @@ CShaper 时间范围: 4-350细胞期 (约20-380分钟)
 │                     │                              │                   │
 │                     │  X: expression matrix        │                   │
 │                     │                              │                   │
-│                     │  obsm['X_spatial']           │ (improved)        │
+│                     │  obsm['X_spatial']           │ (WormGUIDES)      │
 │                     │  obsm['X_lineage_binary']    │                   │
-│                     │  obsm['X_cshaper_spatial']   │ NEW               │
+│                     │  obsm['X_cshaper_spatial']   │ (optional)        │
 │                     │                              │                   │
-│                     │  obs['cell_volume']          │ NEW               │
-│                     │  obs['cell_surface']         │ NEW               │
-│                     │  obs['sphericity']           │ NEW               │
+│                     │  obs['cell_volume']          │                   │
+│                     │  obs['cell_surface']         │                   │
+│                     │  obs['sphericity']           │                   │
 │                     │                              │                   │
-│                     │  obsp['contact_adjacency']   │ NEW (真实接触)    │
+│                     │  obsp['contact_adjacency']   │ (true contacts)   │
 │                     │  obsp['spatial_distances']   │                   │
 │                     │  obsp['lineage_adjacency']   │                   │
 │                     └──────────────────────────────┘                   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 新增文件
+### New/Modified Files
 
 ```
-src/data/
-├── builder/
-│   ├── cshaper_processor.py    # NEW: CShaper数据处理器
-│   └── enhanced_builder.py     # NEW: 增强版AnnData构建器
-├── processors/
-│   └── cshaper/               # NEW: CShaper专用处理
-│       ├── __init__.py
-│       ├── contact_loader.py   # 接触矩阵加载
-│       ├── morphology_loader.py# 形态特征加载
-│       └── spatial_loader.py   # Standard Dataset空间数据
+src/data/builder/
+├── cshaper_processor.py    # CShaper data processor (implemented)
+└── enhanced_builder.py     # Enhanced AnnData builder (implemented)
 ```
 
 ---
 
-## 4. 详细实现计划
+## Implementation Details
 
-### 4.1 Phase 1: CShaper处理器 (`src/data/builder/cshaper_processor.py`)
+### CShaperProcessor (`src/data/builder/cshaper_processor.py`)
+
+Main class combining all CShaper data loaders:
 
 ```python
 class CShaperProcessor:
     """
-    CShaper数据处理器 - 加载和处理形态学数据
+    CShaper data processor - load and process morphological data
     """
     
     def __init__(self, data_dir: str = "dataset/raw"):
         self.data_dir = Path(data_dir)
         self.cshaper_dir = self.data_dir / "cshaper"
         
-    # === 接触矩阵 ===
-    def load_contact_matrices(self, samples: List[str] = None) -> Dict[str, pd.DataFrame]:
-        """加载所有样本的细胞-细胞接触矩阵"""
+    # === Contact Interface ===
+    def get_contact_adjacency(
+        self,
+        lineage_names: List[str],
+        sample_id: Optional[str] = None,
+        threshold: float = 0.0,
+        binary: bool = False,
+    ) -> csr_matrix:
+        """Build contact adjacency matrix for given cells"""
         
-    def get_contact_adjacency(self, lineage_names: List[str], 
-                               time_frame: int = None) -> csr_matrix:
-        """为给定细胞列表构建接触邻接矩阵"""
-        
-    def get_average_contacts(self) -> pd.DataFrame:
-        """跨样本平均的接触强度"""
+    def get_contact_statistics(self) -> Dict:
+        """Get summary statistics about contact data"""
     
-    # === 形态特征 ===    
-    def load_volume_surface(self, samples: List[str] = None) -> Dict[str, pd.DataFrame]:
-        """加载体积/表面积时间序列"""
-        
-    def get_morphology_features(self, lineage_names: List[str],
-                                 time_frame: int = None) -> pd.DataFrame:
-        """获取细胞形态特征 (volume, surface, sphericity)"""
+    # === Morphology ===    
+    def get_morphology_features(
+        self,
+        lineage_names: List[str],
+        embryo_times: Optional[np.ndarray] = None,
+        sample_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Get cell morphology features (volume, surface, sphericity)"""
     
-    # === 标准化空间坐标 ===
-    def load_standard_spatial(self) -> Dict[str, np.ndarray]:
-        """加载Standard Dataset 1的标准化坐标"""
-        
-    def get_spatial_coords(self, lineage_names: List[str],
-                           time_frame: int = None) -> np.ndarray:
-        """获取标准化3D坐标"""
-    
-    # === 时间映射 ===
-    def embryo_time_to_frame(self, time_min: float) -> int:
-        """将胚胎时间(分钟)映射到CShaper帧号"""
-        
-    def frame_to_embryo_time(self, frame: int) -> float:
-        """将CShaper帧号映射到胚胎时间(分钟)"""
+    # === Standardized Spatial Coordinates ===
+    def get_spatial_coords(
+        self,
+        lineage_names: List[str],
+        embryo_times: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Get standardized 3D coordinates"""
 ```
 
-### 4.2 Phase 2: 增强版构建器 (`src/data/builder/enhanced_builder.py`)
+### ContactLoader
+
+Handles ContactInterface CSV files:
+
+```python
+class ContactLoader:
+    """
+    CShaper ContactInterface data loader
+    
+    File format: Sample{04-20}_Stat.csv
+    - Row 1: "cell1" + first cell names in each contact pair
+    - Row 2: "cell2" + second cell names in each contact pair
+    - Rows 3+: frame index + contact area values (μm²)
+    """
+    
+    def load_sample(self, sample_id: str, frame: Optional[int] = None) -> pd.DataFrame
+    def get_consensus_contacts(self, min_samples: int = 3) -> pd.DataFrame
+    def build_adjacency_matrix(self, cell_list: List[str], ...) -> csr_matrix
+```
+
+### MorphologyLoader
+
+Handles VolumeAndSurface CSV files:
+
+```python
+class MorphologyLoader:
+    """
+    CShaper VolumeAndSurface data loader
+    
+    File format:
+    - Sample{04-20}_volume.csv: Volume data (μm³)
+    - Sample{04-20}_surface.csv: Surface area data (μm²)
+    """
+    
+    def load_sample(self, sample_id: str) -> Tuple[pd.DataFrame, pd.DataFrame]
+    def get_morphology_at_frame(self, frame: int, sample_id: Optional[str] = None) -> pd.DataFrame
+    def get_features_for_cells(self, cell_names: List[str], time_frames: np.ndarray = None) -> pd.DataFrame
+```
+
+### EnhancedAnnDataBuilder (`src/data/builder/enhanced_builder.py`)
+
+Extends TrimodalAnnDataBuilder to add CShaper data:
 
 ```python
 class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
     """
-    增强版三模态AnnData构建器 - 集成CShaper数据
+    Enhanced AnnData builder with CShaper morphological data integration
     """
-    
-    def __init__(self, data_dir: str = "dataset/raw", 
-                 output_dir: str = "dataset/processed"):
-        super().__init__(data_dir, output_dir)
-        self.cshaper = CShaperProcessor(data_dir)
     
     def build_with_cshaper(
         self,
@@ -231,243 +295,89 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         source: Literal["large2025", "packer2019"] = "large2025",
         include_morphology: bool = True,
         include_contact_graph: bool = True,
-        use_cshaper_spatial: bool = False,  # 是否用CShaper替换WormGUIDES
+        use_cshaper_spatial: bool = False,
         **kwargs
     ) -> ad.AnnData:
-        """构建包含CShaper增强的AnnData"""
-        
-        # 1. 先构建基础三模态
-        adata = self.build(variant=variant, source=source, **kwargs)
-        
-        # 2. 添加CShaper增强
-        if include_morphology:
-            adata = self._add_morphology_features(adata)
-            
-        if include_contact_graph:
-            adata = self._add_contact_graph(adata)
-            
-        if use_cshaper_spatial:
-            adata = self._enhance_spatial_coords(adata)
-            
-        return adata
-    
-    def _add_morphology_features(self, adata: ad.AnnData) -> ad.AnnData:
-        """添加细胞体积、表面积、球形度"""
-        
-        # 获取谱系名称和时间
-        lineages = adata.obs['lineage_complete'].values
-        times = adata.obs.get('embryo_time_min', None)
-        
-        # 匹配CShaper形态数据
-        morphology = self.cshaper.get_morphology_features(lineages, times)
-        
-        # 添加到obs
-        adata.obs['cell_volume'] = morphology['volume'].values
-        adata.obs['cell_surface'] = morphology['surface'].values
-        adata.obs['sphericity'] = morphology['sphericity'].values
-        adata.obs['has_morphology'] = ~morphology['volume'].isna()
-        
-        return adata
-    
-    def _add_contact_graph(self, adata: ad.AnnData) -> ad.AnnData:
-        """添加真实细胞-细胞接触图"""
-        
-        lineages = adata.obs['lineage_complete'].values.tolist()
-        
-        # 构建接触邻接矩阵
-        contact_adj = self.cshaper.get_contact_adjacency(lineages)
-        
-        # 添加到obsp
-        adata.obsp['contact_adjacency'] = contact_adj
-        adata.obsp['contact_distances'] = self._contact_to_distance(contact_adj)
-        
-        # 统计
-        n_edges = contact_adj.nnz // 2
-        logger.info(f"Built contact graph with {n_edges} edges")
-        
-        return adata
-    
-    def _enhance_spatial_coords(self, adata: ad.AnnData) -> ad.AnnData:
-        """使用CShaper标准化坐标增强/替换WormGUIDES坐标"""
-        
-        lineages = adata.obs['lineage_complete'].values.tolist()
-        times = adata.obs.get('embryo_time_min', None)
-        
-        # 获取CShaper坐标
-        cshaper_coords = self.cshaper.get_spatial_coords(lineages, times)
-        
-        # 保存为额外的obsm (保留原始WormGUIDES)
-        adata.obsm['X_cshaper_spatial'] = cshaper_coords
-        
-        return adata
-```
-
-### 4.3 Phase 3: 接触图加载器 (`src/data/processors/cshaper/contact_loader.py`)
-
-```python
-class ContactLoader:
-    """
-    CShaper ContactInterface数据加载器
-    
-    文件格式: Sample{04-20}_Stat.csv
-    - 行/列名: 细胞谱系名称 (ABa, ABp, MS, E, ...)
-    - 值: 接触面积 (μm²), 0表示无接触
-    - 矩阵对称
-    """
-    
-    def __init__(self, contact_dir: Path):
-        self.contact_dir = contact_dir
-        self._cache: Dict[str, pd.DataFrame] = {}
-    
-    def load_sample(self, sample_id: str) -> pd.DataFrame:
-        """加载单个样本的接触矩阵"""
-        
-    def load_all_samples(self) -> Dict[str, pd.DataFrame]:
-        """加载所有样本"""
-        
-    def get_consensus_contacts(self, 
-                                min_samples: int = 3) -> pd.DataFrame:
-        """获取共识接触 (在>=min_samples个样本中出现)"""
-        
-    def get_contact_strength(self, 
-                             cell1: str, 
-                             cell2: str,
-                             sample_id: str = None) -> float:
-        """获取两个细胞间的接触强度"""
-        
-    def build_sparse_adjacency(self, 
-                               cell_list: List[str],
-                               sample_id: str = None,
-                               threshold: float = 0.0) -> csr_matrix:
-        """为给定细胞列表构建稀疏邻接矩阵"""
-```
-
-### 4.4 Phase 4: 形态特征加载器 (`src/data/processors/cshaper/morphology_loader.py`)
-
-```python
-class MorphologyLoader:
-    """
-    CShaper VolumeAndSurface数据加载器
-    
-    文件格式: Sample{04-20}_Stat.csv
-    - 行: 时间帧 (0-53)
-    - 列: 细胞谱系名称
-    - 值: 体积(列名含volume)或表面积(列名含surface)
-    """
-    
-    def __init__(self, volume_dir: Path):
-        self.volume_dir = volume_dir
-        
-    def load_sample(self, sample_id: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """加载单个样本的体积和表面积数据"""
-        
-    def get_cell_stats(self, 
-                       cell_name: str,
-                       sample_id: str = None) -> Dict[str, np.ndarray]:
-        """获取单个细胞的体积/表面积时间序列"""
-        
-    def get_morphology_at_time(self,
-                               time_frame: int,
-                               sample_id: str = None) -> pd.DataFrame:
-        """获取特定时间帧的所有细胞形态"""
-        
-    def compute_sphericity(self, volume: float, surface: float) -> float:
-        """计算球形度: (36π * V²)^(1/3) / S"""
-        
-    def get_features_for_cells(self,
-                               cell_names: List[str],
-                               time_frames: np.ndarray = None) -> pd.DataFrame:
-        """批量获取细胞形态特征"""
+        """Build enhanced AnnData with CShaper integration"""
 ```
 
 ---
 
-## 5. 谱系名称匹配策略
+## Lineage Name Matching
 
-### 5.1 命名对照
+### Naming Conventions
 
-| 数据源 | 示例名称 | 格式说明 |
-|-------|---------|---------|
-| Large2025 | `ABplpapppa` | 完整小写路径 |
-| WormGUIDES | `ABplpapppa` | 完整小写路径 |
-| CShaper ContactInterface | `ABplpapppa` | 完整小写路径 |
-| CShaper VolumeAndSurface | `ABplpapppa` | 完整小写路径 |
-| CShaper Standard DS1 | 按树索引 | gen×pos矩阵 |
+| Data Source | Example Name | Format Description |
+|-------------|--------------|-------------------|
+| Large2025 | `ABplpapppa` | Full lowercase path |
+| WormGUIDES | `ABplpapppa` | Full lowercase path |
+| CShaper ContactInterface | `ABplpapppa` | Full lowercase path |
+| CShaper VolumeAndSurface | `ABplpapppa` | Full lowercase path |
+| CShaper Standard DS1 | By tree index | gen×pos matrix |
 
-### 5.2 匹配函数
+### Normalization Function
 
 ```python
 def normalize_lineage_name(name: str) -> str:
-    """标准化谱系名称"""
-    # 移除空格、句点
+    """Normalize lineage name to standard format"""
+    # Remove whitespace and periods
     name = name.replace(" ", "").replace(".", "")
-    # 标准化founder前缀大写
+    # Standardize founder prefix to uppercase
     for founder in ["AB", "MS", "EMS", "P0", "P1", "P2", "P3", "P4", "Z2", "Z3"]:
         if name.upper().startswith(founder):
             return founder + name[len(founder):].lower()
-    # E, C, D特殊处理
+    # E, C, D special handling
     if name[0].upper() in "ECD":
         return name[0].upper() + name[1:].lower()
     return name
-
-def lineage_to_tree_index(name: str) -> Tuple[str, int, int]:
-    """
-    将谱系名称转换为Standard Dataset 1的树索引
-    
-    Returns:
-        (founder, generation, position)
-        
-    Example:
-        'ABplpa' -> ('AB', 4, 9)  # gen=4 (从AB开始第4代), pos=9 (plpa的二进制1010=10, 0-indexed=9)
-    """
 ```
 
 ---
 
-## 6. 时间对齐策略
+## Time Alignment
 
-### 6.1 时间映射
+### Time Mapping
 
 ```python
-# CShaper: 54帧覆盖4-350细胞期
-# 大约对应: 20分钟 - 380分钟 (与WormGUIDES相似)
+# CShaper: 54 frames covering 4-350 cell stage
+# Approximately corresponds to: 20 min - 380 min (similar to WormGUIDES)
 
 CSHAPER_FRAMES = 54
 CSHAPER_START_TIME_MIN = 20
 CSHAPER_END_TIME_MIN = 380
 
 def embryo_time_to_cshaper_frame(time_min: float) -> int:
-    """将胚胎时间映射到CShaper帧"""
+    """Map embryo time to CShaper frame"""
     if time_min < CSHAPER_START_TIME_MIN:
         return 0
     if time_min > CSHAPER_END_TIME_MIN:
         return CSHAPER_FRAMES - 1
     
-    # 线性映射
+    # Linear mapping
     fraction = (time_min - CSHAPER_START_TIME_MIN) / (CSHAPER_END_TIME_MIN - CSHAPER_START_TIME_MIN)
     return int(fraction * (CSHAPER_FRAMES - 1))
 ```
 
-### 6.2 处理时间不匹配
+### Handling Time Mismatches
 
-对于Large2025中embryo_time缺失或不在范围内的细胞:
-1. 使用谱系深度估算发育阶段
-2. 使用细胞类型推断时间窗口
-3. 使用跨时间平均值
+For cells in Large2025 with missing or out-of-range embryo_time:
+1. Estimate developmental stage from lineage depth
+2. Infer time window from cell type
+3. Use cross-time averages
 
 ---
 
-## 7. 输出规范
+## Output Schema
 
-### 7.1 增强后的AnnData结构
+### Enhanced AnnData Structure
 
 ```python
 adata = AnnData(
-    # === 原有 ===
-    X=expression_matrix,                    # (n_cells, n_genes) 稀疏
+    # === Original ===
+    X=expression_matrix,                    # (n_cells, n_genes) sparse
     
     obs={
-        # 原有
+        # Original
         'cell_type': ...,
         'lineage_complete': ...,
         'embryo_time_min': ...,
@@ -476,51 +386,50 @@ adata = AnnData(
         'lineage_depth': ...,
         'has_spatial': ...,
         
-        # CShaper新增
-        'cell_volume': ...,                 # 细胞体积 (μm³)
-        'cell_surface': ...,                # 表面积 (μm²)
-        'sphericity': ...,                  # 球形度 [0,1]
-        'has_morphology': ...,              # bool: 是否有形态数据
-        'cshaper_frame': ...,               # 匹配的CShaper帧号
+        # CShaper additions
+        'cell_volume': ...,                 # Cell volume (μm³)
+        'cell_surface': ...,                # Surface area (μm²)
+        'sphericity': ...,                  # Sphericity [0,1]
+        'has_morphology': ...,              # bool: has morphology data
+        'cshaper_frame': ...,               # Matched CShaper frame number
     },
     
-    var={...},                              # 基因注释
+    var={...},                              # Gene annotations
     
     obsm={
-        # 原有
-        'X_spatial': ...,                   # (n_cells, 3) WormGUIDES坐标
-        'X_lineage_binary': ...,            # (n_cells, max_depth) 谱系编码
+        # Original
+        'X_spatial': ...,                   # (n_cells, 3) WormGUIDES coords
+        'X_lineage_binary': ...,            # (n_cells, max_depth) lineage encoding
         
-        # CShaper新增
-        'X_cshaper_spatial': ...,           # (n_cells, 3) CShaper标准化坐标
+        # CShaper addition
+        'X_cshaper_spatial': ...,           # (n_cells, 3) CShaper standardized coords
     },
     
     obsp={
-        # 原有
-        'spatial_distances': ...,           # k-NN距离
-        'spatial_connectivities': ...,      # k-NN连接
-        'lineage_adjacency': ...,           # 谱系邻接
+        # Original
+        'spatial_distances': ...,           # k-NN distances
+        'spatial_connectivities': ...,      # k-NN connections
+        'lineage_adjacency': ...,           # Lineage adjacency
         
-        # CShaper新增
-        'contact_adjacency': ...,           # 真实接触图 (加权)
-        'contact_binary': ...,              # 真实接触图 (二值)
+        # CShaper additions
+        'contact_adjacency': ...,           # True contact graph (weighted)
+        'contact_binary': ...,              # True contact graph (binary)
     },
     
     uns={
-        # 原有
+        # Original
         'data_sources': {...},
         'build_params': {...},
         
-        # CShaper新增
+        # CShaper additions
         'cshaper_info': {
-            'samples_used': [...],
-            'n_with_morphology': ...,
-            'n_with_contact': ...,
-            'time_mapping': {...},
-        },
-        'contact_statistics': {
-            'mean_contacts_per_cell': ...,
-            'max_contact_area': ...,
+            'source': ...,
+            'n_cells_with_morphology': ...,
+            'n_contact_edges': ...,
+            'mean_volume': ...,
+            'mean_surface': ...,
+            'mean_sphericity': ...,
+            'mean_contact_degree': ...,
         },
     }
 )
@@ -528,69 +437,226 @@ adata = AnnData(
 
 ---
 
-## 8. 实现优先级
+## Implementation Status
 
-### Phase 1 (MVP) - 接触图整合
-- [ ] `CShaperProcessor` 基础类
-- [ ] `ContactLoader` 接触矩阵加载
-- [ ] `EnhancedAnnDataBuilder._add_contact_graph()`
-- [ ] 测试: 接触图与k-NN图的比较
+### Phase 1 (MVP) - Contact Graph Integration ✅
+- [x] `CShaperProcessor` base class
+- [x] `ContactLoader` contact matrix loading
+- [x] `EnhancedAnnDataBuilder._add_contact_graph()`
+- [x] Graph comparison utilities (contact vs k-NN)
 
-### Phase 2 - 形态特征
-- [ ] `MorphologyLoader` 体积/表面积加载
-- [ ] `EnhancedAnnDataBuilder._add_morphology_features()`
-- [ ] 计算衍生特征 (球形度等)
+### Phase 2 - Morphology Features ✅
+- [x] `MorphologyLoader` volume/surface loading
+- [x] `EnhancedAnnDataBuilder._add_morphology_features()`
+- [x] Derived feature computation (sphericity)
 
-### Phase 3 - 空间坐标增强
-- [ ] Standard Dataset 1 HDF5解析
-- [ ] 谱系→树索引转换
-- [ ] `EnhancedAnnDataBuilder._enhance_spatial_coords()`
+### Phase 3 - Spatial Coordinate Enhancement ✅
+- [x] `StandardSpatialLoader` for HDF5/MAT files
+- [x] Lineage → tree index conversion
+- [x] Complete coordinate extraction from Standard Dataset 1
+- [x] `EnhancedAnnDataBuilder._add_cshaper_spatial()`
 
-### Phase 4 - 高级功能
-- [ ] 3D形态描述符 (从Standard Dataset 2)
-- [ ] 时间动态接触图
-- [ ] 接触图GNN集成
+### Phase 4 - Advanced Features ✅
+- [x] `Segmentation3DLoader` for Standard Dataset 2
+- [x] 3D shape descriptors (volume, surface, sphericity, elongation, solidity)
+- [x] Time-dynamic contact graphs (`TimeDynamicContactGraph`)
+- [x] Contact graph GNN (`ContactGraph`, `ContactMessagePassing`, `ContactGNN`)
 
 ---
 
-## 9. 对模型的影响
+## Model Impact
 
-### 9.1 Spatial GNN 增强
+### Spatial GNN Enhancement
 
 ```python
-# 原来: k-NN图 (近似邻居)
+# Before: k-NN graph (approximate neighbors)
 edge_index = knn_graph(spatial_coords, k=10)
 
-# 增强后: 真实接触图
+# After: True contact graph
 edge_index = contact_adjacency.nonzero()
-edge_weight = contact_adjacency.data  # 接触面积作为边权重
+edge_weight = contact_adjacency.data  # Contact area as edge weight
 ```
 
-### 9.2 细胞Token特征增强
+### Cell Token Feature Enhancement
 
 ```python
-# 原来: 表达 + 谱系编码
+# Before: expression + lineage encoding
 cell_features = torch.cat([expression, lineage_binary], dim=-1)
 
-# 增强后: 表达 + 谱系编码 + 形态特征
+# After: expression + lineage encoding + morphology features
 morphology = torch.stack([volume, surface, sphericity], dim=-1)
 cell_features = torch.cat([expression, lineage_binary, morphology], dim=-1)
 ```
 
-### 9.3 消息传递改进
+### Message Passing Improvement
 
 ```python
-# GNN消息传递时使用真实邻居关系
+# GNN message passing with true neighbor relationships
 def forward(self, x, contact_edge_index, contact_edge_weight):
-    # 邻居聚合时按接触面积加权
+    # Neighbor aggregation weighted by contact area
     return self.conv(x, contact_edge_index, edge_weight=contact_edge_weight)
 ```
 
 ---
 
-## 10. 验证计划
+## Validation Plan
 
-1. **数据完整性**: 验证CShaper谱系名称与Large2025的匹配率
-2. **接触图质量**: 比较接触图与k-NN图的结构差异
-3. **形态特征分布**: 可视化体积/表面积随发育时间的变化
-4. **下游任务**: 评估增强数据对细胞类型预测的影响
+1. **Data Integrity**: Verify CShaper lineage name match rate with Large2025
+2. **Contact Graph Quality**: Compare contact graph with k-NN graph structural differences
+3. **Morphology Feature Distribution**: Visualize volume/surface changes over developmental time
+4. **Downstream Tasks**: Evaluate enhanced data impact on cell type prediction
+
+---
+
+## Usage
+
+### Building Enhanced AnnData
+
+```bash
+# Build enhanced dataset with contact graph and morphology
+uv run python examples/build_enhanced_anndata.py
+
+# Include CShaper spatial coordinates
+uv run python examples/build_enhanced_anndata.py --use-cshaper-spatial
+
+# Build extended variant (all cells)
+uv run python examples/build_enhanced_anndata.py --variant extended
+
+# Compare contact graph with k-NN graph
+uv run python examples/build_enhanced_anndata.py --compare-graphs
+
+# Print CShaper data summary
+uv run python examples/build_enhanced_anndata.py --cshaper-summary
+```
+
+### Python API
+
+```python
+from src.data.builder import EnhancedAnnDataBuilder, CShaperProcessor
+
+# Check available CShaper data
+processor = CShaperProcessor("dataset/raw")
+print(processor.summary())
+
+# Build enhanced AnnData
+builder = EnhancedAnnDataBuilder()
+adata = builder.build_with_cshaper(
+    variant="complete",
+    include_morphology=True,
+    include_contact_graph=True,
+    use_cshaper_spatial=False,
+)
+
+# Access CShaper-added data
+print(adata.obs[['cell_volume', 'cell_surface', 'sphericity']].describe())
+print(f"Contact graph edges: {adata.obsp['contact_binary'].nnz // 2}")
+
+# Compare graphs
+comparison = builder.compare_graphs(adata)
+print(f"Jaccard similarity: {comparison['jaccard']:.3f}")
+```
+
+---
+
+## New Components
+
+### Segmentation3DLoader
+
+Loads 3D voxel segmentation data from Standard Dataset 2:
+
+```python
+from src.data.builder import CShaperProcessor
+
+processor = CShaperProcessor("dataset/raw")
+loader = processor.segmentation_loader
+
+# Load segmentation volume
+seg = loader.load_segmentation(time_idx=1, sample_idx=4)  # (184, 114, 256)
+
+# Get cell labels
+labels = loader.get_cell_labels(seg)
+
+# Compute 3D shape descriptors for a cell
+descriptors = loader.compute_shape_descriptors(seg, cell_label=labels[0])
+# Returns: volume_um3, surface_area_um2, centroid_um, bbox_size_um,
+#          sphericity, elongation, solidity
+
+# Compute for all cells
+all_desc = loader.compute_all_shape_descriptors(time_idx=1, sample_idx=4)
+```
+
+### Time-Dynamic Contact Graphs
+
+Track how cell-cell contacts evolve over developmental time:
+
+```python
+from src.model import ContactGraph, TimeDynamicContactGraph
+
+# Build per-frame graphs
+graphs = {}
+for frame in range(1, 55):
+    adj = processor.contact_loader.load_sample("Sample04", frame=frame)
+    # ... build ContactGraph
+    graphs[frame] = graph
+
+# Create time-dynamic graph
+time_graph = TimeDynamicContactGraph.from_frame_graphs(graphs)
+
+# Get contact trajectory between two cells
+times, areas = time_graph.get_contact_trajectory(cell1_idx, cell2_idx)
+
+# Get all temporal edges for spatio-temporal GNN
+edge_index, edge_weight, edge_time = time_graph.get_temporal_edges()
+```
+
+### Contact Graph GNN
+
+Graph neural network layers for contact-based cell embeddings:
+
+```python
+from src.model import ContactGNN, build_contact_graph_from_cshaper
+
+# Build ContactGraph from CShaper data
+graph = build_contact_graph_from_cshaper(
+    processor,
+    lineage_names=cell_list,
+    include_morphology=True,
+)
+
+# Create GNN
+gnn = ContactGNN(
+    in_features=3,  # morphology features
+    hidden_features=64,
+    out_features=32,
+    n_layers=2,
+)
+
+# Get cell embeddings
+embeddings = gnn.get_cell_embeddings(graph)
+```
+
+---
+
+## References
+
+1. Cao J et al. (2020) "Establishment of a morphological atlas of the Caenorhabditis elegans embryo using deep-learning-based 4D segmentation." Nat Commun 11:6254.
+
+2. Large CRL et al. (2025) "Lineage-resolved analysis of embryonic gene expression evolution in C. elegans and C. briggsae." Science 388:eadu8249.
+
+3. Bao Lab WormGUIDES: https://github.com/zhirongbaolab/WormGUIDES
+
+---
+
+## Changelog
+
+- **v0.3.0** (2026-01): Complete CShaper integration
+  - StandardSpatialLoader: Full coordinate extraction from Standard Dataset 1
+  - Segmentation3DLoader: 3D shape descriptors from Standard Dataset 2
+  - TimeDynamicContactGraph: Time-varying contact graph support
+  - ContactGNN: Graph neural network layers for contact graphs
+  - Test suite: Comprehensive validation script
+- **v0.2.0** (2024-01): CShaper integration implemented
+  - ContactLoader, MorphologyLoader, StandardSpatialLoader
+  - EnhancedAnnDataBuilder with contact graph and morphology
+  - Graph comparison utilities
+- **v0.1.0** (2024-01): Initial trimodal implementation with Large2025 support
