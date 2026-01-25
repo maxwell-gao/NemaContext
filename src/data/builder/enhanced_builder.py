@@ -366,18 +366,24 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         """
         Add cell-cell contact adjacency graph.
         
-        Creates two graphs:
-        - contact_adjacency: Weighted by contact surface area
-        - contact_binary: Binary (connected/not connected)
+        Creates graphs based on biological reasoning:
         
-        If ancestor_mapper is provided, cells are mapped to their CShaper
-        ancestors, and contacts between ancestors are projected to descendants.
+        1. contact_adjacency/contact_binary: 
+           - ONLY for cells that DIRECTLY match CShaper (same developmental stage)
+           - Ancestor mapping NOT used here (biologically incorrect to assume
+             all descendants of contacting ancestors also contact each other)
+        
+        2. lineage_proximity (new):
+           - For ALL cells with lineage annotations
+           - Encodes developmental proximity based on ancestor relationships
+           - If ancestors contacted, descendants have higher "lineage proximity"
+           - This is a prior/probability, not actual physical contact
         
         Args:
             adata: AnnData object to enhance
             threshold: Minimum contact area threshold
             min_samples: Minimum samples for consensus
-            ancestor_mapper: Optional mapper for ancestor-based matching
+            ancestor_mapper: Optional mapper (used for lineage_proximity, not contact)
         """
         n_cells = adata.n_obs
         
@@ -385,26 +391,20 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         lineage_col = self._get_lineage_column(adata)
         lineages = adata.obs[lineage_col].fillna("").tolist()
         
-        # Apply ancestor mapping if available
-        query_lineages = lineages
-        if ancestor_mapper is not None:
-            mapped_ancestors, _ = ancestor_mapper.map_cells(lineages)
-            query_lineages = [
-                anc if anc is not None else orig
-                for anc, orig in zip(mapped_ancestors, lineages)
-            ]
-        
         try:
-            # Build weighted adjacency matrix using ancestor-mapped lineages
+            # ========================================
+            # 1. TRUE CONTACT GRAPH (direct matches only)
+            # ========================================
+            # Only use original lineages - no ancestor mapping
+            # This gives true physical contacts for early-stage cells
             contact_weighted = self.cshaper.get_contact_adjacency(
-                query_lineages,
+                lineages,  # Original lineages, NOT ancestor-mapped
                 threshold=threshold,
                 binary=False,
             )
             
-            # Build binary adjacency matrix
             contact_binary = self.cshaper.get_contact_adjacency(
-                query_lineages,
+                lineages,
                 threshold=threshold,
                 binary=True,
             )
@@ -414,16 +414,30 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             adata.obsp["contact_binary"] = contact_binary
             
             # Statistics
-            n_edges = contact_binary.nnz // 2  # Divide by 2 for undirected
-            n_cells_with_contacts = (contact_binary.sum(axis=1) > 0).sum()
-            mean_degree = contact_binary.sum() / max(n_cells, 1)
+            n_edges = contact_binary.nnz // 2
+            has_true_contact = np.asarray(contact_binary.sum(axis=1)).flatten() > 0
+            n_cells_with_contacts = int(has_true_contact.sum())
+            mean_degree = float(contact_binary.sum() / max(n_cells, 1))
+            
+            # Add indicator for cells with true contact data (useful for training)
+            # These cells can serve as supervision signal for link prediction
+            adata.obs["has_true_contact"] = has_true_contact
             
             logger.info(
                 f"Added contact graph: {n_edges} edges, "
                 f"{n_cells_with_contacts}/{n_cells} cells with contacts, "
-                f"mean degree {mean_degree:.1f}"
-                + (" (with ancestor mapping)" if ancestor_mapper else "")
+                f"mean degree {mean_degree:.1f} (direct matches only)"
             )
+            
+            # ========================================
+            # 2. LINEAGE PROXIMITY GRAPH (developmental prior)
+            # ========================================
+            # This encodes: "cells whose ancestors contacted may share
+            # developmental signals and fate decisions"
+            if ancestor_mapper is not None:
+                self._add_lineage_proximity_graph(
+                    adata, lineages, ancestor_mapper, threshold
+                )
             
         except Exception as e:
             logger.warning(f"Failed to add contact graph: {e}")
@@ -434,6 +448,132 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
             adata.obsp["contact_binary"] = csr_matrix((n_cells, n_cells), dtype=np.float32)
         
         return adata
+    
+    def _add_lineage_proximity_graph(
+        self,
+        adata: ad.AnnData,
+        lineages: List[str],
+        ancestor_mapper: AncestorMapper,
+        threshold: float = 0.0,
+    ) -> None:
+        """
+        Add lineage proximity graph based on ancestor contact relationships.
+        
+        This graph encodes developmental proximity: cells whose ancestors
+        had physical contact during embryogenesis may share signaling
+        environments and have related cell fates.
+        
+        Unlike the contact graph, this is a PRIOR over potential relationships,
+        not actual physical contact in the current developmental stage.
+        
+        The proximity score is:
+        - 1.0 if cells share the same CShaper ancestor
+        - ancestor_contact_strength / (distance_i + distance_j + 1) otherwise
+        
+        This naturally decays with lineage distance from the contacting ancestors.
+        """
+        n_cells = len(lineages)
+        
+        # Map cells to their CShaper ancestors
+        mapped_ancestors, distances = ancestor_mapper.map_cells(lineages)
+        
+        # Get unique ancestors that have mappings
+        unique_ancestors = set(a for a in mapped_ancestors if a is not None)
+        
+        if len(unique_ancestors) < 2:
+            logger.info("Lineage proximity graph: insufficient ancestor mappings")
+            adata.obsp["lineage_proximity"] = csr_matrix((n_cells, n_cells), dtype=np.float32)
+            return
+        
+        # Build ancestor -> cell indices mapping
+        ancestor_to_cells: Dict[str, List[Tuple[int, int]]] = {}  # ancestor -> [(cell_idx, distance)]
+        for i, (anc, dist) in enumerate(zip(mapped_ancestors, distances)):
+            if anc is not None:
+                if anc not in ancestor_to_cells:
+                    ancestor_to_cells[anc] = []
+                ancestor_to_cells[anc].append((i, dist))
+        
+        # Get ancestor contact matrix (small, ~1000x1000)
+        ancestor_list = list(unique_ancestors)
+        ancestor_contacts = self.cshaper.get_contact_adjacency(
+            ancestor_list,
+            threshold=threshold,
+            binary=False,
+        )
+        
+        # Build proximity graph with decay by lineage distance
+        rows = []
+        cols = []
+        data = []
+        
+        ancestor_to_idx = {a: i for i, a in enumerate(ancestor_list)}
+        
+        for ai, anc_i in enumerate(ancestor_list):
+            cells_i = ancestor_to_cells.get(anc_i, [])
+            if not cells_i:
+                continue
+            
+            for aj, anc_j in enumerate(ancestor_list):
+                cells_j = ancestor_to_cells.get(anc_j, [])
+                if not cells_j:
+                    continue
+                
+                # Get ancestor contact strength
+                if ai == aj:
+                    # Same ancestor: siblings have proximity
+                    base_strength = 1.0
+                else:
+                    # Different ancestors: use contact strength
+                    base_strength = ancestor_contacts[ai, aj]
+                    if base_strength <= 0:
+                        continue
+                
+                # Add edges with distance decay
+                # Only add a sample of edges to keep graph manageable
+                max_edges_per_pair = 100  # Limit to prevent explosion
+                
+                for ci, di in cells_i[:max_edges_per_pair]:
+                    for cj, dj in cells_j[:max_edges_per_pair]:
+                        if ci >= cj:  # Upper triangle only
+                            continue
+                        # Proximity decays with lineage distance
+                        proximity = base_strength / (di + dj + 1)
+                        if proximity > 0.1:  # Threshold for sparsity
+                            rows.extend([ci, cj])
+                            cols.extend([cj, ci])
+                            data.extend([proximity, proximity])
+        
+        if data:
+            proximity_matrix = csr_matrix(
+                (np.array(data, dtype=np.float32), (np.array(rows), np.array(cols))),
+                shape=(n_cells, n_cells),
+            )
+            adata.obsp["lineage_proximity"] = proximity_matrix
+            
+            # Add indicator for cells with lineage proximity (candidates for prediction)
+            has_proximity = np.asarray(proximity_matrix.sum(axis=1)).flatten() > 0
+            adata.obs["has_lineage_proximity"] = has_proximity
+            
+            n_edges = len(data) // 2
+            n_cells_with_prox = int(has_proximity.sum())
+            
+            # Log training/prediction split info
+            has_contact = adata.obs.get("has_true_contact", np.zeros(n_cells, dtype=bool))
+            n_train = int((has_contact & has_proximity).sum())  # Have both: can train
+            n_predict = int((~has_contact & has_proximity).sum())  # Have proximity but no contact: can predict
+            
+            logger.info(
+                f"Added lineage proximity graph: {n_edges} edges, "
+                f"{n_cells_with_prox}/{n_cells} cells"
+            )
+            logger.info(
+                f"Contact prediction split: {n_train} cells for training "
+                f"(have true contacts), {n_predict} cells for prediction"
+            )
+        else:
+            adata.obsp["lineage_proximity"] = csr_matrix((n_cells, n_cells), dtype=np.float32)
+            adata.obs["has_lineage_proximity"] = False
+            logger.info("Lineage proximity graph: no edges above threshold")
     
     def _add_cshaper_spatial(self, adata: ad.AnnData) -> ad.AnnData:
         """

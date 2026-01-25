@@ -19,7 +19,16 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix, lil_matrix
+from scipy.sparse import csr_matrix, lil_matrix, coo_matrix
+
+# Try to import PyTorch for GPU acceleration
+try:
+    import torch
+    TORCH_AVAILABLE = True
+    GPU_AVAILABLE = torch.cuda.is_available()
+except ImportError:
+    TORCH_AVAILABLE = False
+    GPU_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -913,6 +922,8 @@ class ContactLoader:
         """
         Build sparse adjacency matrix for a list of cells.
         
+        GPU-accelerated implementation for large cell lists.
+        
         Args:
             cell_list: List of cell lineage names (defines matrix order)
             sample_id: Specific sample to use (None = consensus)
@@ -923,45 +934,171 @@ class ContactLoader:
             Sparse CSR matrix of shape (n_cells, n_cells)
         """
         n_cells = len(cell_list)
-        cell_to_idx = {normalize_lineage_name(c): i for i, c in enumerate(cell_list)}
         
-        # Use LIL format for efficient construction
-        adj = lil_matrix((n_cells, n_cells), dtype=np.float32)
-        
+        # Get the contact dataframe
         if sample_id is not None:
-            # Single sample
             df = self.load_sample(sample_id)
-            for c1 in df.index:
-                c1_norm = normalize_lineage_name(c1)
-                if c1_norm not in cell_to_idx:
-                    continue
-                i = cell_to_idx[c1_norm]
-                for c2 in df.columns:
-                    c2_norm = normalize_lineage_name(c2)
-                    if c2_norm not in cell_to_idx:
-                        continue
-                    j = cell_to_idx[c2_norm]
-                    val = df.loc[c1, c2]
-                    if val > threshold:
-                        adj[i, j] = 1.0 if binary else val
         else:
-            # Consensus across samples
-            consensus = self.get_consensus_contacts(min_samples=1)
-            for c1 in consensus.index:
-                c1_norm = normalize_lineage_name(c1)
-                if c1_norm not in cell_to_idx:
-                    continue
-                i = cell_to_idx[c1_norm]
-                for c2 in consensus.columns:
-                    c2_norm = normalize_lineage_name(c2)
-                    if c2_norm not in cell_to_idx:
-                        continue
-                    j = cell_to_idx[c2_norm]
-                    val = consensus.loc[c1, c2]
-                    if not pd.isna(val) and val > threshold:
-                        adj[i, j] = 1.0 if binary else val
+            df = self.get_consensus_contacts(min_samples=1)
         
-        return adj.tocsr()
+        # Normalize contact cell names (these are small, ~1000 cells)
+        df_row_norms = [normalize_lineage_name(c) for c in df.index]
+        df_col_norms = [normalize_lineage_name(c) for c in df.columns]
+        
+        # Create mapping from normalized CShaper cell name -> list of query cell indices
+        cshaper_to_query_idx: Dict[str, List[int]] = {}
+        for i, cell in enumerate(cell_list):
+            norm = normalize_lineage_name(cell)
+            if norm not in cshaper_to_query_idx:
+                cshaper_to_query_idx[norm] = []
+            cshaper_to_query_idx[norm].append(i)
+        
+        # Convert df to numpy for fast access
+        contact_matrix = df.values
+        
+        # Extract all non-zero contacts from CShaper (small set)
+        cshaper_contacts = []  # List of (row_norm, col_norm, value)
+        for ri, r_norm in enumerate(df_row_norms):
+            if r_norm not in cshaper_to_query_idx:
+                continue
+            for ci, c_norm in enumerate(df_col_norms):
+                if c_norm not in cshaper_to_query_idx:
+                    continue
+                val = contact_matrix[ri, ci]
+                if pd.isna(val) or val <= threshold:
+                    continue
+                edge_val = 1.0 if binary else float(val)
+                cshaper_contacts.append((r_norm, c_norm, edge_val))
+        
+        if not cshaper_contacts:
+            return csr_matrix((n_cells, n_cells), dtype=np.float32)
+        
+        # Use GPU-accelerated expansion if available and beneficial
+        if GPU_AVAILABLE and len(cshaper_contacts) > 100:
+            return self._build_adjacency_gpu(
+                n_cells, cshaper_contacts, cshaper_to_query_idx
+            )
+        else:
+            return self._build_adjacency_cpu(
+                n_cells, cshaper_contacts, cshaper_to_query_idx
+            )
+    
+    def _build_adjacency_gpu(
+        self,
+        n_cells: int,
+        cshaper_contacts: List[Tuple[str, str, float]],
+        cshaper_to_query_idx: Dict[str, List[int]],
+    ) -> csr_matrix:
+        """GPU-accelerated contact graph expansion with batched processing."""
+        device = torch.device('cuda')
+        
+        # Pre-compute sizes and sort by expansion size (process large ones on GPU)
+        contact_info = []
+        for r_norm, c_norm, edge_val in cshaper_contacts:
+            n_rows = len(cshaper_to_query_idx[r_norm])
+            n_cols = len(cshaper_to_query_idx[c_norm])
+            n_edges = n_rows * n_cols
+            if n_edges > 0:
+                contact_info.append((n_edges, r_norm, c_norm, edge_val))
+        
+        # Sort by size descending - process large expansions first on GPU
+        contact_info.sort(key=lambda x: -x[0])
+        
+        total_edges = sum(x[0] for x in contact_info)
+        
+        # Pre-allocate output arrays
+        all_rows = np.zeros(total_edges, dtype=np.int64)
+        all_cols = np.zeros(total_edges, dtype=np.int64)
+        all_data = np.zeros(total_edges, dtype=np.float32)
+        
+        offset = 0
+        
+        # Batch large expansions (> 5000 edges) together for GPU
+        large_threshold = 5000
+        large_contacts = [(n, r, c, v) for n, r, c, v in contact_info if n >= large_threshold]
+        small_contacts = [(n, r, c, v) for n, r, c, v in contact_info if n < large_threshold]
+        
+        # Process large contacts on GPU in a single batch if possible
+        if large_contacts:
+            for n_edges, r_norm, c_norm, edge_val in large_contacts:
+                query_rows = cshaper_to_query_idx[r_norm]
+                query_cols = cshaper_to_query_idx[c_norm]
+                
+                # GPU meshgrid
+                rows_t = torch.tensor(query_rows, device=device, dtype=torch.int64)
+                cols_t = torch.tensor(query_cols, device=device, dtype=torch.int64)
+                row_grid, col_grid = torch.meshgrid(rows_t, cols_t, indexing='ij')
+                
+                batch_rows = row_grid.flatten().cpu().numpy()
+                batch_cols = col_grid.flatten().cpu().numpy()
+                
+                all_rows[offset:offset+n_edges] = batch_rows
+                all_cols[offset:offset+n_edges] = batch_cols
+                all_data[offset:offset+n_edges] = edge_val
+                offset += n_edges
+            
+            # Clear GPU cache after large operations
+            torch.cuda.empty_cache()
+        
+        # Process small contacts on CPU (faster than GPU overhead)
+        for n_edges, r_norm, c_norm, edge_val in small_contacts:
+            query_rows = np.array(cshaper_to_query_idx[r_norm])
+            query_cols = np.array(cshaper_to_query_idx[c_norm])
+            
+            row_grid, col_grid = np.meshgrid(query_rows, query_cols, indexing='ij')
+            
+            all_rows[offset:offset+n_edges] = row_grid.flatten()
+            all_cols[offset:offset+n_edges] = col_grid.flatten()
+            all_data[offset:offset+n_edges] = edge_val
+            offset += n_edges
+        
+        # Build sparse matrix from COO format
+        adj = csr_matrix(
+            (all_data[:offset], (all_rows[:offset], all_cols[:offset])),
+            shape=(n_cells, n_cells),
+        )
+        
+        return adj
+    
+    def _build_adjacency_cpu(
+        self,
+        n_cells: int,
+        cshaper_contacts: List[Tuple[str, str, float]],
+        cshaper_to_query_idx: Dict[str, List[int]],
+    ) -> csr_matrix:
+        """CPU-based contact graph expansion using numpy meshgrid."""
+        # Pre-compute total edges
+        total_edges = sum(
+            len(cshaper_to_query_idx[r]) * len(cshaper_to_query_idx[c])
+            for r, c, _ in cshaper_contacts
+        )
+        
+        # Pre-allocate arrays
+        all_rows = np.zeros(total_edges, dtype=np.int64)
+        all_cols = np.zeros(total_edges, dtype=np.int64)
+        all_data = np.zeros(total_edges, dtype=np.float32)
+        
+        offset = 0
+        for r_norm, c_norm, edge_val in cshaper_contacts:
+            query_rows = np.array(cshaper_to_query_idx[r_norm])
+            query_cols = np.array(cshaper_to_query_idx[c_norm])
+            
+            # Use meshgrid for vectorized expansion
+            row_grid, col_grid = np.meshgrid(query_rows, query_cols, indexing='ij')
+            n_edges = row_grid.size
+            
+            all_rows[offset:offset+n_edges] = row_grid.flatten()
+            all_cols[offset:offset+n_edges] = col_grid.flatten()
+            all_data[offset:offset+n_edges] = edge_val
+            offset += n_edges
+        
+        # Build sparse matrix from COO format
+        adj = csr_matrix(
+            (all_data[:offset], (all_rows[:offset], all_cols[:offset])),
+            shape=(n_cells, n_cells),
+        )
+        
+        return adj
     
     def get_contact_statistics(self) -> Dict[str, float]:
         """Get summary statistics about contact data."""
@@ -1308,6 +1445,8 @@ class MorphologyLoader:
         """
         Get morphology features for a list of cells.
         
+        Vectorized implementation for fast processing of large cell lists.
+        
         Args:
             cell_names: List of cell lineage names
             time_frames: Array of time frames for each cell (None = use middle frame)
@@ -1322,8 +1461,8 @@ class MorphologyLoader:
         if time_frames is None:
             time_frames = np.full(n_cells, CSHAPER_FRAMES // 2, dtype=np.int32)
         
-        # Normalize names
-        cell_names_norm = [normalize_lineage_name(c) for c in cell_names]
+        # Normalize names (vectorized with numpy)
+        cell_names_norm = np.array([normalize_lineage_name(c) for c in cell_names])
         
         # Get unique frames to minimize loading
         unique_frames = np.unique(time_frames[time_frames >= 0])
@@ -1333,23 +1472,36 @@ class MorphologyLoader:
         for frame in unique_frames:
             frame_data[frame] = self.get_morphology_at_frame(int(frame), sample_id)
         
-        # Build result
-        result = pd.DataFrame(
-            index=range(n_cells),
-            columns=['volume', 'surface', 'sphericity'],
-            dtype=np.float64,  # Use float64 to avoid dtype conversion warnings
-        )
-        result[:] = np.nan
+        # Initialize result arrays
+        volumes = np.full(n_cells, np.nan, dtype=np.float64)
+        surfaces = np.full(n_cells, np.nan, dtype=np.float64)
+        sphericities = np.full(n_cells, np.nan, dtype=np.float64)
         
-        for i, (cell, frame) in enumerate(zip(cell_names_norm, time_frames)):
-            if frame < 0 or not cell:
+        # Process each frame batch (vectorized)
+        for frame, frame_df in frame_data.items():
+            if frame_df is None or frame_df.empty:
                 continue
             
-            frame_df = frame_data.get(frame)
-            if frame_df is not None and cell in frame_df.index:
-                result.iloc[i, 0] = float(frame_df.loc[cell, 'volume'])  # volume
-                result.iloc[i, 1] = float(frame_df.loc[cell, 'surface'])  # surface
-                result.iloc[i, 2] = float(frame_df.loc[cell, 'sphericity'])  # sphericity
+            # Find cells at this frame
+            frame_mask = time_frames == frame
+            cells_at_frame = cell_names_norm[frame_mask]
+            indices_at_frame = np.where(frame_mask)[0]
+            
+            # Get cells that exist in frame data
+            frame_cell_set = set(frame_df.index)
+            
+            for idx, cell in zip(indices_at_frame, cells_at_frame):
+                if cell and cell in frame_cell_set:
+                    volumes[idx] = frame_df.loc[cell, 'volume']
+                    surfaces[idx] = frame_df.loc[cell, 'surface']
+                    sphericities[idx] = frame_df.loc[cell, 'sphericity']
+        
+        # Build result DataFrame
+        result = pd.DataFrame({
+            'volume': volumes,
+            'surface': surfaces,
+            'sphericity': sphericities,
+        })
         
         return result
     
@@ -1967,6 +2119,9 @@ class CShaperProcessor:
         self._spatial_loader: Optional[StandardSpatialLoader] = None
         self._segmentation_loader: Optional[Segmentation3DLoader] = None
         
+        # Cache for consensus morphology (computed once)
+        self._consensus_morphology_cache: Optional[Dict[str, Tuple[float, float, float]]] = None
+        
         # Validate directories
         self._validate_directories()
     
@@ -2203,9 +2358,7 @@ class CShaperProcessor:
         """
         Get consensus morphology features (averaged across all time points).
         
-        This is useful when embryo time is unknown or outside CShaper's
-        temporal coverage. It returns the mean morphology for each cell
-        across all frames where that cell exists.
+        Optimized with caching: consensus is computed once and reused.
         
         Args:
             lineage_names: List of cell lineage names
@@ -2215,39 +2368,92 @@ class CShaperProcessor:
             DataFrame with columns: volume, surface, sphericity
         """
         n_cells = len(lineage_names)
-        result = pd.DataFrame(
-            index=range(n_cells),
-            columns=['volume', 'surface', 'sphericity'],
-            dtype=np.float64,
-        )
-        result[:] = np.nan
+        
+        # Initialize result arrays
+        volumes = np.full(n_cells, np.nan, dtype=np.float64)
+        surfaces = np.full(n_cells, np.nan, dtype=np.float64)
+        sphericities = np.full(n_cells, np.nan, dtype=np.float64)
         
         # Normalize names
-        cell_names_norm = [normalize_lineage_name(c) for c in lineage_names]
+        cell_names_norm = np.array([normalize_lineage_name(c) for c in lineage_names])
         
-        # Get all available cells from morphology loader
-        all_morph_cells = self.morphology_loader.get_all_cell_names()
+        # Use cached consensus or build it
+        if self._consensus_morphology_cache is None:
+            self._build_consensus_morphology_cache(sample_id)
         
-        # For each cell, get average morphology across all frames
-        for i, cell in enumerate(cell_names_norm):
-            if not cell or cell not in all_morph_cells:
-                continue
-            
-            try:
-                ts = self.morphology_loader.get_cell_timeseries(cell, sample_id)
-                if len(ts['volume']) > 0:
-                    vol = np.nanmean(ts['volume'])
-                    surf = np.nanmean(ts['surface'])
-                    if not np.isnan(vol) and not np.isnan(surf) and surf > 0:
-                        result.iloc[i, 0] = vol
-                        result.iloc[i, 1] = surf
-                        # Sphericity: (36π V²)^(1/3) / S
-                        sphericity = np.power(36 * np.pi * vol**2, 1/3) / surf
-                        result.iloc[i, 2] = np.clip(sphericity, 0, 1)
-            except Exception:
-                pass
+        consensus_cache = self._consensus_morphology_cache
+        
+        # Map query cells to cached consensus values (vectorized via dict lookup)
+        unique_query_cells = set(cell_names_norm)
+        matching_cells = unique_query_cells & set(consensus_cache.keys())
+        
+        for cell in matching_cells:
+            vol, surf, sph = consensus_cache[cell]
+            mask = cell_names_norm == cell
+            volumes[mask] = vol
+            surfaces[mask] = surf
+            sphericities[mask] = sph
+        
+        result = pd.DataFrame({
+            'volume': volumes,
+            'surface': surfaces,
+            'sphericity': sphericities,
+        })
         
         return result
+    
+    def _build_consensus_morphology_cache(self, sample_id: Optional[str] = None) -> None:
+        """Build and cache consensus morphology for all CShaper cells.
+        
+        Uses parallel processing for faster computation.
+        """
+        logger.info("Building consensus morphology cache...")
+        
+        all_morph_cells = list(self.morphology_loader.get_all_cell_names())
+        
+        # Try to use multiprocessing for parallel computation
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            
+            def compute_cell_morphology(cell: str) -> Optional[Tuple[str, float, float, float]]:
+                try:
+                    ts = self.morphology_loader.get_cell_timeseries(cell, sample_id)
+                    if len(ts['volume']) > 0:
+                        vol = np.nanmean(ts['volume'])
+                        surf = np.nanmean(ts['surface'])
+                        if not np.isnan(vol) and not np.isnan(surf) and surf > 0:
+                            sphericity = np.power(36 * np.pi * vol**2, 1/3) / surf
+                            return (cell, vol, surf, float(np.clip(sphericity, 0, 1)))
+                except Exception:
+                    pass
+                return None
+            
+            # Use thread pool for I/O-bound operations
+            consensus_cache: Dict[str, Tuple[float, float, float]] = {}
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                results = executor.map(compute_cell_morphology, all_morph_cells)
+                for result in results:
+                    if result is not None:
+                        cell, vol, surf, sph = result
+                        consensus_cache[cell] = (vol, surf, sph)
+            
+        except Exception:
+            # Fallback to sequential
+            consensus_cache = {}
+            for cell in all_morph_cells:
+                try:
+                    ts = self.morphology_loader.get_cell_timeseries(cell, sample_id)
+                    if len(ts['volume']) > 0:
+                        vol = np.nanmean(ts['volume'])
+                        surf = np.nanmean(ts['surface'])
+                        if not np.isnan(vol) and not np.isnan(surf) and surf > 0:
+                            sphericity = np.power(36 * np.pi * vol**2, 1/3) / surf
+                            consensus_cache[cell] = (vol, surf, float(np.clip(sphericity, 0, 1)))
+                except Exception:
+                    pass
+        
+        self._consensus_morphology_cache = consensus_cache
+        logger.info(f"Cached consensus morphology for {len(consensus_cache)} cells")
     
     # === Spatial Coordinates ===
     

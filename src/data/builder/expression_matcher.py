@@ -13,6 +13,10 @@ The approach:
 1. Build reference expression profiles for cell types with known lineages
 2. Compute expression similarity between query cells and references
 3. Use similarity scores to weight/validate morphology assignments
+
+GPU Acceleration:
+- Uses PyTorch for correlation computation when GPU is available
+- Falls back to NumPy on CPU if PyTorch unavailable
 """
 
 import json
@@ -26,7 +30,29 @@ from scipy.sparse import issparse
 from scipy.spatial.distance import cdist
 from scipy.stats import spearmanr
 
+# Try to import PyTorch for GPU acceleration
+try:
+    import torch
+    TORCH_AVAILABLE = True
+    GPU_AVAILABLE = torch.cuda.is_available()
+    if GPU_AVAILABLE:
+        GPU_NAME = torch.cuda.get_device_name(0)
+    else:
+        GPU_NAME = None
+except ImportError:
+    TORCH_AVAILABLE = False
+    GPU_AVAILABLE = False
+    GPU_NAME = None
+
 logger = logging.getLogger(__name__)
+
+# Log GPU availability once at module load
+if GPU_AVAILABLE:
+    logger.info(f"GPU acceleration available: {GPU_NAME}")
+elif TORCH_AVAILABLE:
+    logger.debug("PyTorch available but no GPU detected, using CPU")
+else:
+    logger.debug("PyTorch not available, using NumPy for CPU computation")
 
 
 class ExpressionMatcher:
@@ -343,10 +369,67 @@ class ExpressionMatcher:
         X: np.ndarray,
         ref: np.ndarray,
     ) -> np.ndarray:
-        """Compute Pearson correlation between each cell and each reference."""
-        n_cells = X.shape[0]
-        n_refs = ref.shape[0]
+        """Compute Pearson correlation between each cell and each reference.
         
+        Uses GPU acceleration if available, otherwise falls back to NumPy.
+        """
+        if GPU_AVAILABLE:
+            return self._correlation_similarity_gpu(X, ref)
+        else:
+            return self._correlation_similarity_cpu(X, ref)
+    
+    def _correlation_similarity_gpu(
+        self,
+        X: np.ndarray,
+        ref: np.ndarray,
+    ) -> np.ndarray:
+        """GPU-accelerated Pearson correlation using PyTorch."""
+        device = torch.device('cuda')
+        
+        # Convert to tensors and move to GPU
+        X_t = torch.from_numpy(X.astype(np.float32)).to(device)
+        ref_t = torch.from_numpy(ref.astype(np.float32)).to(device)
+        
+        # Standardize on GPU
+        X_mean = X_t.mean(dim=1, keepdim=True)
+        X_std = X_t.std(dim=1, keepdim=True) + 1e-8
+        X_norm = (X_t - X_mean) / X_std
+        
+        ref_mean = ref_t.mean(dim=1, keepdim=True)
+        ref_std = ref_t.std(dim=1, keepdim=True) + 1e-8
+        ref_norm = (ref_t - ref_mean) / ref_std
+        
+        # Correlation = dot product of normalized vectors / n_features
+        n_features = X_t.shape[1]
+        
+        # Process in batches to manage GPU memory for large datasets
+        batch_size = 10000
+        n_cells = X_t.shape[0]
+        
+        if n_cells <= batch_size:
+            corr_t = torch.mm(X_norm, ref_norm.T) / n_features
+            corr = corr_t.cpu().numpy()
+        else:
+            # Process in batches
+            corr_list = []
+            for i in range(0, n_cells, batch_size):
+                end = min(i + batch_size, n_cells)
+                batch_corr = torch.mm(X_norm[i:end], ref_norm.T) / n_features
+                corr_list.append(batch_corr.cpu().numpy())
+            corr = np.vstack(corr_list)
+        
+        # Free GPU memory
+        del X_t, ref_t, X_norm, ref_norm
+        torch.cuda.empty_cache()
+        
+        return corr
+    
+    def _correlation_similarity_cpu(
+        self,
+        X: np.ndarray,
+        ref: np.ndarray,
+    ) -> np.ndarray:
+        """CPU-based Pearson correlation using NumPy."""
         # Standardize
         X_mean = np.mean(X, axis=1, keepdims=True)
         X_std = np.std(X, axis=1, keepdims=True) + 1e-8
