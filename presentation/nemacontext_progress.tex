@@ -10,19 +10,18 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{amsmath}
-\usepackage{tikz}
-\usetikzlibrary{shapes,arrows,positioning,calc}
 \usepackage{xcolor}
-\usepackage{listings}
+\usepackage{svg}  % For SVG support - requires inkscape
 
 % Colors
 \definecolor{celegans}{RGB}{76,153,0}
 \definecolor{contact}{RGB}{204,102,0}
 \definecolor{lineage}{RGB}{51,102,204}
+\definecolor{context}{RGB}{128,0,128}
 
 % Title
-\title[NemaContext]{NemaContext: Generative Modeling of\\Complete Embryo Development}
-\subtitle{Progress Report: Data Integration \& Contact Graph Prediction}
+\title[NemaContext]{NemaContext: The Organism as Context}
+\subtitle{Flow Matching Transformers for Digital Embryogenesis}
 \author{Progress Report}
 \date{\today}
 
@@ -43,549 +42,612 @@
 \end{frame}
 
 % ============================================================
-\section{Project Vision}
+\section{Core Philosophy: The Organism as Context}
 % ============================================================
 
-\begin{frame}{The Grand Challenge: Digital Embryogenesis}
-\begin{columns}
-\column{0.55\textwidth}
-\textbf{Goal}: Generate complete embryo states from a single zygote
+\begin{frame}{The Central Thesis}
+\begin{center}
+\Large
+\textit{``A cell is not an island.\\
+Its identity, position, and fate are defined not by intrinsic properties alone,\\
+but by its place within the developing whole.''}
+\end{center}
 
-\vspace{0.5em}
-\begin{block}{Input $\rightarrow$ Output}
-\begin{itemize}
-    \item \textbf{Input}: Zygote state at $t=0$ (1 cell)
-    \item \textbf{Output}: Complete embryo at any time $t$
-    \begin{itemize}
-        \item Every cell's transcriptome
-        \item Every cell's 3D position
-        \item \textcolor{contact}{Cell-cell neighbor relationships}
-        \item Lineage tree structure
-    \end{itemize}
-\end{itemize}
+\vspace{1.5em}
+
+\begin{columns}
+\column{0.48\textwidth}
+\begin{block}{The Name: NemaContext}
+\textbf{Nema}(tode) + \textbf{Context}
+
+The organism \textit{is} the context that gives meaning to each cell.
 \end{block}
 
-\column{0.42\textwidth}
-\begin{tikzpicture}[scale=0.8]
-    % Tree structure
-    \node[circle,draw,fill=celegans!30] (p0) at (0,4) {P0};
-    \node[circle,draw,fill=celegans!30] (ab) at (-1.5,3) {AB};
-    \node[circle,draw,fill=celegans!30] (p1) at (1.5,3) {P1};
-    \node[circle,draw,fill=celegans!30] (aba) at (-2.5,2) {ABa};
-    \node[circle,draw,fill=celegans!30] (abp) at (-0.5,2) {ABp};
-    \node[circle,draw,fill=celegans!30] (ems) at (0.5,2) {EMS};
-    \node[circle,draw,fill=celegans!30] (p2) at (2.5,2) {P2};
-    
-    \draw[->] (p0) -- (ab);
-    \draw[->] (p0) -- (p1);
-    \draw[->] (ab) -- (aba);
-    \draw[->] (ab) -- (abp);
-    \draw[->] (p1) -- (ems);
-    \draw[->] (p1) -- (p2);
-    
-    \node at (0,0.8) {\dots};
-    \node at (0,0) {\textbf{959 cells}};
-\end{tikzpicture}
+\column{0.48\textwidth}
+\begin{block}{The Computational Principle}
+\[
+\text{Cell}_i = f(\text{Cell}_i, \textcolor{context}{\text{All Other Cells}})
+\]
+Each cell's representation is computed as a function of the \textbf{entire embryo}.
+\end{block}
 \end{columns}
+\end{frame}
+
+\begin{frame}{Three Levels of Developmental Context}
+\begin{center}
+% Figure: Three context levels diagram
+% TODO: Create figures/context_levels.svg
+\fbox{\parbox{0.8\textwidth}{\centering\vspace{3cm}\textbf{[Figure: context\_levels.svg]}\\\small Lineage Context + Molecular Context + Spatial Context\vspace{3cm}}}
+\end{center}
+
+\begin{columns}
+\column{0.32\textwidth}
+\begin{block}{1. Lineage Context}
+\small
+\textbf{Temporal}: Where did this cell come from?
+
+The Sulston lineage = developmental memory
+\end{block}
+
+\column{0.32\textwidth}
+\begin{block}{2. Molecular Context}
+\small
+\textbf{State}: What genes is this cell expressing?
+
+Transcriptome = current functional identity
+\end{block}
+
+\column{0.32\textwidth}
+\begin{block}{3. Spatial Context}
+\small
+\textbf{Relational}: Who are this cell's neighbors?
+
+Contact graph = signaling potential
+\end{block}
+\end{columns}
+
+\vspace{0.5em}
+\centering
+\textcolor{red}{\textbf{The problem: Spatial context is UNKNOWN for late embryo (380--830 min)}}
 \end{frame}
 
 \begin{frame}{Why \textit{C. elegans}?}
 \begin{columns}
-\column{0.48\textwidth}
-\begin{block}{Unique Properties}
+\column{0.55\textwidth}
+\begin{block}{The Only Tractable System}
 \begin{itemize}
-    \item \textbf{Invariant lineage}: 100\% deterministic cell divisions
-    \item \textbf{Complete spatial tracking}: WormGUIDES 4D atlas
-    \item \textbf{Lineage-resolved transcriptomics}: Large et al. 2025
-    \item \textbf{Small cell count}: 959 cells (tractable)
-    \item \textbf{Extensive ground truth}: Decades of research
+    \item \textbf{Invariant lineage}: 100\% deterministic divisions
+    \item \textbf{Complete connectome}: Adult wiring known
+    \item \textbf{Lineage-resolved transcriptomics}: 234K cells
+    \item \textbf{4D morphological atlas}: CShaper, WormGUIDES
+    \item \textbf{Small cell count}: 959 terminal cells
 \end{itemize}
 \end{block}
 
-\column{0.48\textwidth}
-\begin{block}{Cell as Token Paradigm}
-\begin{itemize}
-    \item Each cell $\rightarrow$ A token
-    \item Development $\rightarrow$ Tree generation
-    \item Cell division $\rightarrow$ Token splits into two
-    \item Zygote $\rightarrow$ Adult: 1 $\rightarrow$ 959 tokens
-\end{itemize}
+\begin{block}{Digital Embryogenesis is Feasible}
+\textit{C. elegans} is the \textbf{only} organism where we can attempt to generate complete embryo trajectories.
 \end{block}
+
+\column{0.42\textwidth}
+% Figure: C. elegans lineage tree
+% TODO: Create figures/lineage_tree.svg
+\fbox{\parbox{\textwidth}{\centering\vspace{4cm}\textbf{[Figure: lineage\_tree.svg]}\\\small P0 → 959 cells\vspace{1cm}}}
 \end{columns}
-
-\vspace{1em}
-\centering
-\textit{C. elegans is the \textbf{only} multicellular organism where complete generative modeling is feasible.}
 \end{frame}
 
 % ============================================================
-\section{Data Integration Progress}
+\section{The Temporal Coverage Gap}
 % ============================================================
 
-\begin{frame}{Trimodal Data Integration}
+\begin{frame}{Data Landscape: Trimodal Integration}
 \begin{center}
-\begin{tikzpicture}[scale=0.9]
-    % Three modalities
-    \node[draw,rounded corners,fill=blue!20,minimum width=3cm,minimum height=1.5cm] (expr) at (-4,0) {
-        \begin{tabular}{c}
-        \textbf{Transcriptome}\\
-        Large 2025\\
-        234,888 cells
-        \end{tabular}
-    };
-    
-    \node[draw,rounded corners,fill=green!20,minimum width=3cm,minimum height=1.5cm] (space) at (0,0) {
-        \begin{tabular}{c}
-        \textbf{Spatial}\\
-        WormGUIDES\\
-        1,341 cells
-        \end{tabular}
-    };
-    
-    \node[draw,rounded corners,fill=orange!20,minimum width=3cm,minimum height=1.5cm] (morph) at (4,0) {
-        \begin{tabular}{c}
-        \textbf{Morphology}\\
-        CShaper\\
-        1,234 cells
-        \end{tabular}
-    };
-    
-    % Center
-    \node[draw,rounded corners,fill=purple!30,minimum width=3.5cm,minimum height=1.2cm] (anndata) at (0,-2.5) {
-        \begin{tabular}{c}
-        \textbf{Unified AnnData}\\
-        234,888 cells $\times$ 27,138 genes
-        \end{tabular}
-    };
-    
-    % Arrows
-    \draw[->,thick] (expr) -- (anndata);
-    \draw[->,thick] (space) -- (anndata);
-    \draw[->,thick] (morph) -- (anndata);
-\end{tikzpicture}
+% Figure: Trimodal data integration
+% TODO: Create figures/trimodal_integration.svg
+\fbox{\parbox{0.9\textwidth}{\centering\vspace{3cm}\textbf{[Figure: trimodal\_integration.svg]}\\\small Transcriptome (234K) + Spatial (1.3K) + Morphology (1.2K) → Unified AnnData\vspace{2cm}}}
 \end{center}
-\end{frame}
-
-\begin{frame}{CShaper Integration: Key Achievement}
-\begin{block}{What is CShaper?}
-4D morphological atlas of \textit{C. elegans} embryo (Cao et al. 2020)
-\begin{itemize}
-    \item \textbf{Cell-cell contact matrices}: Physical neighbor relationships
-    \item \textbf{Cell morphology}: Volume, surface area, sphericity
-    \item \textbf{Standardized coordinates}: Averaged across 46 embryos
-\end{itemize}
-\end{block}
-
-\vspace{0.5em}
 
 \begin{columns}
-\column{0.48\textwidth}
-\begin{block}{Integration Results}
-\begin{tabular}{lr}
-\toprule
-Metric & Value \\
-\midrule
-Cells with morphology & 94,005 (40\%) \\
-Direct matches & 25,264 \\
-Ancestor-mapped & 1,390 \\
-Contact edges & 1,854,781 \\
-\bottomrule
-\end{tabular}
-\end{block}
+\column{0.32\textwidth}
+\centering
+\textbf{Transcriptome}\\
+Large et al. 2025\\
+234,888 cells\\
+0--830 min
 
-\column{0.48\textwidth}
-\begin{block}{Matching Strategies}
-\begin{enumerate}
-    \item \textbf{Direct}: Cell exists in CShaper
-    \item \textbf{Fuzzy}: Handle `x' and `/' in lineage
-    \item \textbf{Ancestor}: Map to closest ancestor
-    \item \textbf{Expression}: Validate with gene expression
-\end{enumerate}
-\end{block}
+\column{0.32\textwidth}
+\centering
+\textbf{Spatial}\\
+WormGUIDES\\
+1,341 cells\\
+20--380 min
+
+\column{0.32\textwidth}
+\centering
+\textbf{Morphology}\\
+CShaper\\
+1,234 cells\\
+20--380 min
 \end{columns}
 \end{frame}
-
-% ============================================================
-\section{The Contact Graph Problem}
-% ============================================================
 
 \begin{frame}{The Temporal Coverage Gap}
 \begin{center}
-\begin{tikzpicture}[xscale=1,yscale=0.6]
-    % Timeline (scaled to 0-10 representing 0-800 min)
-    \draw[->] (0,0) -- (10.5,0) node[right] {\small Time (min)};
-    
-    % CShaper coverage (20-380 min -> 0.25-4.75)
-    \fill[contact!50] (0.25,-1.2) rectangle (4.75,-0.4);
-    \node[right] at (5,-0.8) {\small CShaper: 20--380 min};
-    
-    % WormGUIDES coverage
-    \fill[green!50] (0.25,-2.4) rectangle (4.75,-1.6);
-    \node[right] at (5,-2.0) {\small WormGUIDES: 20--380 min};
-    
-    % Large2025 coverage (0-830 min -> 0-10.4)
-    \fill[blue!50] (0,-3.6) rectangle (10.4,-2.8);
-    \node[right] at (5,-3.2) {\small Large 2025: 0--830 min};
-    
-    % Axis labels
-    \node[above] at (0,0.1) {\tiny 0};
-    \node[above] at (2.5,0.1) {\tiny 200};
-    \node[above] at (5,0.1) {\tiny 400};
-    \node[above] at (7.5,0.1) {\tiny 600};
-    \node[above] at (10,0.1) {\tiny 800};
-    
-    % Gap annotation
-    \draw[<->,red,thick] (4.75,-4.5) -- (10.4,-4.5);
-    \node[red] at (7.5,-5.2) {\textbf{No contact data!}};
-\end{tikzpicture}
+% Figure: Temporal coverage gap timeline
+% TODO: Create figures/temporal_gap.svg
+\fbox{\parbox{0.9\textwidth}{\centering\vspace{4cm}\textbf{[Figure: temporal\_gap.svg]}\\\small Timeline showing coverage gap: CShaper/WormGUIDES (20-380 min) vs Large2025 (0-830 min)\vspace{2cm}}}
 \end{center}
 
 \vspace{0.5em}
-\textbf{Problem}: We have transcriptomes for late-stage cells (380--830 min), but \textbf{no spatial/contact information}!
-
-\vspace{0.5em}
-\textbf{Question}: Can we \textcolor{contact}{\textbf{predict}} contact relationships for late-stage cells?
-\end{frame}
-
-\begin{frame}{Initial Approach: Ancestor Mapping (Incorrect)}
-\begin{columns}
-\column{0.48\textwidth}
-\textbf{Na\"ive Approach}:
+\textbf{Problem}: For cells in the 380--830 min window, we have:
 \begin{itemize}
-    \item Map late-stage cells to their early ancestors
-    \item If ancestors A and B contacted $\rightarrow$ all descendants of A contact all descendants of B
-    \item Result: 50 million edges!
+    \item[\checkmark] Full transcriptome data (gene expression)
+    \item[\checkmark] Lineage identity (from Sulston tree)
+    \item[$\times$] \textcolor{red}{No spatial coordinates}
+    \item[$\times$] \textcolor{red}{No contact graph}
 \end{itemize}
 
 \vspace{0.5em}
-\textcolor{red}{\textbf{Biologically incorrect!}}
-\begin{itemize}
-    \item Ancestor contact $\neq$ descendant contact
-    \item Cells migrate, tissues reorganize
-    \item Late-stage spatial arrangement differs from early
-\end{itemize}
-
-\column{0.48\textwidth}
-\begin{tikzpicture}[scale=0.7]
-    % Early stage
-    \node[circle,draw,fill=blue!30] (a) at (0,3) {A};
-    \node[circle,draw,fill=orange!30] (b) at (1.5,3) {B};
-    \draw[thick,red] (a) -- (b) node[midway,above] {\small contact};
-    
-    % Arrow
-    \draw[->,thick] (0.75,2.5) -- (0.75,1.5) node[midway,right] {\small time};
-    
-    % Late stage - descendants
-    \node[circle,draw,fill=blue!20,scale=0.6] (a1) at (-1,0.5) {A$_1$};
-    \node[circle,draw,fill=blue!20,scale=0.6] (a2) at (-0.2,0) {A$_2$};
-    \node[circle,draw,fill=blue!20,scale=0.6] (a3) at (0.3,0.8) {A$_3$};
-    \node[circle,draw,fill=orange!20,scale=0.6] (b1) at (1.2,0.5) {B$_1$};
-    \node[circle,draw,fill=orange!20,scale=0.6] (b2) at (2,0) {B$_2$};
-    \node[circle,draw,fill=orange!20,scale=0.6] (b3) at (2.5,0.8) {B$_3$};
-    
-    % Wrong edges
-    \draw[red,dashed,opacity=0.3] (a1) -- (b1);
-    \draw[red,dashed,opacity=0.3] (a1) -- (b2);
-    \draw[red,dashed,opacity=0.3] (a2) -- (b1);
-    \draw[red,dashed,opacity=0.3] (a3) -- (b3);
-    
-    \node[red] at (0.75,-0.8) {\small $\times$ Wrong!};
-\end{tikzpicture}
-\end{columns}
+\textbf{Our Question}: Can we \textbf{infer} spatial context from lineage + molecular context?
 \end{frame}
 
-\begin{frame}{Correct Approach: Two Distinct Graphs}
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{\texttt{contact\_graph} (Ground Truth)}
+\begin{frame}{The Contact Graph Problem}
+\begin{block}{Why Contact Graphs Matter}
 \begin{itemize}
-    \item \textbf{Direct matches only}
-    \item True physical contacts
-    \item 1.85M edges, 4,050 cells
-    \item \textcolor{celegans}{Supervision signal for training}
+    \item \textbf{Notch signaling}: Requires direct cell-cell contact (GLP-1/APX-1, LIN-12/LAG-2)
+    \item \textbf{Inductive fate decisions}: Neighbors determine cell identity
+    \item \textbf{Tissue organization}: Contacts define morphogenesis
 \end{itemize}
 \end{block}
 
-\column{0.48\textwidth}
-\begin{block}{\texttt{lineage\_proximity} (Prior)}
-\begin{itemize}
-    \item Based on ancestor relationships
-    \item Decays with lineage distance:
-    \[
-    \text{proximity} = \frac{\text{ancestor\_contact}}{d_i + d_j + 1}
-    \]
-    \item 28.5M edges, 19,939 cells
-    \item \textcolor{lineage}{Feature for prediction}
-\end{itemize}
-\end{block}
-\end{columns}
+\vspace{0.5em}
 
-\vspace{1em}
+\begin{block}{The Inverse Problem}
 \begin{center}
-\begin{tikzpicture}
-    \node[draw,rounded corners,fill=lineage!20] (prior) at (0,0) {lineage\_proximity};
-    \node[draw,rounded corners,fill=blue!20] (expr) at (3,0) {expression};
-    \node[draw,rounded corners,fill=green!20] (morph) at (6,0) {morphology};
-    
-    \node[draw,rounded corners,fill=contact!30,thick] (pred) at (3,-1.5) {\textbf{Predict contact\_graph}};
-    
-    \draw[->,thick] (prior) -- (pred);
-    \draw[->,thick] (expr) -- (pred);
-    \draw[->,thick] (morph) -- (pred);
-\end{tikzpicture}
+\Large
+\textbf{Given}: Lineage + Transcriptome (what we know)\\[0.3em]
+\textbf{Infer}: Contact Graph (what we need)
 \end{center}
+\end{block}
+
+\vspace{0.5em}
+\textbf{Hypothesis}: The organism provides sufficient context. If we know a cell's developmental history and current molecular state, we can predict its spatial relationships.
 \end{frame}
 
 % ============================================================
-\section{Scientific Significance}
+\section{Why Not GNNs? The Bitter Lesson}
 % ============================================================
 
-\begin{frame}{Why Predict Contact Graphs?}
-\begin{block}{1. Cell Fate Depends on Neighbors}
+\begin{frame}{The GNN Approach (and Why We Reject It)}
+\begin{columns}
+\column{0.48\textwidth}
+\begin{block}{Standard GNN Paradigm}
 \begin{itemize}
-    \item \textbf{Notch signaling}: Requires direct cell-cell contact
-    \item \textbf{Induction}: Classic experiments show neighbors influence fate
-    \item \textbf{Lateral inhibition}: Adjacent cells adopt different fates
+    \item Assume graph structure is \textbf{given}
+    \item Message passing along edges
+    \item Learn node representations
 \end{itemize}
 \end{block}
 
-\begin{block}{2. Enables Complete Spatial GNN}
-\begin{itemize}
-    \item Spatial GNN requires neighbor graph
-    \item Early cells: Use true \texttt{contact\_graph}
-    \item Late cells: Use predicted contacts
-    \item $\Rightarrow$ \textbf{Complete spatial modeling} from zygote to adult
-\end{itemize}
+\begin{alertblock}{Fundamental Problem}
+GNNs require the graph as \textbf{input}.\\[0.3em]
+But the contact graph is exactly what we're trying to \textbf{predict}!\\[0.3em]
+\textcolor{red}{Chicken-and-egg problem.}
+\end{alertblock}
+
+\column{0.48\textwidth}
+% Figure: GNN chicken-and-egg problem
+% TODO: Create figures/gnn_problem.svg
+\fbox{\parbox{\textwidth}{\centering\vspace{4cm}\textbf{[Figure: gnn\_problem.svg]}\\\small GNN needs graph → Graph is unknown → ???\vspace{1cm}}}
+\end{columns}
+\end{frame}
+
+\begin{frame}{The Bitter Lesson}
+\begin{block}{Rich Sutton (2019)}
+\textit{``The biggest lesson that can be read from 70 years of AI research is that \textbf{general methods that leverage computation} are ultimately the most effective, and by a large margin.''}
 \end{block}
 
-\begin{block}{3. Scientific Hypothesis}
-\textit{Developmental history (ancestor contact) + current state (expression, morphology) can predict current spatial neighbors.}
+\vspace{0.5em}
+
+\begin{columns}
+\column{0.48\textwidth}
+\begin{alertblock}{GNN Approach}
+\begin{itemize}
+    \item[\textbf{--}] Encodes \textbf{human knowledge} into architecture
+    \item[\textbf{--}] Hand-crafted graph topology
+    \item[\textbf{--}] Message passing = limited context
+    \item[\textbf{--}] Over-smoothing with depth
+    \item[\textbf{--}] Poor GPU utilization (sparse ops)
+\end{itemize}
+\end{alertblock}
+
+\column{0.48\textwidth}
+\begin{exampleblock}{Transformer Approach}
+\begin{itemize}
+    \item[\textbf{+}] \textbf{Learns from data}
+    \item[\textbf{+}] No assumed topology
+    \item[\textbf{+}] Full attention = organism as context
+    \item[\textbf{+}] Scales with depth
+    \item[\textbf{+}] Excellent GPU utilization (dense ops)
+\end{itemize}
+\end{exampleblock}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Transformers Embody ``Organism as Context''}
+\begin{center}
+% Figure: Transformer attention as organism context
+% TODO: Create figures/transformer_context.svg
+\fbox{\parbox{0.85\textwidth}{\centering\vspace{4cm}\textbf{[Figure: transformer\_context.svg]}\\\small Self-attention: Each cell attends to ALL other cells in embryo\vspace{2cm}}}
+\end{center}
+
+\begin{block}{The Mathematical Formalization}
+\[
+\text{Cell}_i^{\text{repr}} = \sum_{j \in \text{Embryo}} \text{Attention}(Q_i, K_j) \cdot V_j
+\]
+\textbf{Every cell's representation is computed from the entire organism.}\\
+This IS ``organism as context'' --- made computational.
 \end{block}
 \end{frame}
 
-\begin{frame}{Link Prediction as Machine Learning Task}
+% ============================================================
+\section{Flow Matching Transformers}
+% ============================================================
+
+\begin{frame}{Architecture Overview}
+\begin{center}
+% Figure: Flow Matching Transformer architecture
+% TODO: Create figures/architecture.svg
+\fbox{\parbox{0.9\textwidth}{\centering\vspace{5cm}\textbf{[Figure: architecture.svg]}\\\small Cell Tokens → Pairwise Transformer → Flow Matching Head → Contact Graph\vspace{1.5cm}}}
+\end{center}
+
+\begin{columns}
+\column{0.32\textwidth}
+\centering
+\textbf{Input}\\
+Cell tokens\\
+(Transcriptome + Lineage + Time)
+
+\column{0.32\textwidth}
+\centering
+\textbf{Encoder}\\
+Pairwise Transformer\\
+(Axial Attention)
+
+\column{0.32\textwidth}
+\centering
+\textbf{Output}\\
+Contact Graph\\
+(Generated via Flow Matching)
+\end{columns}
+\end{frame}
+
+\begin{frame}{Cell Tokenization}
+\begin{block}{Each Cell = One Token}
+\[
+\text{Token}_i = [\underbrace{\mathbf{e}_i^{\text{expr}}}_{\text{scGPT}} \| \underbrace{\mathbf{e}_i^{\text{lin}}}_{\text{Binary Path}} \| \underbrace{\mathbf{e}_i^{\text{time}}}_{\text{Sinusoidal}} \| \underbrace{\mathbf{e}_i^{\text{morph}}}_{\text{CShaper}}]
+\]
+\end{block}
+
+\begin{columns}
+\column{0.48\textwidth}
+\begin{block}{Transcriptome Embedding}
+\begin{itemize}
+    \item scGPT foundation model (768-dim)
+    \item Or: PCA + MLP (lightweight)
+    \item Captures molecular state
+\end{itemize}
+\end{block}
+
+\begin{block}{Lineage Encoding}
+\begin{itemize}
+    \item Binary path from zygote
+    \item Example: ``ABplp'' → [0,1,0,1,0,...]
+    \item Encodes developmental history
+\end{itemize}
+\end{block}
+
+\column{0.48\textwidth}
+\begin{block}{Temporal Encoding}
+\begin{itemize}
+    \item Sinusoidal (Transformer-style)
+    \item Developmental time: 0--830 min
+    \item Captures temporal position
+\end{itemize}
+\end{block}
+
+\begin{block}{Morphology (when available)}
+\begin{itemize}
+    \item Volume, surface area, sphericity
+    \item From CShaper (early embryo)
+    \item Imputed for late embryo
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Flow Matching: Generative Graph Modeling}
 \begin{columns}
 \column{0.55\textwidth}
-\textbf{Task Formulation}:
-
-\vspace{0.5em}
-Given:
+\begin{block}{Why Flow Matching?}
 \begin{itemize}
-    \item Node features: expression + morphology + lineage
-    \item Edge prior: \texttt{lineage\_proximity}
-    \item Labels: \texttt{contact\_graph} (where available)
+    \item \textbf{Generative}: Produces graphs, not just scores
+    \item \textbf{Deterministic sampling}: Faster than diffusion
+    \item \textbf{Stable training}: No score matching issues
+    \item \textbf{Structured outputs}: Natural for adjacency matrices
 \end{itemize}
+\end{block}
 
-\vspace{0.5em}
-Learn:
+\begin{block}{The Formulation}
+Transform noise $\mathbf{Z} \sim \mathcal{N}(0,1)$ to adjacency $\mathbf{A}$:
 \[
-P(\text{contact}_{ij} | \text{proximity}_{ij}, \mathbf{x}_i, \mathbf{x}_j)
+\mathbf{Z} \xrightarrow{\text{Flow } \psi_t} \mathbf{A}
 \]
-
-\vspace{0.5em}
-Predict: Contacts for late-stage cells
+Conditioned on: (transcriptome, lineage, time)
+\end{block}
 
 \column{0.42\textwidth}
-\begin{block}{Data Split}
+% Figure: Flow matching illustration
+% TODO: Create figures/flow_matching.svg
+\fbox{\parbox{\textwidth}{\centering\vspace{4cm}\textbf{[Figure: flow\_matching.svg]}\\\small Noise → Flow → Contact Graph\vspace{1cm}}}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Training Objective: OT-CFM}
+\begin{block}{Optimal Transport Conditional Flow Matching}
+\begin{enumerate}
+    \item Sample random flow time $t \sim U(0,1)$
+    \item Sample noise $\mathbf{A}_0 \sim \mathcal{N}(0,1)$
+    \item Interpolate: $\mathbf{A}_t = (1-t)\mathbf{A}_0 + t\mathbf{A}_{\text{target}}$
+    \item Predict velocity: $\mathbf{v}_\theta(\mathbf{A}_t, t, \text{context})$
+    \item Loss: $\mathcal{L} = \|\mathbf{v}_\theta - (\mathbf{A}_{\text{target}} - \mathbf{A}_0)\|^2$
+\end{enumerate}
+\end{block}
+
+\vspace{0.5em}
+
+\begin{block}{Inference: Generate Contact Graph}
+\begin{enumerate}
+    \item Start from noise: $\mathbf{A}_0 \sim \mathcal{N}(0,1)$
+    \item Euler integration: $\mathbf{A}_{t+\Delta t} = \mathbf{A}_t + \mathbf{v}_\theta \cdot \Delta t$
+    \item Binarize: $\mathbf{A}_{\text{final}} = \mathbf{1}[\mathbf{A}_1 > 0.5]$
+    \item Symmetrize
+\end{enumerate}
+\end{block}
+\end{frame}
+
+% ============================================================
+\section{Training Strategy}
+% ============================================================
+
+\begin{frame}{Curriculum Learning}
+\begin{center}
+% Figure: Curriculum learning stages
+% TODO: Create figures/curriculum.svg
+\fbox{\parbox{0.9\textwidth}{\centering\vspace{3.5cm}\textbf{[Figure: curriculum.svg]}\\\small Stage 1 (4-50 cells) → Stage 2 (50-200) → Stage 3 (200-500) → Stage 4 (500-1000)\vspace{1.5cm}}}
+\end{center}
+
+\begin{columns}
+\column{0.24\textwidth}
+\centering
+\textbf{Stage 1}\\
+4--50 cells\\
+Simple topology\\
+Fast convergence
+
+\column{0.24\textwidth}
+\centering
+\textbf{Stage 2}\\
+50--200 cells\\
+Gastrulation\\
+Cell migration
+
+\column{0.24\textwidth}
+\centering
+\textbf{Stage 3}\\
+200--500 cells\\
+Organogenesis\\
+Tissue formation
+
+\column{0.24\textwidth}
+\centering
+\textbf{Stage 4}\\
+500--1000 cells\\
+Differentiation\\
+Complex topology
+\end{columns}
+
+\vspace{0.5em}
+\centering
+\textbf{Progressive training on increasingly complex embryo stages}
+\end{frame}
+
+\begin{frame}{Temporal Extrapolation}
+\begin{block}{The Key Challenge}
+\begin{itemize}
+    \item \textbf{Training data}: Early embryo (20--380 min) with ground truth contacts
+    \item \textbf{Prediction target}: Late embryo (380--830 min) with NO ground truth
+\end{itemize}
+\end{block}
+
+\begin{block}{Our Hypothesis}
+The rules of contact formation are \textbf{learnable} and \textbf{generalizable}:
+\begin{itemize}
+    \item Cells with complementary adhesion molecules contact
+    \item Lineage proximity predicts spatial proximity (with caveats)
+    \item Morphological constraints limit possible contacts
+\end{itemize}
+These rules apply across developmental time.
+\end{block}
+
+\begin{block}{Uncertainty Quantification}
+Generate multiple samples → Compute variance → Report confidence
+\end{block}
+\end{frame}
+
+% ============================================================
+\section{Validation Strategy}
+% ============================================================
+
+\begin{frame}{Validation Without Ground Truth}
+\begin{columns}
+\column{0.48\textwidth}
+\begin{block}{1. Cross-Validation (Early Embryo)}
+\begin{itemize}
+    \item Leave-one-stage-out
+    \item Train on stages 1,2,3 → Test on 4
+    \item Metrics: AUC-ROC, Average Precision
+\end{itemize}
+\end{block}
+
+\begin{block}{2. Connectome Consistency}
+\begin{itemize}
+    \item Adult synapses require prior contact
+    \item If neurons A-B synapse in adult...
+    \item ...model must predict A-B contact in embryo
+    \item \textbf{Peter's Rule}: Contact is necessary for synapse
+\end{itemize}
+\end{block}
+
+\column{0.48\textwidth}
+\begin{block}{3. Notch Signaling Logic}
+\begin{itemize}
+    \item Notch requires direct contact
+    \item Check: Predicted neighbors have L-R pairs?
+    \item GLP-1/APX-1, LIN-12/LAG-2
+    \item Known developmental inductions
+\end{itemize}
+\end{block}
+
+\begin{block}{4. Cross-Species (C. briggsae)}
+\begin{itemize}
+    \item Conserved lineage, divergent genome
+    \item Predicted patterns should be similar
+    \item Evolution validates predictions
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+% ============================================================
+\section{Implementation \& Resources}
+% ============================================================
+
+\begin{frame}{Computational Requirements}
+\begin{columns}
+\column{0.48\textwidth}
+\begin{block}{Model Size}
 \begin{tabular}{lr}
 \toprule
-Set & Cells \\
+Component & Parameters \\
 \midrule
-Training & 3,790 \\
-Prediction & 16,149 \\
-No lineage & 214,949 \\
+Cell Encoder & $\sim$10M \\
+Pairwise Transformer & $\sim$50M \\
+Flow Network & $\sim$30M \\
+\midrule
+\textbf{Total} & \textbf{$\sim$90M} \\
 \bottomrule
 \end{tabular}
 \end{block}
 
-\vspace{0.5em}
-\small
-Training cells: Have both true contacts AND lineage proximity
-
-Prediction cells: Have lineage proximity but no true contacts
-\end{columns}
-\end{frame}
-
-\begin{frame}{Broader Impact: Complete Developmental Modeling}
-\begin{center}
-\begin{tikzpicture}[scale=0.85]
-    % Pipeline
-    \node[draw,rounded corners,fill=gray!20,minimum width=2.5cm] (p1) at (-5,0) {
-        \begin{tabular}{c}
-        \textbf{Phase 1}\\
-        Data Integration\\
-        \checkmark Done
-        \end{tabular}
-    };
-    
-    \node[draw,rounded corners,fill=yellow!20,minimum width=2.5cm] (p2) at (-1.5,0) {
-        \begin{tabular}{c}
-        \textbf{Phase 2}\\
-        Trimodal Encoder\\
-        Spatial GNN
-        \end{tabular}
-    };
-    
-    \node[draw,rounded corners,fill=orange!20,minimum width=2.5cm] (p3) at (2,0) {
-        \begin{tabular}{c}
-        \textbf{Phase 3}\\
-        Tree Generation\\
-        Division Predictor
-        \end{tabular}
-    };
-    
-    \node[draw,rounded corners,fill=green!20,minimum width=2.5cm] (p4) at (5.5,0) {
-        \begin{tabular}{c}
-        \textbf{Phase 4}\\
-        Validation\\
-        Perturbation
-        \end{tabular}
-    };
-    
-    \draw[->,thick] (p1) -- (p2);
-    \draw[->,thick] (p2) -- (p3);
-    \draw[->,thick] (p3) -- (p4);
-    
-    % Contact prediction contribution
-    \node[draw,rounded corners,fill=contact!30,minimum width=4cm] (contact) at (-1.5,-2) {
-        \begin{tabular}{c}
-        \textbf{Contact Prediction}\\
-        Fills late-stage spatial gap
-        \end{tabular}
-    };
-    
-    \draw[->,thick,contact] (contact) -- (p2);
-    \draw[->,thick,contact] (contact.east) to[bend right] (p3.south);
-\end{tikzpicture}
-\end{center}
-
-\vspace{0.5em}
-\textbf{Key Contribution}: Contact prediction enables complete spatial modeling across all developmental stages, not just the CShaper coverage window.
-\end{frame}
-
-% ============================================================
-\section{Technical Implementation}
-% ============================================================
-
-\begin{frame}{Implementation Highlights}
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{GPU Acceleration}
+\begin{block}{Hardware}
 \begin{itemize}
-    \item PyTorch for expression similarity
-    \item 234K $\times$ 231 correlation: 6 seconds
-    \item A100 GPU utilized for matrix ops
-\end{itemize}
-\end{block}
-
-\begin{block}{Optimized Data Structures}
-\begin{itemize}
-    \item Sparse matrices for graphs
-    \item Cached consensus morphology
-    \item Vectorized operations
+    \item A100 80GB $\times$ 1--2 GPUs
+    \item Training: $\sim$24 hours total
+    \item Flash Attention for efficiency
 \end{itemize}
 \end{block}
 
 \column{0.48\textwidth}
-\begin{block}{AnnData Structure}
-\footnotesize
-\texttt{adata.X} -- Expression\\
-\texttt{adata.obsm['X\_spatial']}\\
-\texttt{adata.obsm['X\_lineage\_binary']}\\
-\texttt{adata.obsp['contact\_binary']}\\
-\texttt{adata.obsp['lineage\_proximity']}\\
-\texttt{adata.obs['has\_true\_contact']}\\
-\texttt{adata.obs['has\_lineage\_proximity']}
+\begin{block}{Scalability}
+\begin{tabular}{lrr}
+\toprule
+Stage & Cells & Memory \\
+\midrule
+Early & 50--200 & $\sim$4 GB \\
+Mid & 200--500 & $\sim$16 GB \\
+Late & 500--1000 & $\sim$48 GB \\
+\bottomrule
+\end{tabular}
+\end{block}
+
+\begin{block}{Inference}
+\begin{itemize}
+    \item 1000-cell embryo: $\sim$30s/sample
+    \item 10 samples (uncertainty): $\sim$5 min
+    \item Batched across time points
+\end{itemize}
 \end{block}
 \end{columns}
-
-\vspace{0.5em}
-\begin{block}{Processing Time}
-Full pipeline (234,888 cells): \textbf{$\sim$9 minutes} on A100 GPU
-\end{block}
 \end{frame}
 
-% ============================================================
-\section{Next Steps}
-% ============================================================
-
-\begin{frame}{Immediate Next Steps}
-\begin{enumerate}
-    \item \textbf{Implement Link Prediction Model}
-    \begin{itemize}
-        \item GNN-based edge predictor
-        \item Input: node features + lineage proximity prior
-        \item Output: contact probability
-    \end{itemize}
-    
-    \vspace{0.5em}
-    \item \textbf{Validate Predictions}
-    \begin{itemize}
-        \item Cross-validation on early-stage cells
-        \item Literature validation (known tissue neighbors)
-        \item Connectome consistency (neurons that synapse should be neighbors)
-    \end{itemize}
-    
-    \vspace{0.5em}
-    \item \textbf{Integrate with Spatial GNN}
-    \begin{itemize}
-        \item Use predicted contacts as edges
-        \item Aggregate neighbor information for cell state prediction
-    \end{itemize}
-\end{enumerate}
-\end{frame}
-
-\begin{frame}{Long-Term Vision}
-\begin{center}
-\Large
-\textit{``From a single zygote, generate the complete developmental trajectory of an organism --- every cell's state, position, and neighbor relationships, from fertilization to adulthood.''}
-\end{center}
-
-\vspace{1em}
-\textbf{Contact graph prediction is a critical step toward this vision:}
-\begin{itemize}
-    \item Bridges the temporal gap in spatial data
-    \item Enables complete cell-cell communication modeling
-    \item Tests the hypothesis that spatial organization is predictable from developmental history
-\end{itemize}
-
-\vspace{1em}
-\begin{block}{Key Question}
-\textit{Is the spatial organization of \textit{C. elegans} as deterministic as its cell lineage?}
-\end{block}
-\end{frame}
-
-% ============================================================
-% Summary
-% ============================================================
-
-\begin{frame}{Summary}
+\begin{frame}{Current Progress}
 \begin{columns}
 \column{0.48\textwidth}
 \begin{block}{Completed}
 \begin{itemize}
-    \item[\checkmark] CShaper data integration
-    \item[\checkmark] 40\% morphology coverage
-    \item[\checkmark] True contact graph (direct matches)
-    \item[\checkmark] Lineage proximity prior
-    \item[\checkmark] Training/prediction split
+    \item[\checkmark] Trimodal data integration
+    \item[\checkmark] CShaper contact extraction
+    \item[\checkmark] 40\% morphology coverage (94K cells)
+    \item[\checkmark] Lineage proximity prior (28.5M edges)
     \item[\checkmark] GPU-accelerated pipeline
+    \item[\checkmark] Unified AnnData structure
 \end{itemize}
 \end{block}
 
 \column{0.48\textwidth}
-\begin{block}{Key Insight}
-\begin{itemize}
-    \item Ancestor contact $\neq$ descendant contact
-    \item But ancestor contact $\rightarrow$ \textbf{prior} for prediction
-    \item Link prediction: Learn the mapping
-\end{itemize}
-\end{block}
-
-\begin{block}{Scientific Contribution}
-Testing whether spatial organization follows from developmental history + cell state
+\begin{block}{Next Steps}
+\begin{enumerate}
+    \item Implement Flow Matching Transformer
+    \item scGPT embedding integration
+    \item Curriculum training pipeline
+    \item Validation framework
+    \item Late-stage prediction
+\end{enumerate}
 \end{block}
 \end{columns}
+
+\vspace{0.5em}
+\begin{block}{Key Metrics}
+\centering
+234,888 cells | 27,138 genes | 1.85M contact edges | 28.5M proximity edges
+\end{block}
+\end{frame}
+
+% ============================================================
+\section{Summary}
+% ============================================================
+
+\begin{frame}{The Synthesis}
+\begin{center}
+% Figure: Philosophy to implementation
+% TODO: Create figures/synthesis.svg
+\fbox{\parbox{0.85\textwidth}{\centering\vspace{3.5cm}\textbf{[Figure: synthesis.svg]}\\\small Philosophy (Organism as Context) → Architecture (Transformer) → Output (Contact Graph)\vspace{1.5cm}}}
+\end{center}
+
+\begin{block}{Key Insight}
+\begin{center}
+\large
+The Bitter Lesson provides the \textbf{technical} justification.\\
+``Organism as Context'' provides the \textbf{biological} justification.\\[0.5em]
+\textbf{Transformers are not an arbitrary choice ---\\
+they are the computational formalization of developmental biology.}
+\end{center}
+\end{block}
+\end{frame}
+
+\begin{frame}{The Question We Answer}
+\begin{center}
+\Large
+\textit{``Given everything we know about a cell's history (lineage)\\
+and current state (transcriptome),\\
+can we infer its spatial relationships (contacts)\\
+by understanding its place in the developing organism?''}
+
+\vspace{2em}
+
+\textbf{Our hypothesis: Yes.}\\[0.5em]
+\textbf{Because the organism \textit{is} the context.}
+\end{center}
 \end{frame}
 
 \begin{frame}
@@ -594,6 +656,10 @@ Testing whether spatial organization follows from developmental history + cell s
 
 \vspace{2em}
 \Large Questions?
+
+\vspace{2em}
+\normalsize
+\texttt{github.com/[repo]/NemaContext}
 \end{frame}
 
 \end{document}

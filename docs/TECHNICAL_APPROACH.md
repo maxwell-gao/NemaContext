@@ -1,11 +1,42 @@
 # NemaContext Technical Approach: Flow Matching Transformers for Contact Graph Generation
 
-## The Bitter Lesson and Architectural Philosophy
+## Core Philosophy: The Organism as Context
+
+> *"A cell is not an island. Its identity, position, and fate are defined not by intrinsic properties alone, but by its place within the developing whole."*
+
+The name **NemaContext** encodes our central thesis: in *C. elegans* embryogenesis, the **organism itself is the context** that gives meaning to each cell. This is not merely a metaphor—it is an architectural principle.
+
+### The Contextual Nature of Development
+
+In developmental biology, three levels of context determine a cell's trajectory:
+
+1. **Lineage Context** (Temporal): Where did this cell come from? The invariant Sulston lineage provides a deterministic developmental history.
+
+2. **Molecular Context** (State): What genes is this cell expressing? The transcriptome encodes the cell's current functional state.
+
+3. **Spatial Context** (Relational): Who are this cell's neighbors? Physical contacts determine signaling, induction, and tissue organization.
+
+The key insight: **Spatial context (contact graph) is not given—it must be inferred from lineage and molecular context.** This is the inverse problem NemaContext solves.
+
+### Why Transformers Embody "Organism as Context"
+
+The Transformer architecture is not merely a computational convenience—it is the natural mathematical formalization of contextual identity:
+
+```
+Cell Representation = f(This Cell, All Other Cells in Embryo)
+                    = Attention(Query=This Cell, Keys/Values=Entire Organism)
+```
+
+Unlike GNNs, where context is limited to graph neighbors (a chicken-and-egg problem when the graph is unknown), **Transformers compute each cell's representation as a function of the entire embryo**. This is "organism as context" made computational.
+
+---
+
+## The Bitter Lesson: A Supporting Argument
 
 > *"The biggest lesson that can be read from 70 years of AI research is that general methods that leverage computation are ultimately the most effective, and by a large margin."*  
 > — Rich Sutton, "The Bitter Lesson" (2019)
 
-This document outlines the technical approach for NemaContext, deliberately choosing **scalable, general-purpose architectures** over domain-specific graph neural networks. We adopt a **Flow Matching Transformer** paradigm that treats contact graph prediction as a **conditional generative modeling** problem.
+The Bitter Lesson provides a *technical* justification for our *philosophical* choice. We adopt a **Flow Matching Transformer** paradigm that treats contact graph prediction as a **conditional generative modeling** problem, letting the model learn the rules of spatial organization rather than encoding them by hand.
 
 ### Why Not GNNs?
 
@@ -645,9 +676,20 @@ def validate_against_connectome(predicted_neural_contacts, adult_connectome):
 
 ---
 
-## 10. Summary
+## 10. Summary: The Organism as Context, Computationally Realized
 
-The **Flow Matching Transformer** approach for NemaContext:
+The **Flow Matching Transformer** approach for NemaContext embodies our core philosophy at every level:
+
+### Philosophical Alignment
+
+| Principle | Implementation |
+|-----------|----------------|
+| **Organism as Context** | Self-attention: each cell sees the entire embryo |
+| **Lineage as Memory** | Positional encoding from developmental history |
+| **Transcriptome as State** | Foundation model embeddings capture molecular identity |
+| **Contact as Emergence** | Flow Matching generates topology from context |
+
+### Technical Summary
 
 1. **Tokenizes cells** using transcriptome embeddings, lineage encoding, and temporal position
 2. **Learns pairwise relationships** via Axial Attention without hand-crafted graph structures
@@ -655,7 +697,18 @@ The **Flow Matching Transformer** approach for NemaContext:
 4. **Scales efficiently** with modern GPU hardware and attention optimizations
 5. **Validates biologically** through Notch signaling and connectome consistency
 
-This architecture embodies The Bitter Lesson: instead of encoding developmental biology knowledge into graph structures, we let a general-purpose Transformer learn the rules of embryonic spatial organization directly from data.
+### The Synthesis
+
+The Bitter Lesson provides the *technical* justification (general methods + compute > hand-crafted features), but **"Organism as Context"** provides the *biological* justification. The Transformer architecture is not an arbitrary choice—it is the computational formalization of how developmental biology actually works:
+
+> **A cell's identity is not intrinsic. It is contextual.**  
+> **The embryo is not a collection of cells. It is a context that defines them.**
+
+This architecture lets us ask the question that defines NemaContext:
+
+> *Given everything we know about a cell's history (lineage) and current state (transcriptome), can we infer its spatial relationships (contacts) by understanding its place in the developing organism?*
+
+The answer, we hypothesize, is yes—because the organism *is* the context.
 
 ---
 
