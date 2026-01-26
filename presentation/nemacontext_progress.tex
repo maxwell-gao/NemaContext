@@ -22,7 +22,7 @@
 % Title
 \title[NemaContext]{NemaContext: The Organism as Context}
 \subtitle{Flow Matching Transformers for Digital Embryogenesis}
-\author{Progress Report}
+\author{Senquan Gao}
 \date{\today}
 
 \begin{document}
@@ -171,7 +171,8 @@ CShaper\\
 \includegraphics[width=0.8\textwidth]{figures/temporal_gap.pdf}
 \end{center}
 
-\vspace{0.5em}
+\begin{columns}
+\column{0.55\textwidth}
 \textbf{Problem}: For cells in the 380--830 min window, we have:
 \begin{itemize}
     \item[\checkmark] Full transcriptome data (gene expression)
@@ -180,8 +181,12 @@ CShaper\\
     \item[$\times$] \textcolor{red}{No contact graph}
 \end{itemize}
 
-\vspace{0.5em}
-\textbf{Our Question}: Can we \textbf{infer} spatial context from lineage + molecular context?
+\column{0.4\textwidth}
+\vspace{1.5em}
+\textbf{Our Question}:\\
+Can we \textbf{infer} spatial context from lineage + molecular context?
+
+\end{columns}
 \end{frame}
 
 \begin{frame}{The Contact Graph Problem}
@@ -645,7 +650,7 @@ by understanding its place in the developing organism?''}
 
 \vspace{2em}
 \normalsize
-\texttt{github.com/[repo]/NemaContext}
+\texttt{github.com/maxwell-gao/NemaContext}
 \end{frame}
 
 \end{document}
