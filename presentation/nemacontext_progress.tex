@@ -75,9 +75,7 @@ Each cell's representation is computed as a function of the \textbf{entire embry
 
 \begin{frame}{Three Levels of Developmental Context}
 \begin{center}
-% Figure: Three context levels diagram
-% TODO: Create figures/context_levels.svg
-\fbox{\parbox{0.8\textwidth}{\centering\vspace{3cm}\textbf{[Figure: context\_levels.svg]}\\\small Lineage Context + Molecular Context + Spatial Context\vspace{3cm}}}
+\includegraphics[width=0.7\textwidth]{figures/context_levels.pdf}
 \end{center}
 
 \begin{columns}
@@ -129,9 +127,9 @@ Contact graph = signaling potential
 \end{block}
 
 \column{0.42\textwidth}
-% Figure: C. elegans lineage tree
-% TODO: Create figures/lineage_tree.svg
-\fbox{\parbox{\textwidth}{\centering\vspace{4cm}\textbf{[Figure: lineage\_tree.svg]}\\\small P0 → 959 cells\vspace{1cm}}}
+\begin{center}
+\includegraphics[width=\textwidth]{figures/lineage_tree.pdf}
+\end{center}
 \end{columns}
 \end{frame}
 
@@ -141,9 +139,7 @@ Contact graph = signaling potential
 
 \begin{frame}{Data Landscape: Trimodal Integration}
 \begin{center}
-% Figure: Trimodal data integration
-% TODO: Create figures/trimodal_integration.svg
-\fbox{\parbox{0.9\textwidth}{\centering\vspace{3cm}\textbf{[Figure: trimodal\_integration.svg]}\\\small Transcriptome (234K) + Spatial (1.3K) + Morphology (1.2K) → Unified AnnData\vspace{2cm}}}
+\includegraphics[width=0.8\textwidth]{figures/trimodal_integration.pdf}
 \end{center}
 
 \begin{columns}
@@ -172,9 +168,7 @@ CShaper\\
 
 \begin{frame}{The Temporal Coverage Gap}
 \begin{center}
-% Figure: Temporal coverage gap timeline
-% TODO: Create figures/temporal_gap.svg
-\fbox{\parbox{0.9\textwidth}{\centering\vspace{4cm}\textbf{[Figure: temporal\_gap.svg]}\\\small Timeline showing coverage gap: CShaper/WormGUIDES (20-380 min) vs Large2025 (0-830 min)\vspace{2cm}}}
+\includegraphics[width=0.8\textwidth]{figures/temporal_gap.pdf}
 \end{center}
 
 \vspace{0.5em}
@@ -235,9 +229,9 @@ But the contact graph is exactly what we're trying to \textbf{predict}!\\[0.3em]
 \end{alertblock}
 
 \column{0.48\textwidth}
-% Figure: GNN chicken-and-egg problem
-% TODO: Create figures/gnn_problem.svg
-\fbox{\parbox{\textwidth}{\centering\vspace{4cm}\textbf{[Figure: gnn\_problem.svg]}\\\small GNN needs graph → Graph is unknown → ???\vspace{1cm}}}
+\begin{center}
+\includegraphics[width=\textwidth]{figures/gnn_problem.pdf}
+\end{center}
 \end{columns}
 \end{frame}
 
@@ -275,9 +269,7 @@ But the contact graph is exactly what we're trying to \textbf{predict}!\\[0.3em]
 
 \begin{frame}{Transformers Embody ``Organism as Context''}
 \begin{center}
-% Figure: Transformer attention as organism context
-% TODO: Create figures/transformer_context.svg
-\fbox{\parbox{0.85\textwidth}{\centering\vspace{4cm}\textbf{[Figure: transformer\_context.svg]}\\\small Self-attention: Each cell attends to ALL other cells in embryo\vspace{2cm}}}
+\includegraphics[width=0.75\textwidth]{figures/transformer_context.pdf}
 \end{center}
 
 \begin{block}{The Mathematical Formalization}
@@ -295,9 +287,7 @@ This IS ``organism as context'' --- made computational.
 
 \begin{frame}{Architecture Overview}
 \begin{center}
-% Figure: Flow Matching Transformer architecture
-% TODO: Create figures/architecture.svg
-\fbox{\parbox{0.9\textwidth}{\centering\vspace{5cm}\textbf{[Figure: architecture.svg]}\\\small Cell Tokens → Pairwise Transformer → Flow Matching Head → Contact Graph\vspace{1.5cm}}}
+\includegraphics[width=0.85\textwidth]{figures/architecture.pdf}
 \end{center}
 
 \begin{columns}
@@ -386,9 +376,9 @@ Conditioned on: (transcriptome, lineage, time)
 \end{block}
 
 \column{0.42\textwidth}
-% Figure: Flow matching illustration
-% TODO: Create figures/flow_matching.svg
-\fbox{\parbox{\textwidth}{\centering\vspace{4cm}\textbf{[Figure: flow\_matching.svg]}\\\small Noise → Flow → Contact Graph\vspace{1cm}}}
+\begin{center}
+\includegraphics[width=\textwidth]{figures/flow_matching.pdf}
+\end{center}
 \end{columns}
 \end{frame}
 
@@ -421,9 +411,7 @@ Conditioned on: (transcriptome, lineage, time)
 
 \begin{frame}{Curriculum Learning}
 \begin{center}
-% Figure: Curriculum learning stages
-% TODO: Create figures/curriculum.svg
-\fbox{\parbox{0.9\textwidth}{\centering\vspace{3.5cm}\textbf{[Figure: curriculum.svg]}\\\small Stage 1 (4-50 cells) → Stage 2 (50-200) → Stage 3 (200-500) → Stage 4 (500-1000)\vspace{1.5cm}}}
+\includegraphics[width=0.8\textwidth]{figures/curriculum.pdf}
 \end{center}
 
 \begin{columns}
@@ -619,9 +607,7 @@ Late & 500--1000 & $\sim$48 GB \\
 
 \begin{frame}{The Synthesis}
 \begin{center}
-% Figure: Philosophy to implementation
-% TODO: Create figures/synthesis.svg
-\fbox{\parbox{0.85\textwidth}{\centering\vspace{3.5cm}\textbf{[Figure: synthesis.svg]}\\\small Philosophy (Organism as Context) → Architecture (Transformer) → Output (Contact Graph)\vspace{1.5cm}}}
+\includegraphics[width=0.75\textwidth]{figures/synthesis.pdf}
 \end{center}
 
 \begin{block}{Key Insight}
