@@ -1,0 +1,37 @@
+<svg width="800" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#333" />
+    </marker>
+    <style>
+      .label { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #fff; text-anchor: middle; }
+      .title { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #333; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <!-- Input 1: Transcriptome -->
+  <rect x="50" y="50" width="180" height="80" rx="10" fill="#3366CC" opacity="0.9" />
+  <text x="140" y="85" class="label">Transcriptome</text>
+  <text x="140" y="105" class="label" font-size="12" font-weight="normal">234,888 cells</text>
+
+  <!-- Input 2: Spatial -->
+  <rect x="50" y="160" width="180" height="80" rx="10" fill="#4C9900" opacity="0.9" />
+  <text x="140" y="195" class="label">Spatial</text>
+  <text x="140" y="215" class="label" font-size="12" font-weight="normal">WormGUIDES</text>
+
+  <!-- Input 3: Morphology -->
+  <rect x="300" y="105" width="180" height="80" rx="10" fill="#CC6600" opacity="0.9" />
+  <text x="390" y="140" class="label">Morphology</text>
+  <text x="390" y="160" class="label" font-size="12" font-weight="normal">CShaper</text>
+
+  <!-- Output: Unified AnnData -->
+  <rect x="550" y="105" width="200" height="80" rx="10" fill="#800080" opacity="0.9" />
+  <text x="650" y="140" class="label">Unified AnnData</text>
+  <text x="650" y="160" class="label" font-size="12" font-weight="normal">Integrated Object</text>
+
+  <!-- Arrows -->
+  <line x1="230" y1="90" x2="550" y2="145" stroke="#333" stroke-width="2" marker-end="url(#arrow)" />
+  <line x1="230" y1="200" x2="550" y2="145" stroke="#333" stroke-width="2" marker-end="url(#arrow)" />
+  <line x1="480" y1="145" x2="540" y2="145" stroke="#333" stroke-width="2" marker-end="url(#arrow)" />
+
+</svg>

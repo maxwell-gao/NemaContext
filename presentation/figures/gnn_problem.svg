@@ -1,0 +1,32 @@
+<svg width="800" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#D00" />
+    </marker>
+    <style>
+      .box { fill: #f0f0f0; stroke: #333; stroke-width: 2; rx: 10; }
+      .text { font-family: Arial, sans-serif; text-anchor: middle; font-size: 16px; }
+      .alert { fill: #D00; font-weight: bold; }
+    </style>
+  </defs>
+
+  <!-- Left: Input Requirement -->
+  <rect x="50" y="100" width="200" height="100" class="box" />
+  <text x="150" y="145" class="text">GNN Input:</text>
+  <text x="150" y="165" class="text" font-weight="bold">Adjacency Matrix</text>
+
+  <!-- Right: Prediction Goal -->
+  <rect x="550" y="100" width="200" height="100" class="box" stroke="#CC6600" />
+  <text x="650" y="145" class="text">Prediction Goal:</text>
+  <text x="650" y="165" class="text" font-weight="bold" fill="#CC6600">Adjacency Matrix</text>
+
+  <!-- Circular Arrow (Chicken & Egg) -->
+  <path d="M 260 150 Q 400 50 540 150" fill="none" stroke="#D00" stroke-width="4" marker-end="url(#arrow)" />
+  <path d="M 540 150 Q 400 250 260 150" fill="none" stroke="#D00" stroke-width="4" marker-end="url(#arrow)" />
+
+  <!-- Question Mark -->
+  <text x="400" y="180" font-family="Arial" font-size="80" font-weight="bold" fill="#D00" text-anchor="middle">?</text>
+  
+  <text x="400" y="280" class="text alert">The Chicken-and-Egg Paradox</text>
+
+</svg>

@@ -1,0 +1,60 @@
+<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .node { fill: #4C9900; stroke: #333; stroke-width: 1; }
+      .line { stroke: #333; stroke-width: 2; }
+      .text { font-family: Arial, sans-serif; text-anchor: middle; font-size: 14px; fill: #333; }
+    </style>
+  </defs>
+
+  <!-- P0 -->
+  <circle cx="400" cy="40" r="20" class="node" />
+  <text x="400" y="45" class="text" fill="#fff" font-weight="bold">P0</text>
+
+  <!-- P0 -> AB, P1 -->
+  <line x1="400" y1="60" x2="250" y2="120" class="line" />
+  <line x1="400" y1="60" x2="550" y2="120" class="line" />
+
+  <!-- AB -->
+  <circle cx="250" cy="120" r="15" class="node" fill="#3366CC" />
+  <text x="250" y="125" class="text" fill="#fff">AB</text>
+
+  <!-- P1 -->
+  <circle cx="550" cy="120" r="15" class="node" fill="#CC6600" />
+  <text x="550" y="125" class="text" fill="#fff">P1</text>
+
+  <!-- AB -> ABa, ABp -->
+  <line x1="250" y1="135" x2="150" y2="200" class="line" />
+  <line x1="250" y1="135" x2="350" y2="200" class="line" />
+
+  <!-- ABa -->
+  <circle cx="150" cy="200" r="12" class="node" fill="#3366CC" />
+  <text x="150" y="205" class="text" fill="#fff" font-size="10">ABa</text>
+  
+  <!-- ABp -->
+  <circle cx="350" cy="200" r="12" class="node" fill="#3366CC" />
+  <text x="350" y="205" class="text" fill="#fff" font-size="10">ABp</text>
+
+  <!-- P1 -> EMS, P2 -->
+  <line x1="550" y1="135" x2="480" y2="200" class="line" />
+  <line x1="550" y1="135" x2="620" y2="200" class="line" />
+
+  <!-- EMS -->
+  <circle cx="480" cy="200" r="12" class="node" fill="#CC6600" />
+  <text x="480" y="205" class="text" fill="#fff" font-size="10">EMS</text>
+
+  <!-- P2 -->
+  <circle cx="620" cy="200" r="12" class="node" fill="#CC6600" />
+  <text x="620" y="205" class="text" fill="#fff" font-size="10">P2</text>
+
+  <!-- Further branching indication -->
+  <line x1="150" y1="212" x2="130" y2="250" class="line" stroke-dasharray="2,2" />
+  <line x1="150" y1="212" x2="170" y2="250" class="line" stroke-dasharray="2,2" />
+  
+  <line x1="350" y1="212" x2="330" y2="250" class="line" stroke-dasharray="2,2" />
+  <line x1="350" y1="212" x2="370" y2="250" class="line" stroke-dasharray="2,2" />
+
+  <text x="400" y="350" class="text" font-size="16" font-style="italic">... 9 divisions later ...</text>
+  <text x="400" y="380" class="text" font-weight="bold" font-size="18">959 Terminal Cells</text>
+
+</svg>

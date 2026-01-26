@@ -1,0 +1,43 @@
+<svg width="800" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#333" />
+    </marker>
+    <style>
+      .text { font-family: Arial, sans-serif; text-anchor: middle; font-size: 16px; }
+      .label { font-weight: bold; }
+    </style>
+  </defs>
+
+  <!-- Step 1: Noise -->
+  <rect x="50" y="50" width="150" height="150" fill="#eee" stroke="#333" stroke-width="2" />
+  <!-- Random Noise Pattern -->
+  <rect x="60" y="60" width="20" height="20" fill="#999" /> <rect x="100" y="80" width="20" height="20" fill="#555" />
+  <rect x="150" y="100" width="20" height="20" fill="#bbb" /> <rect x="80" y="140" width="20" height="20" fill="#777" />
+  
+  <text x="125" y="230" class="text label">Noise</text>
+  <text x="125" y="250" class="text">t = 0</text>
+
+  <!-- Flow Arrows -->
+  <line x1="220" y1="125" x2="330" y2="125" stroke="#333" stroke-width="3" marker-end="url(#arrow)" />
+  <text x="275" y="115" class="text" font-weight="bold" fill="#333">Flow $\psi_t$</text>
+
+  <!-- Step 2: Intermediate -->
+  <rect x="350" y="50" width="150" height="150" fill="#eee" stroke="#333" stroke-width="2" stroke-dasharray="5,5" />
+  <text x="425" y="230" class="text label">ODE Solve</text>
+  <text x="425" y="250" class="text">0 < t < 1</text>
+
+  <!-- Flow Arrows -->
+  <line x1="520" y1="125" x2="630" y2="125" stroke="#333" stroke-width="3" marker-end="url(#arrow)" />
+
+  <!-- Step 3: Data -->
+  <rect x="650" y="50" width="150" height="150" fill="#fff" stroke="#CC6600" stroke-width="3" />
+  <!-- Structured Matrix Pattern -->
+  <line x1="650" y1="50" x2="800" y2="200" stroke="#CC6600" stroke-width="1" />
+  <rect x="660" y="60" width="20" height="20" fill="#CC6600" />
+  <rect x="770" y="170" width="20" height="20" fill="#CC6600" />
+  
+  <text x="725" y="230" class="text label">Adjacency</text>
+  <text x="725" y="250" class="text">t = 1</text>
+
+</svg>

@@ -1,0 +1,43 @@
+<svg width="800" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .text { font-family: Arial, sans-serif; text-anchor: start; fill: #333; }
+      .label { font-size: 14px; fill: #fff; font-weight: bold; text-anchor: middle; }
+      .axis { stroke: #333; stroke-width: 1; }
+      .tick { font-size: 12px; text-anchor: middle; fill: #666; }
+    </style>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#fff" />
+
+  <!-- Timeline Axis -->
+  <line x1="50" y1="250" x2="750" y2="250" class="axis" />
+  
+  <!-- Ticks -->
+  <line x1="50" y1="250" x2="50" y2="255" class="axis" /> <text x="50" y="270" class="tick">0 min</text>
+  <line x1="370" y1="250" x2="370" y2="255" class="axis" /> <text x="370" y="270" class="tick">380 min</text>
+  <line x1="750" y1="250" x2="750" y2="255" class="axis" /> <text x="750" y="270" class="tick">830 min</text>
+
+  <!-- Bar 1: CShaper -->
+  <rect x="67" y="50" width="303" height="40" fill="#CC6600" opacity="0.8" rx="5" />
+  <text x="218" y="75" class="label">CShaper (Morphology)</text>
+  
+  <!-- Bar 2: WormGUIDES -->
+  <rect x="67" y="100" width="303" height="40" fill="#4C9900" opacity="0.8" rx="5" />
+  <text x="218" y="125" class="label">WormGUIDES (Spatial)</text>
+
+  <!-- Bar 3: Large 2025 -->
+  <rect x="50" y="150" width="700" height="40" fill="#3366CC" opacity="0.8" rx="5" />
+  <text x="400" y="175" class="label">Large et al. 2025 (Transcriptome)</text>
+
+  <!-- Gap Highlight -->
+  <rect x="370" y="45" width="380" height="100" fill="none" stroke="#D00" stroke-width="2" stroke-dasharray="5,5" />
+  <text x="560" y="80" class="text" fill="#D00" font-weight="bold" font-size="16" text-anchor="middle">TEMPORAL GAP</text>
+  <text x="560" y="105" class="text" fill="#D00" font-size="14" text-anchor="middle">No Contact Data!</text>
+
+  <!-- Arrow range -->
+  <line x1="370" y1="120" x2="750" y2="120" stroke="#D00" stroke-width="1" />
+  <path d="M370,120 L375,117 L375,123 Z" fill="#D00" />
+  <path d="M750,120 L745,117 L745,123 Z" fill="#D00" />
+
+</svg>
