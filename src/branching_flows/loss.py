@@ -1,18 +1,22 @@
-"""Loss functions for Branching Flows training.
+"""Loss functions for BROT (Branching Regularized Optimal Transport).
 
-Port of BranchingFlows.jl/src/loss.jl
+Combines BranchingFlows per-element losses (port of loss.jl) with
+RUOT-inspired distributional losses absorbed from DeepRUOTv2.
 
-Three loss components:
+Per-element losses (from BranchingFlows):
 
-1. **Split loss** -- Bregman Poisson divergence between predicted and target
-   remaining-split counts.
-2. **Deletion loss** -- Binary cross-entropy (from logits) between predicted
-   deletion probability and ground-truth deletion flag.
-3. **Base process loss** -- application-dependent (e.g. MSE for continuous,
-   cross-entropy for discrete).  Provided by the user; not in this module.
+1. Split loss -- Bregman Poisson divergence for remaining-split counts.
+2. Deletion loss -- BCE for deletion probability.
+3. Base process loss -- application-dependent (MSE, CE, etc.).
 
-All losses support per-element masking via a ``padmask`` and optional
-time-dependent scaling via :func:`loss_scale`.
+Distributional losses (from RUOT / DeepRUOTv2):
+
+4. Sinkhorn distributional loss -- match generated cell POPULATION to real.
+5. Mass matching loss -- ensure predicted cell count matches expected growth.
+6. Energy regularization -- penalize kinetic energy for smooth trajectories.
+
+Per-element losses supervise each cell individually.
+Distributional losses enforce that the organism as a whole looks right.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import torch.nn.functional as F
 
 
 # ---------------------------------------------------------------------------
-# Primitive losses
+# Primitive losses (BranchingFlows)
 # ---------------------------------------------------------------------------
 
 def bregman_poisson_loss(
@@ -35,11 +39,10 @@ def bregman_poisson_loss(
     ``sbpl(mu, c) = mu - c * log(mu) - (c - c * log(c))``
 
     where *mu* = ``pred`` (positive) and *c* = ``target`` (non-negative).
-    The constant term ``c - c*log(c)`` makes the minimum 0.
+    The constant term makes the minimum 0.
     """
     eps = 1e-8
     pred = pred.clamp(min=eps)
-    # xlogy(c, mu) = c * log(mu), with xlogy(0, *) = 0
     return pred - torch.xlogy(target, pred) - (target - torch.xlogy(target, target))
 
 
@@ -54,7 +57,7 @@ def logit_bce_loss(
 
 
 # ---------------------------------------------------------------------------
-# High-level losses
+# High-level per-element losses (BranchingFlows)
 # ---------------------------------------------------------------------------
 
 def split_loss(
@@ -67,12 +70,11 @@ def split_loss(
     """Masked Bregman Poisson loss for split-count prediction.
 
     Args:
-        split_transform: Maps raw logits to positive intensities
-            (e.g. ``lambda x: exp(clamp(x, -100, 11))``).
-        pred_logits: Model output for splits, shape ``(batch, length)``.
-        targets: Ground-truth remaining splits ``(batch, length)``.
-        padmask: Bool mask ``(batch, length)``, True for valid positions.
-        scale: Optional per-element weight ``(batch, length)`` or broadcastable.
+        split_transform: Maps raw logits to positive intensities.
+        pred_logits: ``(batch, length)`` model output for splits.
+        targets: ``(batch, length)`` ground-truth remaining splits.
+        padmask: ``(batch, length)`` bool, True for valid positions.
+        scale: Optional per-element weight.
 
     Returns:
         Scalar loss (masked mean).
@@ -91,9 +93,9 @@ def deletion_loss(
     """Masked logit BCE loss for deletion prediction.
 
     Args:
-        pred_logits: Model output for deletion, shape ``(batch, length)``.
-        targets: Ground-truth deletion flags ``(batch, length)`` float.
-        padmask: Bool mask ``(batch, length)``.
+        pred_logits: ``(batch, length)`` model output for deletion.
+        targets: ``(batch, length)`` ground-truth deletion flags.
+        padmask: ``(batch, length)`` bool.
         scale: Optional per-element weight.
 
     Returns:
@@ -101,6 +103,125 @@ def deletion_loss(
     """
     elem_loss = logit_bce_loss(pred_logits, targets.float())
     return _scaled_masked_mean(elem_loss, padmask, scale)
+
+
+# ---------------------------------------------------------------------------
+# BROT distributional losses (from RUOT / DeepRUOTv2)
+# ---------------------------------------------------------------------------
+
+def sinkhorn_distributional_loss(
+    x1_pred: torch.Tensor,
+    x1_anchor: torch.Tensor,
+    padmask: torch.Tensor,
+    blur: float = 0.1,
+    p: int = 2,
+) -> torch.Tensor:
+    """Sinkhorn distance between predicted and real endpoint distributions.
+
+    Unlike per-element MSE (which requires knowing which prediction matches
+    which target), this measures distributional similarity -- the generated
+    embryo should LOOK like the real embryo regardless of element ordering.
+
+    Computes the Sinkhorn divergence per batch item and averages.
+
+    Args:
+        x1_pred: ``(batch, length, features)`` predicted continuous endpoints.
+        x1_anchor: ``(batch, length, features)`` ground-truth anchors.
+        padmask: ``(batch, length)`` bool mask for valid positions.
+        blur: Sinkhorn blur parameter (entropic regularization).
+        p: Exponent for the ground cost (2 = squared Euclidean).
+
+    Returns:
+        Scalar loss (mean Sinkhorn divergence over batch).
+    """
+    from geomloss import SamplesLoss
+
+    loss_fn = SamplesLoss("sinkhorn", p=p, blur=blur, backend="tensorized")
+
+    B = x1_pred.shape[0]
+    total = torch.tensor(0.0, device=x1_pred.device)
+
+    for b in range(B):
+        mask_b = padmask[b]
+        pred_b = x1_pred[b][mask_b]
+        anchor_b = x1_anchor[b][mask_b]
+
+        if pred_b.shape[0] < 2:
+            continue
+
+        total = total + loss_fn(pred_b, anchor_b)
+
+    return total / max(B, 1)
+
+
+def mass_matching_loss(
+    split_logits: torch.Tensor,
+    del_logits: torch.Tensor,
+    expected_ratio: float,
+    padmask: torch.Tensor,
+    split_transform: Callable[[torch.Tensor], torch.Tensor] | None = None,
+) -> torch.Tensor:
+    """Penalize if predicted total mass doesn't match expected cell count.
+
+    Each element contributes ``(1 + split_intensity) * survival_prob`` to
+    the predicted future mass. The total should match
+    ``expected_ratio * current_count``.
+
+    Args:
+        split_logits: ``(batch, length)`` raw split intensity logits.
+        del_logits: ``(batch, length)`` raw deletion logits.
+        expected_ratio: Expected ratio of final to current cell count.
+        padmask: ``(batch, length)`` bool mask.
+        split_transform: Maps logits to positive intensities.
+
+    Returns:
+        Scalar loss.
+    """
+    if split_transform is None:
+        split_transform = lambda x: torch.exp(torch.clamp(x, -100.0, 11.0))
+
+    mask_f = padmask.float()
+    current_count = mask_f.sum(dim=1)  # (B,)
+
+    splits = split_transform(split_logits)
+    survival = 1.0 - torch.sigmoid(del_logits)
+
+    per_element_mass = (1.0 + splits) * survival * mask_f
+    predicted_mass = per_element_mass.sum(dim=1)
+
+    expected_mass = expected_ratio * current_count
+
+    return ((predicted_mass - expected_mass) ** 2).mean()
+
+
+def energy_regularization(
+    x1_pred: torch.Tensor,
+    xt_states: torch.Tensor,
+    t: torch.Tensor,
+    padmask: torch.Tensor,
+) -> torch.Tensor:
+    """Penalize kinetic energy of the predicted velocity field.
+
+    From the Benamou-Brenier formulation of dynamical OT, the kinetic
+    energy ``||v||^2`` where ``v = (x1_pred - xt) / (1 - t)`` should be
+    minimized for optimal transport paths.
+
+    Args:
+        x1_pred: ``(batch, length, features)`` predicted endpoints.
+        xt_states: ``(batch, length, features)`` current states at time t.
+        t: ``(batch,)`` flow times.
+        padmask: ``(batch, length)`` bool mask.
+
+    Returns:
+        Scalar loss (mean kinetic energy over valid positions).
+    """
+    denom = (1.0 - t).clamp(min=1e-4)
+    denom = denom.unsqueeze(1).unsqueeze(2)
+
+    velocity = (x1_pred - xt_states) / denom
+    energy = (velocity ** 2).sum(dim=-1)
+
+    return _scaled_masked_mean(energy, padmask)
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +235,7 @@ def loss_scale(
 ) -> torch.Tensor:
     """Time-dependent per-element loss weight.
 
-    Returns ``max(1 / (1 - t)^power, 1 / (1 - min_val)^power)``-normalized
-    weights.  In practice this upweights samples near t=1 where predictions
-    are more informative.
+    Upweights samples near t=1 where predictions are more informative.
 
     Args:
         t: Time values, shape ``(batch,)`` or broadcastable.
