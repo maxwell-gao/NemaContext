@@ -27,6 +27,7 @@ share/python-wheels/
 MANIFEST
 ref/
 checkpoints/
+checkpoints*/
 
 # PyInstaller
 #   Usually these files are written by a python script from a template
