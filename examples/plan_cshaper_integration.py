@@ -3,9 +3,6 @@ Analyze current processed datasets and plan CShaper integration.
 """
 
 import anndata as ad
-import numpy as np
-import pandas as pd
-from pathlib import Path
 
 
 def analyze_current_datasets():
@@ -13,58 +10,64 @@ def analyze_current_datasets():
     print("=" * 70)
     print("CURRENT PROCESSED DATASETS ANALYSIS")
     print("=" * 70)
-    
+
     # Load datasets
-    complete = ad.read_h5ad('dataset/processed/nema_complete_large2025.h5ad')
-    extended = ad.read_h5ad('dataset/processed/nema_extended_large2025.h5ad')
-    
+    complete = ad.read_h5ad("dataset/processed/nema_complete_large2025.h5ad")
+    extended = ad.read_h5ad("dataset/processed/nema_extended_large2025.h5ad")
+
     print("\n1. nema_complete_large2025.h5ad (trimodal complete)")
     print(f"   Cells: {complete.n_obs:,}")
     print(f"   Genes: {complete.n_vars:,}")
     print(f"   obs columns: {list(complete.obs.columns)}")
     print(f"   obsm keys: {list(complete.obsm.keys())}")
     print(f"   uns keys: {list(complete.uns.keys())}")
-    
+
     print("\n2. nema_extended_large2025.h5ad (all cells)")
     print(f"   Cells: {extended.n_obs:,}")
     print(f"   Genes: {extended.n_vars:,}")
-    
+
     # Spatial coverage
     print("\n" + "=" * 70)
     print("SPATIAL DATA COVERAGE (from WormGUIDES)")
     print("=" * 70)
-    
-    if 'spatial_matched' in complete.obs.columns:
-        print(f"\nComplete: {complete.obs['spatial_matched'].sum():,}/{complete.n_obs:,} have spatial coords")
-    if 'spatial_matched' in extended.obs.columns:
-        print(f"Extended: {extended.obs['spatial_matched'].sum():,}/{extended.n_obs:,} have spatial coords")
-    
+
+    if "spatial_matched" in complete.obs.columns:
+        print(
+            f"\nComplete: {complete.obs['spatial_matched'].sum():,}/{complete.n_obs:,} have spatial coords"
+        )
+    if "spatial_matched" in extended.obs.columns:
+        print(
+            f"Extended: {extended.obs['spatial_matched'].sum():,}/{extended.n_obs:,} have spatial coords"
+        )
+
     # Spatial coordinates info
-    if 'spatial' in complete.obsm:
-        coords = complete.obsm['spatial']
+    if "spatial" in complete.obsm:
+        coords = complete.obsm["spatial"]
         print(f"\nSpatial coords shape: {coords.shape}")
-        print(f"X range: {coords[:,0].min():.2f} - {coords[:,0].max():.2f}")
-        print(f"Y range: {coords[:,1].min():.2f} - {coords[:,1].max():.2f}")
+        print(f"X range: {coords[:, 0].min():.2f} - {coords[:, 0].max():.2f}")
+        print(f"Y range: {coords[:, 1].min():.2f} - {coords[:, 1].max():.2f}")
         if coords.shape[1] > 2:
-            print(f"Z range: {coords[:,2].min():.2f} - {coords[:,2].max():.2f}")
-    
+            print(f"Z range: {coords[:, 2].min():.2f} - {coords[:, 2].max():.2f}")
+
     # Lineage encoding info
     print("\n" + "=" * 70)
     print("LINEAGE ENCODING")
     print("=" * 70)
-    
-    if 'lineage_binary' in complete.obsm:
+
+    if "lineage_binary" in complete.obsm:
         print(f"\nLineage binary shape: {complete.obsm['lineage_binary'].shape}")
-    if 'lineage_depth' in complete.obs.columns:
-        print(f"Lineage depth range: {complete.obs['lineage_depth'].min()} - {complete.obs['lineage_depth'].max()}")
-    if 'lineage_founder' in complete.obs.columns:
+    if "lineage_depth" in complete.obs.columns:
+        print(
+            f"Lineage depth range: {complete.obs['lineage_depth'].min()} - {complete.obs['lineage_depth'].max()}"
+        )
+    if "lineage_founder" in complete.obs.columns:
         print(f"Founders: {complete.obs['lineage_founder'].unique().tolist()}")
-    
+
     # Check what's MISSING
     print("\n" + "=" * 70)
     print("CURRENT LIMITATIONS (What's MISSING)")
     print("=" * 70)
-    
+
     print("""
 1. SPATIAL DATA SOURCE: WormGUIDES nuclei positions
    - Only nucleus center positions (point coordinates)
@@ -74,17 +77,17 @@ def analyze_current_datasets():
    - No 3D MORPHOLOGY (shape)
 
 2. SPATIAL MATCHING RATE:""")
-    
-    if 'spatial_matched' in extended.obs.columns:
-        match_rate = extended.obs['spatial_matched'].sum() / extended.n_obs * 100
+
+    if "spatial_matched" in extended.obs.columns:
+        match_rate = extended.obs["spatial_matched"].sum() / extended.n_obs * 100
         print(f"   Only {match_rate:.1f}% of cells matched to spatial coordinates")
-    
+
     print("""
 3. NEIGHBOR GRAPH:
    - Currently built from: lineage tree structure OR k-NN in expression space
    - MISSING: True spatial neighbor graph based on physical contact
 """)
-    
+
     return complete, extended
 
 
@@ -93,7 +96,7 @@ def plan_cshaper_integration():
     print("\n" + "=" * 70)
     print("CSHAPER INTEGRATION PLAN")
     print("=" * 70)
-    
+
     print("""
 CShaper provides COMPLEMENTARY morphological data that can significantly
 enhance our trimodal dataset:
@@ -162,11 +165,11 @@ enhance our trimodal dataset:
 │    └────────────────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────────────────┘
 """)
-    
+
     print("\n" + "=" * 70)
     print("SPECIFIC ENHANCEMENTS")
     print("=" * 70)
-    
+
     print("""
 1. CELL-CELL CONTACT GRAPH (obsp['contact_adjacency'])
    Source: CShaper ContactInterface/*.csv
@@ -198,11 +201,11 @@ enhance our trimodal dataset:
    - Can build DYNAMIC contact graphs over development
    - Enable spatiotemporal modeling
 """)
-    
+
     print("\n" + "=" * 70)
     print("IMPLEMENTATION PRIORITY")
     print("=" * 70)
-    
+
     print("""
 Priority 1: Contact Adjacency Matrix
   - Most impactful for Spatial GNN
@@ -231,7 +234,7 @@ def show_matching_strategy():
     print("\n" + "=" * 70)
     print("LINEAGE NAME MATCHING STRATEGY")
     print("=" * 70)
-    
+
     print("""
 CShaper and Large2025 both use standard C. elegans lineage naming:
 
@@ -269,9 +272,9 @@ def match_cshaper_to_anndata(adata, cshaper_data):
 if __name__ == "__main__":
     # Analyze current state
     complete, extended = analyze_current_datasets()
-    
+
     # Plan CShaper integration
     plan_cshaper_integration()
-    
+
     # Show matching strategy
     show_matching_strategy()

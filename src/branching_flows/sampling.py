@@ -107,6 +107,7 @@ def step(
     if isinstance(flow.processes, (list, tuple)):
         for k, p in enumerate(flow.processes):
             from .processes import DiscreteInterpolatingFlow
+
             if isinstance(p, DiscreteInterpolatingFlow):
                 old_tokens = state.states[k][0]  # (L,) or (L, ...)
                 new_tokens = new_states[k][0]
@@ -127,7 +128,9 @@ def step(
     for k in range(len(new_states)):
         s = new_states[k]
         if s.dim() == 3:
-            out_states.append(torch.zeros(1, new_L, s.shape[2], dtype=s.dtype, device=s.device))
+            out_states.append(
+                torch.zeros(1, new_L, s.shape[2], dtype=s.dtype, device=s.device)
+            )
         else:
             out_states.append(torch.zeros(1, new_L, dtype=s.dtype, device=s.device))
 
@@ -185,6 +188,7 @@ def step(
 # ---------------------------------------------------------------------------
 # Generation loop
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Tracker:

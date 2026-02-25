@@ -107,7 +107,10 @@ def sulston_sample_forest(
             t_norm = max(0.0, min(t_norm, 0.999))
 
             merged_data = merger(
-                node1.data, node2.data, node1.weight, node2.weight,
+                node1.data,
+                node2.data,
+                node1.weight,
+                node2.weight,
             )
 
             parent_node = FlowNode(

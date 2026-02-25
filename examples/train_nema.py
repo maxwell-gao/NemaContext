@@ -24,11 +24,18 @@ from scipy.stats import beta
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.branching_flows import (
-    CoalescentFlow, DiscreteInterpolatingFlow, OUFlow,
-    branching_bridge, loss_scale, split_loss, deletion_loss,
+    CoalescentFlow,
+    DiscreteInterpolatingFlow,
+    OUFlow,
+    branching_bridge,
+    loss_scale,
+    split_loss,
+    deletion_loss,
 )
 from src.branching_flows.loss import (
-    sinkhorn_distributional_loss, mass_matching_loss, energy_regularization,
+    sinkhorn_distributional_loss,
+    mass_matching_loss,
+    energy_regularization,
 )
 from src.branching_flows.nema_dataset import NemaDataset
 from src.branching_flows.nema_model import NemaFlowModel
@@ -39,7 +46,9 @@ def parse_args():
     p.add_argument("--data", default="dataset/processed/nema_complete_large2025.h5ad")
     p.add_argument("--n_hvg", type=int, default=2000)
     p.add_argument("--time_bins", type=int, default=10)
-    p.add_argument("--ordering", default="random", choices=["random", "lineage", "spatial"])
+    p.add_argument(
+        "--ordering", default="random", choices=["random", "lineage", "spatial"]
+    )
     p.add_argument("--d_model", type=int, default=128)
     p.add_argument("--n_heads", type=int, default=4)
     p.add_argument("--n_layers", type=int, default=4)
@@ -73,26 +82,34 @@ def main():
     device = torch.device(args.device)
 
     print(f"Loading data from {args.data} ...")
-    dataset = NemaDataset(args.data, n_hvg=args.n_hvg,
-                          time_bins=args.time_bins, ordering=args.ordering)
+    dataset = NemaDataset(
+        args.data, n_hvg=args.n_hvg, time_bins=args.time_bins, ordering=args.ordering
+    )
     print(f"  {len(dataset)} samples, dim={dataset.continuous_dim}, K={dataset.K}")
     for i in range(len(dataset)):
         print(f"  Sample {i}: {dataset[i].length} cells")
 
     flow = CoalescentFlow(
-        processes=(OUFlow(theta=10.0, var_0=1.0, var_1=0.001),
-                   DiscreteInterpolatingFlow(K=dataset.K)),
+        processes=(
+            OUFlow(theta=10.0, var_0=1.0, var_1=0.001),
+            DiscreteInterpolatingFlow(K=dataset.K),
+        ),
         branch_time_dist=beta(1, 2),
     )
 
     model = NemaFlowModel(
-        continuous_dim=dataset.continuous_dim, discrete_K=dataset.K,
-        d_model=args.d_model, n_heads=args.n_heads,
-        n_layers=args.n_layers, head_dim=args.head_dim,
+        continuous_dim=dataset.continuous_dim,
+        discrete_K=dataset.K,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        head_dim=args.head_dim,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {n_params:,} params")
-    print(f"BROT: ot={args.lambda_ot} mass={args.lambda_mass} energy={args.lambda_energy}")
+    print(
+        f"BROT: ot={args.lambda_ot} mass={args.lambda_mass} energy={args.lambda_energy}"
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     total_steps = args.epochs * max(1, len(dataset) // args.batch_size)
@@ -118,9 +135,14 @@ def main():
 
             x1s = [dataset[i] for i in bi]
             tb = torch.rand(len(x1s))
-            bo = branching_bridge(flow, dataset.x0_sampler, x1s, tb,
-                                  deletion_pad=args.deletion_pad,
-                                  use_branching_time_prob=args.branching_time_prob)
+            bo = branching_bridge(
+                flow,
+                dataset.x0_sampler,
+                x1s,
+                tb,
+                deletion_pad=args.deletion_pad,
+                use_branching_time_prob=args.branching_time_prob,
+            )
             bo = bo.to(device)
 
             (xc, xd), hs, hd = model(bo.t, bo.Xt)
@@ -135,20 +157,34 @@ def main():
 
             dt_ = bo.X1anchor[1].long()
             df, dtf = xd[act], dt_[act]
-            dl = F.cross_entropy(df, dtf) if df.numel() > 0 else torch.tensor(0.0, device=device)
+            dl = (
+                F.cross_entropy(df, dtf)
+                if df.numel() > 0
+                else torch.tensor(0.0, device=device)
+            )
 
             sl = split_loss(flow.split_transform, hs, bo.splits_target, mask, ts)
             ddl = deletion_loss(hd, bo.del_flags, mask, ts)
 
             otl = sinkhorn_distributional_loss(xc, ct, act, blur=args.sinkhorn_blur)
-            ml = mass_matching_loss(hs, hd, args.expected_mass_ratio, mask,
-                                    split_transform=flow.split_transform)
+            ml = mass_matching_loss(
+                hs,
+                hd,
+                args.expected_mass_ratio,
+                mask,
+                split_transform=flow.split_transform,
+            )
             el = energy_regularization(xc, bo.Xt.states[0], bo.t, act)
 
-            total = (cl + dl + sl + ddl
-                     + args.lambda_ot * otl
-                     + args.lambda_mass * ml
-                     + args.lambda_energy * el)
+            total = (
+                cl
+                + dl
+                + sl
+                + ddl
+                + args.lambda_ot * otl
+                + args.lambda_mass * ml
+                + args.lambda_energy * el
+            )
 
             optimizer.zero_grad()
             total.backward()
@@ -187,13 +223,25 @@ def main():
 
         if ep["total"] < best_loss:
             best_loss = ep["total"]
-            torch.save({"epoch": epoch, "model": model.state_dict(),
-                        "loss": best_loss, "args": vars(args)},
-                       ckpt_dir / "best.pt")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model": model.state_dict(),
+                    "loss": best_loss,
+                    "args": vars(args),
+                },
+                ckpt_dir / "best.pt",
+            )
 
-    torch.save({"epoch": args.epochs, "model": model.state_dict(),
-                "loss": ep["total"], "args": vars(args)},
-               ckpt_dir / "final.pt")
+    torch.save(
+        {
+            "epoch": args.epochs,
+            "model": model.state_dict(),
+            "loss": ep["total"],
+            "args": vars(args),
+        },
+        ckpt_dir / "final.pt",
+    )
     print(f"\nDone. Best loss: {best_loss:.4f}")
 
 

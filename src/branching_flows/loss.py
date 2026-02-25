@@ -31,8 +31,10 @@ import torch.nn.functional as F
 # Primitive losses (BranchingFlows)
 # ---------------------------------------------------------------------------
 
+
 def bregman_poisson_loss(
-    pred: torch.Tensor, target: torch.Tensor,
+    pred: torch.Tensor,
+    target: torch.Tensor,
 ) -> torch.Tensor:
     """Shifted Bregman Poisson divergence (per-element, unreduced).
 
@@ -47,7 +49,8 @@ def bregman_poisson_loss(
 
 
 def logit_bce_loss(
-    logits: torch.Tensor, target: torch.Tensor,
+    logits: torch.Tensor,
+    target: torch.Tensor,
 ) -> torch.Tensor:
     """Numerically stable binary cross-entropy from logits (unreduced).
 
@@ -59,6 +62,7 @@ def logit_bce_loss(
 # ---------------------------------------------------------------------------
 # High-level per-element losses (BranchingFlows)
 # ---------------------------------------------------------------------------
+
 
 def split_loss(
     split_transform: Callable[[torch.Tensor], torch.Tensor],
@@ -108,6 +112,7 @@ def deletion_loss(
 # ---------------------------------------------------------------------------
 # BROT distributional losses (from RUOT / DeepRUOTv2)
 # ---------------------------------------------------------------------------
+
 
 def sinkhorn_distributional_loss(
     x1_pred: torch.Tensor,
@@ -219,7 +224,7 @@ def energy_regularization(
     denom = denom.unsqueeze(1).unsqueeze(2)
 
     velocity = (x1_pred - xt_states) / denom
-    energy = (velocity ** 2).sum(dim=-1)
+    energy = (velocity**2).sum(dim=-1)
 
     return _scaled_masked_mean(energy, padmask)
 
@@ -227,6 +232,7 @@ def energy_regularization(
 # ---------------------------------------------------------------------------
 # Loss scaling
 # ---------------------------------------------------------------------------
+
 
 def loss_scale(
     t: torch.Tensor,
@@ -249,6 +255,7 @@ def loss_scale(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _scaled_masked_mean(
     loss: torch.Tensor,

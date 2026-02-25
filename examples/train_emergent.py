@@ -23,17 +23,20 @@ import time
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 from scipy.stats import beta
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.branching_flows import (
-    CoalescentFlow, OUFlow, DiscreteInterpolatingFlow,
-    branching_bridge, batch_lineage_bias, weak_anchor_loss,
+    CoalescentFlow,
+    OUFlow,
+    DiscreteInterpolatingFlow,
+    branching_bridge,
+    batch_lineage_bias,
+    weak_anchor_loss,
 )
 from src.branching_flows.emergent_loss import (
-    emergent_context_loss, sinkhorn_divergence, cell_count_loss, diversity_loss,
+    emergent_context_loss,
 )
 from src.branching_flows.nema_model import NemaFlowModel
 from src.branching_flows.wormguides_dataset import WormGUIDESDataset
@@ -61,16 +64,31 @@ def parse_args():
 
     # Lineage bias
     p.add_argument("--use_lineage_bias", action="store_true", default=True)
-    p.add_argument("--lineage_temp", type=float, default=1.0,
-                   help="Temperature for lineage bias (lower = stronger bias)")
-    p.add_argument("--no_lineage_bias", action="store_true",
-                   help="Disable lineage bias for ablation")
+    p.add_argument(
+        "--lineage_temp",
+        type=float,
+        default=1.0,
+        help="Temperature for lineage bias (lower = stronger bias)",
+    )
+    p.add_argument(
+        "--no_lineage_bias",
+        action="store_true",
+        help="Disable lineage bias for ablation",
+    )
 
     # Curriculum learning
-    p.add_argument("--weak_anchor_weight", type=float, default=0.1,
-                   help="Weight for weak anchor loss (set to 0 to disable)")
-    p.add_argument("--anchor_decay_epochs", type=int, default=10,
-                   help="Epochs over which to decay anchor weight to 0")
+    p.add_argument(
+        "--weak_anchor_weight",
+        type=float,
+        default=0.1,
+        help="Weight for weak anchor loss (set to 0 to disable)",
+    )
+    p.add_argument(
+        "--anchor_decay_epochs",
+        type=int,
+        default=10,
+        help="Epochs over which to decay anchor weight to 0",
+    )
 
     # Loss weights
     p.add_argument("--lambda_sinkhorn", type=float, default=1.0)
@@ -103,35 +121,48 @@ def main():
 
     print("Loading WormGUIDES 4D data ...")
     dataset = WormGUIDESDataset(
-        args.nuclei_dir, args.deaths_csv,
-        min_cells=args.min_cells, stride=args.stride,
+        args.nuclei_dir,
+        args.deaths_csv,
+        min_cells=args.min_cells,
+        stride=args.stride,
         include_velocity=args.include_velocity,
     )
     print(f"  {len(dataset)} samples, dim={dataset.continuous_dim}, K={dataset.K}")
     print(f"  Divisions: {len(dataset.get_division_events())}")
     print(f"  Deaths: {len(dataset.get_death_set())}")
-    for i in [0, len(dataset)//4, len(dataset)//2, len(dataset)-1]:
+    for i in [0, len(dataset) // 4, len(dataset) // 2, len(dataset) - 1]:
         tp = dataset.timepoints[i]
         s = dataset[i]
         nd = sum(s.del_flags)
         print(f"  Sample {i} (t{tp:03d}): {s.length} cells, {nd} deaths")
 
     flow = CoalescentFlow(
-        processes=(OUFlow(theta=25.0, var_0=5.0, var_1=0.01),
-                   DiscreteInterpolatingFlow(K=dataset.K)),
+        processes=(
+            OUFlow(theta=25.0, var_0=5.0, var_1=0.01),
+            DiscreteInterpolatingFlow(K=dataset.K),
+        ),
         branch_time_dist=beta(1, 2),
     )
 
     model = NemaFlowModel(
-        continuous_dim=dataset.continuous_dim, discrete_K=dataset.K,
-        d_model=args.d_model, n_heads=args.n_heads,
-        n_layers=args.n_layers, head_dim=args.head_dim,
+        continuous_dim=dataset.continuous_dim,
+        discrete_K=dataset.K,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        head_dim=args.head_dim,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {n_params:,} params")
-    print(f"Emergent Context: lineage_bias={args.use_lineage_bias} temp={args.lineage_temp}")
-    print(f"  sinkhorn={args.lambda_sinkhorn} count={args.lambda_count} diversity={args.lambda_diversity}")
-    print(f"  weak_anchor={args.weak_anchor_weight} decay_epochs={args.anchor_decay_epochs}")
+    print(
+        f"Emergent Context: lineage_bias={args.use_lineage_bias} temp={args.lineage_temp}"
+    )
+    print(
+        f"  sinkhorn={args.lambda_sinkhorn} count={args.lambda_count} diversity={args.lambda_diversity}"
+    )
+    print(
+        f"  weak_anchor={args.weak_anchor_weight} decay_epochs={args.anchor_decay_epochs}"
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     total_steps = args.epochs * max(1, len(dataset) // args.batch_size)
@@ -152,7 +183,9 @@ def main():
 
         # Curriculum: decay anchor weight
         if args.anchor_decay_epochs > 0 and epoch <= args.anchor_decay_epochs:
-            anchor_weight = args.weak_anchor_weight * (1 - (epoch - 1) / args.anchor_decay_epochs)
+            anchor_weight = args.weak_anchor_weight * (
+                1 - (epoch - 1) / args.anchor_decay_epochs
+            )
         else:
             anchor_weight = 0.0
 
@@ -166,7 +199,10 @@ def main():
 
             # Standard branching bridge (no Sulston supervision)
             bo = branching_bridge(
-                flow, dataset.x0_sampler, x1s, tb,
+                flow,
+                dataset.x0_sampler,
+                x1s,
+                tb,
                 deletion_pad=args.deletion_pad,
                 use_branching_time_prob=args.branching_time_prob,
             )
@@ -198,8 +234,11 @@ def main():
 
             # Emergent context losses
             loss, loss_dict = emergent_context_loss(
-                xc, bo.X1anchor[0], lineage_bias,
-                pred_count, real_count,
+                xc,
+                bo.X1anchor[0],
+                lineage_bias,
+                pred_count,
+                real_count,
                 lambda_sinkhorn=args.lambda_sinkhorn,
                 lambda_count=args.lambda_count,
                 lambda_diversity=args.lambda_diversity,
@@ -207,7 +246,9 @@ def main():
 
             # Optional weak anchor for curriculum
             if anchor_weight > 0:
-                anchor_l = weak_anchor_loss(xc, bo.X1anchor[0], act, weight=anchor_weight)
+                anchor_l = weak_anchor_loss(
+                    xc, bo.X1anchor[0], act, weight=anchor_weight
+                )
                 loss = loss + anchor_l
                 loss_dict["anchor"] = anchor_l.item()
             else:
@@ -245,19 +286,25 @@ def main():
 
         if ep["total"] < best_loss:
             best_loss = ep["total"]
-            torch.save({
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "loss": best_loss,
-                "args": vars(args),
-            }, ckpt_dir / "best.pt")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model": model.state_dict(),
+                    "loss": best_loss,
+                    "args": vars(args),
+                },
+                ckpt_dir / "best.pt",
+            )
 
-    torch.save({
-        "epoch": args.epochs,
-        "model": model.state_dict(),
-        "loss": ep["total"],
-        "args": vars(args),
-    }, ckpt_dir / "final.pt")
+    torch.save(
+        {
+            "epoch": args.epochs,
+            "model": model.state_dict(),
+            "loss": ep["total"],
+            "args": vars(args),
+        },
+        ckpt_dir / "final.pt",
+    )
     print(f"\nDone. Best loss: {best_loss:.4f}")
 
 

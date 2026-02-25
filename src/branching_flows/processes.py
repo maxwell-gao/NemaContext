@@ -52,6 +52,7 @@ class BaseProcess(ABC):
 # Continuous processes
 # ---------------------------------------------------------------------------
 
+
 class BrownianBridge(BaseProcess):
     """Brownian bridge process with constant diffusion *sigma*.
 
@@ -81,7 +82,7 @@ class BrownianBridge(BaseProcess):
             return x_tgt.clone()
         alpha = (t_eval - t_cur) / denom
         mean = x_src + alpha * (x_tgt - x_src)
-        var = self.sigma ** 2 * (t_eval - t_cur) * (1.0 - t_eval) / denom
+        var = self.sigma**2 * (t_eval - t_cur) * (1.0 - t_eval) / denom
         if var <= 0:
             return mean
         return mean + math.sqrt(var) * torch.randn_like(mean)
@@ -142,7 +143,7 @@ class OUFlow(BaseProcess):
 
         remaining = 1.0 - t_eval
         v_mid = self._var_t((t_cur + t_eval) / 2.0)
-        var = v_mid * (1.0 - decay ** 2) / (2.0 * self.theta)
+        var = v_mid * (1.0 - decay**2) / (2.0 * self.theta)
         # Scale down variance as we approach t=1
         var *= min(remaining / max(1.0 - t_cur, 1e-8), 1.0)
 
@@ -168,6 +169,7 @@ class OUFlow(BaseProcess):
 # Discrete process
 # ---------------------------------------------------------------------------
 
+
 class DiscreteInterpolatingFlow(BaseProcess):
     """Noisy interpolating discrete flow matching (DFM).
 
@@ -192,6 +194,7 @@ class DiscreteInterpolatingFlow(BaseProcess):
         beta_b2: float = 2.0,
     ):
         from scipy.stats import beta as beta_dist
+
         self.K = K
         self.omega_u = omega_u
         self._F1 = beta_dist(beta_a1, beta_b1)
@@ -225,7 +228,10 @@ class DiscreteInterpolatingFlow(BaseProcess):
         ratio = k3_eval / k3_cur
         p_target = k1_eval - (self._F1.cdf(t_cur)) * ratio
         p_target = max(p_target, 0.0)
-        p_uniform = k2_eval - (self.omega_u * (1.0 - self._F1.cdf(t_cur)) * self._F2.cdf(t_cur)) * ratio
+        p_uniform = (
+            k2_eval
+            - (self.omega_u * (1.0 - self._F1.cdf(t_cur)) * self._F2.cdf(t_cur)) * ratio
+        )
         p_uniform = max(p_uniform, 0.0)
         p_source = max(ratio, 0.0)
 
@@ -240,7 +246,9 @@ class DiscreteInterpolatingFlow(BaseProcess):
             return x_tgt if isinstance(x_tgt, int) else x_tgt.clone()
         if u < p_target + p_uniform:
             val = torch.randint(0, self.K, (1,)).item()
-            return val if isinstance(x_tgt, int) else torch.tensor(val, dtype=x_tgt.dtype)
+            return (
+                val if isinstance(x_tgt, int) else torch.tensor(val, dtype=x_tgt.dtype)
+            )
         return x_src if isinstance(x_src, int) else x_src.clone()
 
     def step(
@@ -266,10 +274,11 @@ class DiscreteInterpolatingFlow(BaseProcess):
 
         # Transition rate: probability of jumping away from current token
         dk1 = self._F1.pdf(s1)
-        dk3 = -(dk1 + self.omega_u * (
-            -(dk1) * self._F2.cdf(s1)
-            + (1.0 - self._F1.cdf(s1)) * self._F2.pdf(s1)
-        ))
+        dk3 = -(
+            dk1
+            + self.omega_u
+            * (-(dk1) * self._F2.cdf(s1) + (1.0 - self._F1.cdf(s1)) * self._F2.pdf(s1))
+        )
         rate = max(-(dk3 / k3), 0.0)
         p_jump = 1.0 - math.exp(-rate * dt)
 
@@ -287,6 +296,7 @@ class DiscreteInterpolatingFlow(BaseProcess):
 # ---------------------------------------------------------------------------
 # Multi-process helpers
 # ---------------------------------------------------------------------------
+
 
 def bridge_multi(
     processes: BaseProcess | tuple[BaseProcess, ...] | list[BaseProcess],
@@ -314,7 +324,6 @@ def step_multi(
     """Step each component of a (possibly multimodal) state independently."""
     if isinstance(processes, (list, tuple)):
         return tuple(
-            p.step(xt, x1p, s1, s2)
-            for p, xt, x1p in zip(processes, xts, x1_preds)
+            p.step(xt, x1p, s1, s2) for p, xt, x1p in zip(processes, xts, x1_preds)
         )
     return processes.step(xts, x1_preds, s1, s2)

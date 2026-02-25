@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from geomloss import SamplesLoss
+
+try:
+    from geomloss import SamplesLoss
+
+    HAS_GEOMLOSS = True
+except ImportError:
+    HAS_GEOMLOSS = False
+    SamplesLoss = None
 
 
 def sinkhorn_divergence(
@@ -55,23 +62,50 @@ def sinkhorn_divergence(
         if len(pred_valid) == 0 or len(real_valid) == 0:
             continue
 
-        # Use geomloss for Sinkhorn divergence
-        # Note: geomloss expects [batch, n_points, dim]
-        sinkhorn = SamplesLoss(
-            loss="sinkhorn",
-            p=p,
-            blur=blur,
-            scaling=scaling,
-            backend="tensorized",
-        )
+        if HAS_GEOMLOSS and SamplesLoss is not None:
+            # Use geomloss for Sinkhorn divergence
+            # Note: geomloss expects [batch, n_points, dim]
+            sinkhorn = SamplesLoss(
+                loss="sinkhorn",
+                p=p,
+                blur=blur,
+                scaling=scaling,
+                backend="tensorized",
+            )
+            loss_b = sinkhorn(pred_valid.unsqueeze(0), real_valid.unsqueeze(0))
+        else:
+            # Fallback: Use maximum mean discrepancy (MMD) with RBF kernel
+            loss_b = _mmd_rbf(pred_valid, real_valid)
 
-        loss_b = sinkhorn(
-            pred_valid.unsqueeze(0),
-            real_valid.unsqueeze(0)
-        )
         total_loss = total_loss + loss_b
 
     return total_loss / B if B > 0 else total_loss
+
+
+def _mmd_rbf(x: torch.Tensor, y: torch.Tensor, sigma: float = 1.0) -> torch.Tensor:
+    """Maximum Mean Discrepancy with RBF kernel (fallback when geomloss unavailable).
+
+    Args:
+        x: First sample [N, D]
+        y: Second sample [M, D]
+        sigma: RBF kernel bandwidth
+
+    Returns:
+        MMD^2 value
+    """
+
+    def rbf_kernel(a, b, sigma):
+        # Compute RBF kernel matrix
+        dist_sq = torch.cdist(a, b, p=2) ** 2
+        return torch.exp(-dist_sq / (2 * sigma**2))
+
+    xx = rbf_kernel(x, x, sigma)
+    yy = rbf_kernel(y, y, sigma)
+    xy = rbf_kernel(x, y, sigma)
+
+    # MMD^2 = E[k(x,x')] + E[k(y,y')] - 2*E[k(x,y)]
+    mmd = xx.mean() + yy.mean() - 2 * xy.mean()
+    return mmd.clamp(min=0.0)
 
 
 def cell_count_loss(
@@ -98,9 +132,7 @@ def cell_count_loss(
     elif loss_type == "huber":
         delta = 1.0
         return torch.where(
-            diff.abs() <= delta,
-            0.5 * diff.pow(2),
-            delta * (diff.abs() - 0.5 * delta)
+            diff.abs() <= delta, 0.5 * diff.pow(2), delta * (diff.abs() - 0.5 * delta)
         ).mean()
     else:
         raise ValueError(f"Unknown loss_type: {loss_type}")
@@ -168,7 +200,11 @@ def physics_constraints(
     # Volume conservation: daughter volumes ≈ parent volume
     if volumes is not None and parent_child_pairs is not None:
         for parent, child1, child2 in parent_child_pairs:
-            if parent < volumes.shape[1] and child1 < volumes.shape[1] and child2 < volumes.shape[1]:
+            if (
+                parent < volumes.shape[1]
+                and child1 < volumes.shape[1]
+                and child2 < volumes.shape[1]
+            ):
                 vol_diff = volumes[:, parent] - volumes[:, child1] - volumes[:, child2]
                 loss = loss + vol_diff.pow(2).mean() * volume_conservation_weight
 
@@ -292,10 +328,10 @@ def emergent_context_loss(
 
     # Combined loss
     total = (
-        lambda_sinkhorn * loss_sinkhorn +
-        lambda_count * loss_count +
-        lambda_diversity * loss_diversity +
-        lambda_physics * loss_physics
+        lambda_sinkhorn * loss_sinkhorn
+        + lambda_count * loss_count
+        + lambda_diversity * loss_diversity
+        + lambda_physics * loss_physics
     )
 
     loss_dict = {

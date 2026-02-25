@@ -8,13 +8,12 @@ tracked embryo across 360 timepoints.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
 
 from .states import SampleState
-from .wormguides_parser import WormGUIDESData, parse_wormguides
+from .wormguides_parser import parse_wormguides
 
 _FOUNDERS = ("AB", "MS", "E", "C", "D", "P4")
 _FOUNDER_TO_IDX = {f: i for i, f in enumerate(_FOUNDERS)}
@@ -37,7 +36,8 @@ class WormGUIDESDataset:
         self.K = _K
 
         valid_tps = [
-            tp for tp in range(1, self.data.n_timepoints + 1)
+            tp
+            for tp in range(1, self.data.n_timepoints + 1)
             if self.data.cell_count_at(tp) >= min_cells
         ]
         self.timepoints = valid_tps[::stride]

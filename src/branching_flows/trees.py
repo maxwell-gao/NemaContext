@@ -21,8 +21,16 @@ class FlowNode:
     """
 
     __slots__ = (
-        "parent", "children", "time", "data", "weight",
-        "group", "branchable", "del_flag", "id", "flowable",
+        "parent",
+        "children",
+        "time",
+        "data",
+        "weight",
+        "group",
+        "branchable",
+        "del_flag",
+        "id",
+        "flowable",
     )
 
     def __init__(
@@ -84,8 +92,14 @@ def merge_nodes(
     if n1.parent is not None or n2.parent is not None:
         raise ValueError("Cannot merge nodes that already have parents.")
     parent = FlowNode(
-        time=time, data=data, weight=weight, group=group,
-        branchable=branchable, del_flag=del_flag, id=id, flowable=flowable,
+        time=time,
+        data=data,
+        weight=weight,
+        group=group,
+        branchable=branchable,
+        del_flag=del_flag,
+        id=id,
+        flowable=flowable,
     )
     add_child(parent, n1)
     add_child(parent, n2)

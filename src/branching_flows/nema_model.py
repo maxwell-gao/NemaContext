@@ -11,8 +11,6 @@ Architecture follows the BranchingFlows demo (Toy model) pattern:
 
 from __future__ import annotations
 
-import math
-from typing import Any
 
 import torch
 import torch.nn as nn
@@ -67,10 +65,9 @@ class NemaFlowModel(nn.Module):
         self.rope = RotaryPositionalEncoding(head_dim, max_seq_len)
 
         # Transformer blocks with adaLN-Zero
-        self.blocks = nn.ModuleList([
-            AdaLNTransformerBlock(d_model, n_heads, head_dim)
-            for _ in range(n_layers)
-        ])
+        self.blocks = nn.ModuleList(
+            [AdaLNTransformerBlock(d_model, n_heads, head_dim) for _ in range(n_layers)]
+        )
 
         # Output heads
         self.continuous_head = nn.Linear(d_model, continuous_dim)
@@ -144,6 +141,7 @@ class NemaFlowModel(nn.Module):
 # Transformer building blocks
 # ---------------------------------------------------------------------------
 
+
 class AdaLNTransformerBlock(nn.Module):
     """Transformer block with adaptive layer normalization (adaLN-Zero).
 
@@ -210,7 +208,7 @@ class AdaLNTransformerBlock(nn.Module):
         k = _apply_rope(k, rope_cos, rope_sin)
 
         # Scaled dot-product attention with optional lineage bias
-        scale = self.head_dim ** -0.5
+        scale = self.head_dim**-0.5
         attn = (q @ k.transpose(-2, -1)) * scale
 
         # Apply lineage bias if provided (broadcast across heads)
@@ -241,6 +239,7 @@ class AdaLNTransformerBlock(nn.Module):
 # RoPE
 # ---------------------------------------------------------------------------
 
+
 class RotaryPositionalEncoding(nn.Module):
     """Rotary Positional Encoding (RoPE)."""
 
@@ -251,7 +250,9 @@ class RotaryPositionalEncoding(nn.Module):
         self.max_len = max_len
 
     def forward(
-        self, seq_len: int, device: torch.device,
+        self,
+        seq_len: int,
+        device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         t = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
         freqs = torch.outer(t, self.inv_freq.to(device))  # (L, dim/2)
@@ -268,8 +269,8 @@ def _apply_rope(
     """Apply RoPE to the last dimension of *x* ``(B, H, L, Hd)``."""
     d2 = x.shape[-1] // 2
     x1, x2 = x[..., :d2], x[..., d2:]
-    cos = cos[:x.shape[2], :d2].unsqueeze(0).unsqueeze(0)
-    sin = sin[:x.shape[2], :d2].unsqueeze(0).unsqueeze(0)
+    cos = cos[: x.shape[2], :d2].unsqueeze(0).unsqueeze(0)
+    sin = sin[: x.shape[2], :d2].unsqueeze(0).unsqueeze(0)
     return torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)
 
 
@@ -277,13 +278,16 @@ def _apply_rope(
 # Random Fourier Features
 # ---------------------------------------------------------------------------
 
+
 class RandomFourierFeatures(nn.Module):
     """Random Fourier Features for time embedding."""
 
     def __init__(self, in_dim: int, out_dim: int, scale: float = 1.0):
         super().__init__()
         self.register_buffer(
-            "W", torch.randn(in_dim, out_dim // 2) * scale, persistent=False,
+            "W",
+            torch.randn(in_dim, out_dim // 2) * scale,
+            persistent=False,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

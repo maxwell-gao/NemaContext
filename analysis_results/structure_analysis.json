@@ -1,0 +1,15 @@
+{
+  "mean_tree_accuracy": 0.5757575757575758,
+  "mean_tree_edit_distance": 8.0,
+  "n_samples": 2,
+  "individual_results": {
+    "tree_accuracy": [
+      0.8333333333333334,
+      0.3181818181818182
+    ],
+    "tree_edit_distance": [
+      1,
+      15
+    ]
+  }
+}

@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass
 class CellState:
     """A cell at a single timepoint."""
+
     name: str
     x: float
     y: float
@@ -27,6 +27,7 @@ class CellState:
 @dataclass
 class DivisionEvent:
     """A cell division: parent splits into two children."""
+
     parent: str
     child1: str
     child2: str
@@ -36,6 +37,7 @@ class DivisionEvent:
 @dataclass
 class DeathEvent:
     """A programmed cell death."""
+
     cell: str
     t_last: int  # last timepoint the cell appears
 
@@ -43,6 +45,7 @@ class DeathEvent:
 @dataclass
 class WormGUIDESData:
     """Complete parsed WormGUIDES dataset."""
+
     cell_trajectories: dict[str, list[tuple[int, float, float, float]]]
     division_events: list[DivisionEvent]
     death_events: list[DeathEvent]
@@ -74,8 +77,7 @@ class WormGUIDESData:
         """Extract founder lineage from cell name."""
         if name.startswith("AB"):
             return "AB"
-        for prefix in ("MS", "E", "C", "D", "P4", "P3", "P2", "P1", "P0",
-                       "Z2", "Z3"):
+        for prefix in ("MS", "E", "C", "D", "P4", "P3", "P2", "P1", "P0", "Z2", "Z3"):
             if name.startswith(prefix):
                 return prefix
         return "unknown"
@@ -159,12 +161,14 @@ def parse_wormguides(
             child1 = name + s1
             child2 = name + s2
             if child1 in cell_names_set and child2 in cell_names_set:
-                division_events.append(DivisionEvent(
-                    parent=name,
-                    child1=child1,
-                    child2=child2,
-                    t_division=last_tp,
-                ))
+                division_events.append(
+                    DivisionEvent(
+                        parent=name,
+                        child1=child1,
+                        child2=child2,
+                        t_division=last_tp,
+                    )
+                )
                 break
 
     # Detect death events

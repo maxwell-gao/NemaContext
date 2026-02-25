@@ -14,15 +14,12 @@ import sys
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 from scipy.stats import pearsonr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.branching_flows import NemaFlowModel, WormGUIDESDataset
-from src.branching_flows.lineage import lineage_distance, compute_lineage_similarity_matrix
 from src.branching_flows.sampling import generate
 from src.branching_flows import CoalescentFlow, OUFlow, DiscreteInterpolatingFlow
 
@@ -32,12 +29,16 @@ def parse_args():
     p.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
     p.add_argument("--nuclei_dir", default="dataset/raw/wormguides/nuclei_files")
     p.add_argument("--deaths_csv", default="dataset/raw/wormguides/CellDeaths.csv")
-    p.add_argument("--n_samples", type=int, default=10, help="Number of samples to evaluate")
+    p.add_argument(
+        "--n_samples", type=int, default=10, help="Number of samples to evaluate"
+    )
     p.add_argument("--device", default="cpu")
     return p.parse_args()
 
 
-def compute_tree_edit_distance(inferred_parents: dict, true_parents: dict) -> tuple[int, float]:
+def compute_tree_edit_distance(
+    inferred_parents: dict, true_parents: dict
+) -> tuple[int, float]:
     """Compute tree edit distance between inferred and true trees.
 
     Returns:
@@ -174,7 +175,8 @@ def evaluate_model(model, dataset, flow, device, n_samples=10):
 
                 # Generate
                 tracker = generate(
-                    model, flow,
+                    model,
+                    flow,
                     [x0_state],
                     t_span=(0.0, 1.0),
                     n_steps=20,
@@ -182,14 +184,24 @@ def evaluate_model(model, dataset, flow, device, n_samples=10):
 
                 # Get final count
                 final_states = tracker.history[-1][0]
-                pred_count = len(final_states.elements) if hasattr(final_states, 'elements') else 0
+                pred_count = (
+                    len(final_states.elements)
+                    if hasattr(final_states, "elements")
+                    else 0
+                )
                 results["cell_count"]["pred"].append(pred_count)
 
                 # Tree structure evaluation (simplified)
                 # Compare cell names presence
-                pred_names = set(cell_names[:pred_count]) if pred_count <= len(cell_names) else set(cell_names)
+                pred_names = (
+                    set(cell_names[:pred_count])
+                    if pred_count <= len(cell_names)
+                    else set(cell_names)
+                )
                 true_names = set(cell_names)
-                name_overlap = len(pred_names & true_names) / len(true_names) if true_names else 0
+                name_overlap = (
+                    len(pred_names & true_names) / len(true_names) if true_names else 0
+                )
                 results["tree_accuracy"].append(name_overlap)
 
             except Exception as e:
@@ -220,15 +232,20 @@ def main():
 
     print("Loading dataset...")
     dataset = WormGUIDESDataset(
-        args.nuclei_dir, args.deaths_csv,
-        min_cells=4, stride=10,
+        args.nuclei_dir,
+        args.deaths_csv,
+        min_cells=4,
+        stride=10,
     )
 
     # Create flow
     from scipy.stats import beta
+
     flow = CoalescentFlow(
-        processes=(OUFlow(theta=25.0, var_0=5.0, var_1=0.01),
-                   DiscreteInterpolatingFlow(K=dataset.K)),
+        processes=(
+            OUFlow(theta=25.0, var_0=5.0, var_1=0.01),
+            DiscreteInterpolatingFlow(K=dataset.K),
+        ),
         branch_time_dist=beta(1, 2),
     )
 

@@ -24,11 +24,18 @@ from scipy.stats import beta
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.branching_flows import (
-    CoalescentFlow, OUFlow, DiscreteInterpolatingFlow,
-    branching_bridge, loss_scale, split_loss, deletion_loss,
+    CoalescentFlow,
+    OUFlow,
+    DiscreteInterpolatingFlow,
+    branching_bridge,
+    loss_scale,
+    split_loss,
+    deletion_loss,
 )
 from src.branching_flows.loss import (
-    sinkhorn_distributional_loss, mass_matching_loss, energy_regularization,
+    sinkhorn_distributional_loss,
+    mass_matching_loss,
+    energy_regularization,
 )
 from src.branching_flows.nema_model import NemaFlowModel
 from src.branching_flows.wormguides_dataset import WormGUIDESDataset
@@ -75,33 +82,42 @@ def main():
 
     print("Loading WormGUIDES 4D data ...")
     dataset = WormGUIDESDataset(
-        args.nuclei_dir, args.deaths_csv,
-        min_cells=args.min_cells, stride=args.stride,
+        args.nuclei_dir,
+        args.deaths_csv,
+        min_cells=args.min_cells,
+        stride=args.stride,
         include_velocity=args.include_velocity,
     )
     print(f"  {len(dataset)} samples, dim={dataset.continuous_dim}, K={dataset.K}")
     print(f"  Divisions: {len(dataset.get_division_events())}")
     print(f"  Deaths: {len(dataset.get_death_set())}")
-    for i in [0, len(dataset)//4, len(dataset)//2, len(dataset)-1]:
+    for i in [0, len(dataset) // 4, len(dataset) // 2, len(dataset) - 1]:
         tp = dataset.timepoints[i]
         s = dataset[i]
         nd = sum(s.del_flags)
         print(f"  Sample {i} (t{tp:03d}): {s.length} cells, {nd} deaths")
 
     flow = CoalescentFlow(
-        processes=(OUFlow(theta=25.0, var_0=5.0, var_1=0.01),
-                   DiscreteInterpolatingFlow(K=dataset.K)),
+        processes=(
+            OUFlow(theta=25.0, var_0=5.0, var_1=0.01),
+            DiscreteInterpolatingFlow(K=dataset.K),
+        ),
         branch_time_dist=beta(1, 2),
     )
 
     model = NemaFlowModel(
-        continuous_dim=dataset.continuous_dim, discrete_K=dataset.K,
-        d_model=args.d_model, n_heads=args.n_heads,
-        n_layers=args.n_layers, head_dim=args.head_dim,
+        continuous_dim=dataset.continuous_dim,
+        discrete_K=dataset.K,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        head_dim=args.head_dim,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {n_params:,} params")
-    print(f"BROT: ot={args.lambda_ot} mass={args.lambda_mass} energy={args.lambda_energy}")
+    print(
+        f"BROT: ot={args.lambda_ot} mass={args.lambda_mass} energy={args.lambda_energy}"
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     total_steps = args.epochs * max(1, len(dataset) // args.batch_size)
@@ -130,9 +146,14 @@ def main():
 
             # Use standard branching_bridge (random coalescent for now;
             # Sulston forest integration happens at the bridge level)
-            bo = branching_bridge(flow, dataset.x0_sampler, x1s, tb,
-                                  deletion_pad=args.deletion_pad,
-                                  use_branching_time_prob=args.branching_time_prob)
+            bo = branching_bridge(
+                flow,
+                dataset.x0_sampler,
+                x1s,
+                tb,
+                deletion_pad=args.deletion_pad,
+                use_branching_time_prob=args.branching_time_prob,
+            )
             bo = bo.to(device)
 
             (xc, xd), hs, hd = model(bo.t, bo.Xt)
@@ -147,20 +168,34 @@ def main():
 
             dt_ = bo.X1anchor[1].long()
             df, dtf = xd[act], dt_[act]
-            dl = F.cross_entropy(df, dtf) if df.numel() > 0 else torch.tensor(0.0, device=device)
+            dl = (
+                F.cross_entropy(df, dtf)
+                if df.numel() > 0
+                else torch.tensor(0.0, device=device)
+            )
 
             sl = split_loss(flow.split_transform, hs, bo.splits_target, mask, ts)
             ddl = deletion_loss(hd, bo.del_flags, mask, ts)
 
             otl = sinkhorn_distributional_loss(xc, ct, act, blur=args.sinkhorn_blur)
-            ml = mass_matching_loss(hs, hd, args.expected_mass_ratio, mask,
-                                    split_transform=flow.split_transform)
+            ml = mass_matching_loss(
+                hs,
+                hd,
+                args.expected_mass_ratio,
+                mask,
+                split_transform=flow.split_transform,
+            )
             el = energy_regularization(xc, bo.Xt.states[0], bo.t, act)
 
-            total = (cl + dl + sl + ddl
-                     + args.lambda_ot * otl
-                     + args.lambda_mass * ml
-                     + args.lambda_energy * el)
+            total = (
+                cl
+                + dl
+                + sl
+                + ddl
+                + args.lambda_ot * otl
+                + args.lambda_mass * ml
+                + args.lambda_energy * el
+            )
 
             optimizer.zero_grad()
             total.backward()
@@ -199,13 +234,25 @@ def main():
 
         if ep["total"] < best_loss:
             best_loss = ep["total"]
-            torch.save({"epoch": epoch, "model": model.state_dict(),
-                        "loss": best_loss, "args": vars(args)},
-                       ckpt_dir / "best.pt")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model": model.state_dict(),
+                    "loss": best_loss,
+                    "args": vars(args),
+                },
+                ckpt_dir / "best.pt",
+            )
 
-    torch.save({"epoch": args.epochs, "model": model.state_dict(),
-                "loss": ep["total"], "args": vars(args)},
-               ckpt_dir / "final.pt")
+    torch.save(
+        {
+            "epoch": args.epochs,
+            "model": model.state_dict(),
+            "loss": ep["total"],
+            "args": vars(args),
+        },
+        ckpt_dir / "final.pt",
+    )
     print(f"\nDone. Best loss: {best_loss:.4f}")
 
 

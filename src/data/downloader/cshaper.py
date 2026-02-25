@@ -186,7 +186,7 @@ class CShaperDownloader(BaseDownloader):
         if verbose:
             self._print_header("🔬 CShaper Morphological Atlas (Cao et al. 2020)")
             print(f"DOI: {CSHAPER_DOI}")
-            print(f"Paper: Nature Communications 11, 6254 (2020)")
+            print("Paper: Nature Communications 11, 6254 (2020)")
 
         # Fetch actual file URLs from Figshare
         figshare_files = self._fetch_figshare_files(verbose=verbose)

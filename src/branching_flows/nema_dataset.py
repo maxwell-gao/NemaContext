@@ -92,10 +92,13 @@ class NemaDataset:
         self.continuous_dim = continuous.shape[1]
 
         # --- Discrete state = founder index ---
-        discrete = np.array([
-            self._founder_to_idx.get(f, self.K - 1)
-            for f in adata.obs["lineage_founder"]
-        ], dtype=np.int64)
+        discrete = np.array(
+            [
+                self._founder_to_idx.get(f, self.K - 1)
+                for f in adata.obs["lineage_founder"]
+            ],
+            dtype=np.int64,
+        )
 
         # --- Lineage names (for ordering) ---
         lineage_names = adata.obs["lineage_complete"].values
@@ -111,12 +114,14 @@ class NemaDataset:
             mask = bin_indices == b
             if mask.sum() == 0:
                 continue
-            self._samples.append(_BinnedSample(
-                continuous=continuous[mask],
-                discrete=discrete[mask],
-                lineage_names=lineage_names[mask],
-                spatial_raw=spatial[mask],
-            ))
+            self._samples.append(
+                _BinnedSample(
+                    continuous=continuous[mask],
+                    discrete=discrete[mask],
+                    lineage_names=lineage_names[mask],
+                    spatial_raw=spatial[mask],
+                )
+            )
 
     def __len__(self) -> int:
         return len(self._samples)
@@ -126,7 +131,10 @@ class NemaDataset:
         n = len(sample.continuous)
 
         order = _compute_order(
-            self.ordering, n, sample.lineage_names, sample.spatial_raw,
+            self.ordering,
+            n,
+            sample.lineage_names,
+            sample.spatial_raw,
         )
 
         elements: list[tuple[torch.Tensor, int]] = []
@@ -155,9 +163,13 @@ class NemaDataset:
         n_hvg = self.continuous_dim - 3
         expr = x[..., :n_hvg]
         spatial = x[..., n_hvg:]
-        expr_denorm = expr * torch.from_numpy(self._expr_std).to(x) + torch.from_numpy(self._expr_mean).to(x)
+        expr_denorm = expr * torch.from_numpy(self._expr_std).to(x) + torch.from_numpy(
+            self._expr_mean
+        ).to(x)
         spatial_range = torch.from_numpy(self._spatial_max - self._spatial_min).to(x)
-        spatial_denorm = spatial * spatial_range + torch.from_numpy(self._spatial_min).to(x)
+        spatial_denorm = spatial * spatial_range + torch.from_numpy(
+            self._spatial_min
+        ).to(x)
         return expr_denorm, spatial_denorm
 
 
@@ -180,6 +192,7 @@ class _BinnedSample:
 # ---------------------------------------------------------------------------
 # Ordering strategies
 # ---------------------------------------------------------------------------
+
 
 def _compute_order(
     strategy: str,
@@ -219,5 +232,6 @@ def _select_top_hvg(adata: Any, n_hvg: int) -> np.ndarray:
         mask[top_idx] = True
         return mask
     import scanpy as sc
+
     sc.pp.highly_variable_genes(adata, n_top_genes=n_hvg, flavor="seurat_v3")
     return adata.var["highly_variable"].values

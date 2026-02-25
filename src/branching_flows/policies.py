@@ -23,7 +23,11 @@ class CoalescencePolicy(ABC):
         """Optional stateful initialization hook (no-op by default)."""
 
     def update(
-        self, nodes: list[FlowNode], i: int, j: int, new_index: int,
+        self,
+        nodes: list[FlowNode],
+        i: int,
+        j: int,
+        new_index: int,
     ) -> None:  # noqa: B027
         """Optional hook after a merge (no-op by default)."""
 
@@ -47,6 +51,7 @@ class CoalescencePolicy(ABC):
 # ---------------------------------------------------------------------------
 # Sequential policies (merge adjacent pairs only)
 # ---------------------------------------------------------------------------
+
 
 class SequentialUniform(CoalescencePolicy):
     """Uniformly choose one adjacent branchable pair within the same group.
@@ -103,7 +108,8 @@ class SequentialUniform(CoalescencePolicy):
 
     @staticmethod
     def _select_dict_min(
-        nodes: list[FlowNode], group_mins: dict[int, int],
+        nodes: list[FlowNode],
+        group_mins: dict[int, int],
     ) -> tuple[int, int] | None:
         group_sizes: dict[int, int] = {}
         for n in nodes:
@@ -116,7 +122,8 @@ class SequentialUniform(CoalescencePolicy):
                 nodes[i].branchable
                 and nodes[i + 1].branchable
                 and nodes[i].group == nodes[i + 1].group
-                and group_sizes.get(nodes[i].group, 0) > group_mins.get(nodes[i].group, 1)
+                and group_sizes.get(nodes[i].group, 0)
+                > group_mins.get(nodes[i].group, 1)
             ):
                 eligible.append(i)
         if not eligible:
@@ -126,7 +133,8 @@ class SequentialUniform(CoalescencePolicy):
 
     @staticmethod
     def _select_block_min(
-        nodes: list[FlowNode], block_min: int,
+        nodes: list[FlowNode],
+        block_min: int,
     ) -> tuple[int, int] | None:
         # First pass: identify contiguous branchable blocks and their sizes.
         block_ids: list[int] = [0] * len(nodes)
@@ -204,9 +212,7 @@ class BalancedSequential(CoalescencePolicy):
                 and nodes[i].group == nodes[i + 1].group
             ):
                 pairs.append(i)
-                weights.append(
-                    (nodes[i].weight + nodes[i + 1].weight) ** (-self.alpha)
-                )
+                weights.append((nodes[i].weight + nodes[i + 1].weight) ** (-self.alpha))
         if not pairs:
             return None
         chosen = random.choices(pairs, weights=weights, k=1)[0]

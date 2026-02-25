@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         description="Build enhanced AnnData with CShaper integration",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
+
     parser.add_argument(
         "--variant",
         type=str,
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
         default="complete",
         help="Which variant to build. Default: complete",
     )
-    
+
     parser.add_argument(
         "--source",
         type=str,
@@ -66,102 +66,103 @@ def parse_args() -> argparse.Namespace:
         default="large2025",
         help="Transcriptome data source. Default: large2025",
     )
-    
+
     parser.add_argument(
         "--data-dir",
         type=str,
         default="dataset/raw",
         help="Directory containing raw data. Default: dataset/raw",
     )
-    
+
     parser.add_argument(
         "--output-dir",
         type=str,
         default="dataset/processed",
         help="Directory for output files. Default: dataset/processed",
     )
-    
+
     parser.add_argument(
         "--no-morphology",
         action="store_true",
         help="Skip adding morphology features",
     )
-    
+
     parser.add_argument(
         "--no-contact-graph",
         action="store_true",
         help="Skip adding contact graph",
     )
-    
+
     parser.add_argument(
         "--use-cshaper-spatial",
         action="store_true",
         help="Add CShaper standardized spatial coordinates",
     )
-    
+
     parser.add_argument(
         "--contact-threshold",
         type=float,
         default=0.0,
         help="Minimum contact area threshold (μm²). Default: 0.0",
     )
-    
+
     parser.add_argument(
         "--no-ancestor-mapping",
         action="store_true",
         help="Disable ancestor mapping (only use direct CShaper matches)",
     )
-    
+
     parser.add_argument(
         "--max-ancestor-distance",
         type=int,
         default=5,
         help="Max divisions to search for ancestors. Default: 5",
     )
-    
+
     parser.add_argument(
         "--use-expression-matching",
         action="store_true",
         help="Use expression-based matching to validate/improve lineage matches",
     )
-    
+
     parser.add_argument(
         "--compare-graphs",
         action="store_true",
         help="Compare contact graph with k-NN spatial graph",
     )
-    
+
     parser.add_argument(
         "--add-spatial-graph",
         action="store_true",
         help="Also build k-NN spatial graph for comparison",
     )
-    
+
     parser.add_argument(
         "--n-neighbors",
         type=int,
         default=10,
         help="Number of neighbors for k-NN graph. Default: 10",
     )
-    
+
     parser.add_argument(
         "--no-save",
         action="store_true",
         help="Don't save the result",
     )
-    
+
     parser.add_argument(
         "--cshaper-summary",
         action="store_true",
         help="Print CShaper data summary and exit",
     )
-    
+
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )
-    
+
     return parser.parse_args()
 
 
@@ -178,18 +179,18 @@ def main() -> int:
     """Main entry point."""
     args = parse_args()
     setup_logging(args.verbose)
-    
+
     logger = logging.getLogger(__name__)
-    
+
     # If just printing summary
     if args.cshaper_summary:
         print_cshaper_summary(args.data_dir)
         return 0
-    
+
     logger.info("=" * 60)
     logger.info("NemaContext Enhanced AnnData Builder")
     logger.info("=" * 60)
-    
+
     # Initialize builder
     try:
         builder = EnhancedAnnDataBuilder(
@@ -199,7 +200,7 @@ def main() -> int:
     except Exception as e:
         logger.error(f"Failed to initialize builder: {e}")
         return 1
-    
+
     # Build enhanced AnnData
     try:
         logger.info(f"Building {args.variant} AnnData from {args.source}...")
@@ -210,7 +211,7 @@ def main() -> int:
         if not args.no_ancestor_mapping:
             logger.info(f"  Max ancestor distance: {args.max_ancestor_distance}")
         logger.info(f"  Use expression matching: {args.use_expression_matching}")
-        
+
         adata = builder.build_with_cshaper(
             variant=args.variant,
             source=args.source,
@@ -223,37 +224,41 @@ def main() -> int:
             contact_threshold=args.contact_threshold,
             save=not args.no_save,
         )
-        
+
         # Optionally add k-NN spatial graph
         if args.add_spatial_graph or args.compare_graphs:
             logger.info(f"Building k-NN spatial graph (k={args.n_neighbors})...")
             adata = builder.build_spatial_graph(adata, n_neighbors=args.n_neighbors)
-        
+
         # Print summary
         print("\n" + builder.summary(adata))
-        
+
         # Compare graphs if requested
         if args.compare_graphs:
             print("\n" + "=" * 60)
             print("Contact Graph vs k-NN Graph Comparison")
             print("=" * 60)
-            
+
             try:
                 comparison = builder.compare_graphs(adata)
                 print(f"\nContact graph edges: {comparison['contact_edges']:,}")
                 print(f"k-NN graph edges: {comparison['spatial_edges']:,}")
-                print(f"\nOverlap analysis:")
+                print("\nOverlap analysis:")
                 print(f"  Intersection: {comparison['intersection']:,} edges")
                 print(f"  Contact-only: {comparison['contact_only']:,} edges")
                 print(f"  k-NN-only: {comparison['spatial_only']:,} edges")
-                print(f"\nMetrics:")
+                print("\nMetrics:")
                 print(f"  Jaccard similarity: {comparison['jaccard']:.3f}")
-                print(f"  Precision (k-NN captures true contacts): {comparison['precision']:.3f}")
-                print(f"  Recall (contacts captured by k-NN): {comparison['recall']:.3f}")
+                print(
+                    f"  Precision (k-NN captures true contacts): {comparison['precision']:.3f}"
+                )
+                print(
+                    f"  Recall (contacts captured by k-NN): {comparison['recall']:.3f}"
+                )
                 print(f"  F1 score: {comparison['f1']:.3f}")
             except Exception as e:
                 logger.error(f"Graph comparison failed: {e}")
-        
+
         # Print CShaper info
         if "cshaper_info" in adata.uns:
             print("\n" + "=" * 60)
@@ -265,13 +270,14 @@ def main() -> int:
                     print(f"  {key}: {value:.3f}")
                 else:
                     print(f"  {key}: {value}")
-        
+
         logger.info("Done!")
         return 0
-        
+
     except Exception as e:
         logger.error(f"Build failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

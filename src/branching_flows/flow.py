@@ -60,6 +60,7 @@ class CoalescentFlow:
         self.coalescence_policy = coalescence_policy or SequentialUniform()
         if deletion_time_dist is None:
             from scipy.stats import uniform
+
             deletion_time_dist = uniform(0, 1)
         self.deletion_time_dist = deletion_time_dist
 
@@ -71,6 +72,7 @@ def _default_split_transform(x: torch.Tensor) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Split time sampling
 # ---------------------------------------------------------------------------
+
 
 def next_split_time(H: Any, W: int, t0: float) -> float:
     """Sample the absolute time of the next split.
@@ -115,6 +117,7 @@ def sample_split_times(
 # ---------------------------------------------------------------------------
 # Forest sampling (backward-time coalescent)
 # ---------------------------------------------------------------------------
+
 
 def sample_forest(
     flow: CoalescentFlow,
@@ -199,10 +202,14 @@ def sample_forest(
         assert left.branchable and right.branchable
 
         merged_data = merger(
-            left.data, right.data, left.weight, right.weight,
+            left.data,
+            right.data,
+            left.weight,
+            right.weight,
         )
         merged = merge_nodes(
-            left, right,
+            left,
+            right,
             time=0.0,
             data=merged_data,
             weight=left.weight + right.weight,
@@ -230,6 +237,7 @@ def sample_forest(
 # Conditional bridge sampling along a tree
 # ---------------------------------------------------------------------------
 
+
 def tree_bridge(
     flow: CoalescentFlow,
     node: FlowNode,
@@ -248,18 +256,20 @@ def tree_bridge(
     from the deletion hazard distribution.
     """
     if not node.flowable:
-        collection.append({
-            "Xt": node.data,
-            "t": target_t,
-            "X1anchor": node.data,
-            "descendants": node.weight,
-            "del": node.del_flag,
-            "branchable": False,
-            "flowable": False,
-            "group": node.group,
-            "last_coalescence": current_t,
-            "id": node.id,
-        })
+        collection.append(
+            {
+                "Xt": node.data,
+                "t": target_t,
+                "X1anchor": node.data,
+                "descendants": node.weight,
+                "del": node.del_flag,
+                "branchable": False,
+                "flowable": False,
+                "group": node.group,
+                "last_coalescence": current_t,
+                "id": node.id,
+            }
+        )
         return
 
     if node.time > target_t:
@@ -274,24 +284,34 @@ def tree_bridge(
                 return
 
         Xt = bridge_multi(
-            flow.processes, x_source, node.data, current_t, target_t,
+            flow.processes,
+            x_source,
+            node.data,
+            current_t,
+            target_t,
         )
-        collection.append({
-            "Xt": Xt,
-            "t": target_t,
-            "X1anchor": node.data,
-            "descendants": node.weight,
-            "del": node.del_flag,
-            "branchable": node.branchable,
-            "flowable": True,
-            "group": node.group,
-            "last_coalescence": current_t,
-            "id": node.id,
-        })
+        collection.append(
+            {
+                "Xt": Xt,
+                "t": target_t,
+                "X1anchor": node.data,
+                "descendants": node.weight,
+                "del": node.del_flag,
+                "branchable": node.branchable,
+                "flowable": True,
+                "group": node.group,
+                "last_coalescence": current_t,
+                "id": node.id,
+            }
+        )
     else:
         # Bridge to this node's split time, then recurse into children
         next_x = bridge_multi(
-            flow.processes, x_source, node.data, current_t, node.time,
+            flow.processes,
+            x_source,
+            node.data,
+            current_t,
+            node.time,
         )
         for child in node.children:
             tree_bridge(flow, child, next_x, target_t, node.time, collection)
@@ -300,6 +320,7 @@ def tree_bridge(
 # ---------------------------------------------------------------------------
 # Forest bridge (single sample)
 # ---------------------------------------------------------------------------
+
 
 def forest_bridge(
     flow: CoalescentFlow,
@@ -344,8 +365,15 @@ def forest_bridge(
     num_at_t = len(forest) + sum(1 for ct in coal_times if ct <= t)
     if num_at_t > maxlen:
         return forest_bridge(
-            flow, x0_sampler, x1_elements, t,
-            groupings, branchmask, flowmask, del_flags, ids,
+            flow,
+            x0_sampler,
+            x1_elements,
+            t,
+            groupings,
+            branchmask,
+            flowmask,
+            del_flags,
+            ids,
             use_branching_time_prob=use_branching_time_prob,
             maxlen=maxlen,
             coalescence_factor=coalescence_factor,
@@ -365,8 +393,10 @@ def forest_bridge(
 # Group-mins resolution helpers
 # ---------------------------------------------------------------------------
 
+
 def _resolve_group_mins(
-    length_mins: Any, groupings: list[int],
+    length_mins: Any,
+    groupings: list[int],
 ) -> dict[int, int] | None:
     """Convert various group_mins argument forms to a dict or None."""
     if length_mins is None:
@@ -382,6 +412,7 @@ def _resolve_group_mins(
 # ---------------------------------------------------------------------------
 # Batched bridge (main training entry point)
 # ---------------------------------------------------------------------------
+
 
 def branching_bridge(
     flow: CoalescentFlow,
@@ -488,6 +519,7 @@ def branching_bridge(
 # Collation: per-sample segment lists -> batched BridgeOutput
 # ---------------------------------------------------------------------------
 
+
 def _collate_bridges(
     flow: CoalescentFlow,
     batch_bridges: list[list[dict[str, Any]]],
@@ -535,7 +567,9 @@ def _collate_bridges(
 
     # Stack states into tensors per modality
     xt_batched = _stack_elements(xt_elements, max_len, is_multimodal, n_modalities)
-    anchor_batched = _stack_elements(anchor_elements, max_len, is_multimodal, n_modalities)
+    anchor_batched = _stack_elements(
+        anchor_elements, max_len, is_multimodal, n_modalities
+    )
 
     # Transpose masks from (length, batch) to (batch, length)
     flowmask = flowmask.T.contiguous()
@@ -613,7 +647,9 @@ def _stack_elements(
             for b, elems in enumerate(elements_per_batch):
                 for i, e in enumerate(elems):
                     val = e[m]
-                    out[b, i] = int(val) if not isinstance(val, torch.Tensor) else val.item()
+                    out[b, i] = (
+                        int(val) if not isinstance(val, torch.Tensor) else val.item()
+                    )
             results.append(out)
 
     return tuple(results)
@@ -627,7 +663,8 @@ def _find_example_element(elements_per_batch: list[list[Any]]) -> Any:
 
 
 def _find_example_modality(
-    elements_per_batch: list[list[Any]], m: int,
+    elements_per_batch: list[list[Any]],
+    m: int,
 ) -> Any:
     for elems in elements_per_batch:
         if elems:

@@ -16,7 +16,10 @@ import torch
 
 
 def canonical_anchor_merge(
-    s1: Any, s2: Any, w1: int, w2: int,
+    s1: Any,
+    s2: Any,
+    w1: int,
+    w2: int,
 ) -> Any:
     """Merge two anchor states into a parent anchor.
 
@@ -30,9 +33,7 @@ def canonical_anchor_merge(
       internal nodes, or overriding this for custom behavior.
     """
     if isinstance(s1, tuple):
-        return tuple(
-            canonical_anchor_merge(a, b, w1, w2) for a, b in zip(s1, s2)
-        )
+        return tuple(canonical_anchor_merge(a, b, w1, w2) for a, b in zip(s1, s2))
 
     if isinstance(s1, torch.Tensor):
         return (s1 * w1 + s2 * w2) / (w1 + w2)
@@ -44,7 +45,10 @@ def canonical_anchor_merge(
 
 
 def select_anchor_merge(
-    s1: Any, s2: Any, w1: int, w2: int,
+    s1: Any,
+    s2: Any,
+    w1: int,
+    w2: int,
 ) -> Any:
     """Stochastic merge that copies one child instead of interpolating.
 

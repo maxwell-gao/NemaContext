@@ -40,6 +40,12 @@ from .emergent_loss import (
     diversity_loss,
     weak_anchor_loss,
 )
+from .trimodal_loss import (
+    trimodal_context_loss,
+    curriculum_trimodal_loss,
+    masked_mse_loss,
+    weak_anchor_loss_masked,
+)
 
 __all__ = [
     # Core
@@ -90,4 +96,9 @@ __all__ = [
     "cell_count_loss",
     "diversity_loss",
     "weak_anchor_loss",
+    # Trimodal Loss
+    "trimodal_context_loss",
+    "curriculum_trimodal_loss",
+    "masked_mse_loss",
+    "weak_anchor_loss_masked",
 ]

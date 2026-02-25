@@ -7,7 +7,7 @@ the deletion insertion functions (uniform_del_insertions, etc.).
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -16,6 +16,7 @@ import torch
 # ---------------------------------------------------------------------------
 # Batched state containers
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class BranchingState:
@@ -63,13 +64,13 @@ class BridgeOutput:
     training targets (anchor states, split counts, deletion flags).
     """
 
-    t: torch.Tensor                    # (batch,)
-    Xt: BranchingState                 # states at time t
-    X1anchor: tuple[torch.Tensor, ...] # anchor targets per modality
-    del_flags: torch.Tensor            # (batch, length) bool
-    descendants: torch.Tensor          # (batch, length) int
-    splits_target: torch.Tensor        # (batch, length) float
-    prev_coalescence: torch.Tensor     # (batch, length) float
+    t: torch.Tensor  # (batch,)
+    Xt: BranchingState  # states at time t
+    X1anchor: tuple[torch.Tensor, ...]  # anchor targets per modality
+    del_flags: torch.Tensor  # (batch, length) bool
+    descendants: torch.Tensor  # (batch, length) int
+    splits_target: torch.Tensor  # (batch, length) float
+    prev_coalescence: torch.Tensor  # (batch, length) float
 
     def to(self, device: torch.device | str) -> BridgeOutput:
         return BridgeOutput(
@@ -87,6 +88,7 @@ class BridgeOutput:
 # Per-sample (unbatched) state used during forest construction
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SampleState:
     """Unbatched per-sample state before batching.
@@ -96,7 +98,7 @@ class SampleState:
     before the batched ``branching_bridge`` collation.
     """
 
-    elements: list[Any]          # per-element state (tensor or tuple)
+    elements: list[Any]  # per-element state (tensor or tuple)
     groupings: list[int]
     del_flags: list[bool]
     ids: list[int]
@@ -111,6 +113,7 @@ class SampleState:
 # ---------------------------------------------------------------------------
 # Deletion augmentation
 # ---------------------------------------------------------------------------
+
 
 def uniform_del_insertions(
     sample: SampleState,
@@ -186,9 +189,7 @@ def fixedcount_del_insertions(
         return sample
 
     n = sample.length
-    eligible = [
-        i for i in range(n) if sample.flowmask[i] and sample.branchmask[i]
-    ]
+    eligible = [i for i in range(n) if sample.flowmask[i] and sample.branchmask[i]]
     if not eligible:
         return sample
 
@@ -216,7 +217,10 @@ def fixedcount_del_insertions(
                 after_flags[i].append(True)
 
     return _build_augmented_sample(
-        sample, before_flags, after_flags, orig_del,
+        sample,
+        before_flags,
+        after_flags,
+        orig_del,
     )
 
 
@@ -229,9 +233,7 @@ def group_fixedcount_del_insertions(
         return sample
 
     n = sample.length
-    eligible = [
-        i for i in range(n) if sample.flowmask[i] and sample.branchmask[i]
-    ]
+    eligible = [i for i in range(n) if sample.flowmask[i] and sample.branchmask[i]]
     if not eligible:
         return sample
 
@@ -265,7 +267,10 @@ def group_fixedcount_del_insertions(
                     after_flags[i].append(True)
 
     return _build_augmented_sample(
-        sample, before_flags, after_flags, orig_del,
+        sample,
+        before_flags,
+        after_flags,
+        orig_del,
     )
 
 
@@ -273,13 +278,12 @@ def group_fixedcount_del_insertions(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _clone_element(elem: Any) -> Any:
     if isinstance(elem, torch.Tensor):
         return elem.clone()
     if isinstance(elem, tuple):
-        return tuple(
-            e.clone() if isinstance(e, torch.Tensor) else e for e in elem
-        )
+        return tuple(e.clone() if isinstance(e, torch.Tensor) else e for e in elem)
     return elem
 
 

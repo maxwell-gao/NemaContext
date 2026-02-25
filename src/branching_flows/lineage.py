@@ -7,7 +7,6 @@ training supervision. Closer cells in the lineage tree attend to each other more
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 
 
 def parse_lineage_name(name: str) -> tuple[str, list[str]]:
@@ -317,7 +316,7 @@ def compute_lineage_similarity_matrix(
             distances[i, j] = lineage_distance(lineage_names[i], lineage_names[j])
 
     if kernel == "gaussian":
-        similarity = torch.exp(-distances.pow(2) / (2 * sigma ** 2))
+        similarity = torch.exp(-distances.pow(2) / (2 * sigma**2))
     elif kernel == "exponential":
         similarity = torch.exp(-distances / sigma)
     else:

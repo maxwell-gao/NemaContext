@@ -511,7 +511,7 @@ class TrimodalAnnDataBuilder:
         full_graph = csr_matrix(
             (graph_coo.data, (new_row, new_col)),
             shape=(n_cells, n_cells),
-            dtype=np.float32
+            dtype=np.float32,
         )
 
         adata.obsp["spatial_distances"] = full_graph
@@ -572,7 +572,7 @@ class TrimodalAnnDataBuilder:
         full_adj = csr_matrix(
             (adj_coo.data, (new_row, new_col)),
             shape=(n_cells, n_cells),
-            dtype=np.float32
+            dtype=np.float32,
         )
 
         adata.obsp["lineage_adjacency"] = full_adj
