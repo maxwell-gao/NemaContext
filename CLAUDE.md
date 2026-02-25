@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Coding Style & Structure Constraints
+
+### No Versioning or Descriptive Names (Clean Architecture)
+- **No Versioning in Names**: Strictly prohibit the use of `v+number` (e.g., `model_v1.py`, `experiment_v2`) for naming files or directories. 
+- **Underscore Restriction**: Do not use more than one underscore (`_`) in any single filename. 
+- **Hierarchical Management**: Organize code and logic through directory nesting and file hierarchy rather than descriptive or versioned filenames.
+- **Refactoring Rule**: If a file requires complex naming to describe its function, it should be refactored into a subdirectory with a clean `main.py` or `index.py`.
+- Strictly use 'uv' for all Python dependency management. Do not use 'pip' or 'conda' commands directly. Any new dependency must be added to 'pyproject.toml' or via 'uv add'.
+
+### No Standalone Files (Architectural Integrity)
+- **No Standalone Files**: Strictly forbid the creation of isolated, standalone files that are disconnected from the existing project structure or dependency graph.
+- **Structural Belonging**: Every new file MUST belong to a specific module or sub-package. It must be properly integrated into the directory hierarchy and, if applicable, referenced by an `__init__.py` or a parent orchestrator.
+- **Dependency Integration**: New scripts must utilize the established internal libraries (e.g., `src.lutflow.*`) and respect the project's entry points. No "one-off" scripts that duplicate logic or bypass the common configuration system.
+- **Verification**: Before creating a file, justify its position in the architecture. If it doesn't fit the current tree, refactor the tree first rather than creating a disconnected root-level file.
+
+### Strict File Segregation (Log & Data Isolation)
+- **Dedicated Storage**: All generated output files, including logs (`.log`, `.txt`) and data exports (`.csv`, `.json`, `.xlsx`), MUST be stored in dedicated, standalone directories (e.g., `logs/`, `results/`, `data/`).
+- **No Mixing**: Strictly prohibit mixing log or CSV files with source code (`.py`) or configuration files in the same directory.
+- **Hierarchical Data Folders**: Log and CSV storage must mirror the project's logic or experiment configuration through sub-directories. For example: `results/experiments/ptq/sensitivity/metrics.csv` instead of `src/experiments/metrics.csv`.
+- **Clean Workspace**: Source directories must remain "pristine"—only containing logic and necessary assets. Any tool-generated artifacts found in source folders must be moved to their designated data directories immediately.
+
+### Pre-execution Requirements (Ruff Enforcement)
+- **Mandatory Lint & Format**: Before executing any script or launching any experiment, you MUST run:
+  - `uvx ruff check --fix`
+  - `uvx ruff format`
+- **Zero Tolerance**: If Ruff reports unfixable errors, stop execution and fix the code before proceeding.
+
+### File Name Uniqueness (Cognitive Optimization)
+- **No Generic Filenames**: Strictly forbid generic, repetitive filenames such as `main.py`, `mod.rs`, `__init__.py`, `utils.py`, or `index.ts` in subdirectories.
+- **Self-Descriptive Naming**: Every file must have a unique, descriptive name that reflects its specific responsibility within the system. 
+- **Namespace-like Naming**: If a file represents a module's core, name it after the module itself. 
+
 ## Package Management
 
 This project uses `uv` for Python package management. Key commands:
