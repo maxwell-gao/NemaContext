@@ -18,6 +18,7 @@ dependencies = [
     "scikit-misc",  # Required for scanpy seurat_v3 HVG
     "geomloss",     # Differentiable Sinkhorn distance (BROT distributional loss)
     "pot",          # Python Optimal Transport (W1 evaluation metrics)
+    "threadpoolctl>=3.6.0",
 ]
 
 [dependency-groups]

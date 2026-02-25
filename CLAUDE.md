@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## Our Creed: Discover, Don't Inject
+
+**We do not inject biological priors into the model. We discover biological priors from the data-trained model.**
+
+This principle follows the Bitter Lesson of machine learning in biology: hardcoded assumptions about gene regulatory networks, developmental pathways, or spatial patterns often limit what our models can learn. Instead, we embrace the following approach:
+
+1. **Tabula Rasa Architecture**: The model begins with minimal inductive biases—no hand-crafted gene modules, no predefined lineage hierarchies, no anatomical atlases. The Transformer learns what matters through attention, not through our assumptions.
+
+2. **Let the Data Speak**: Biological structure emerges from training on raw observations. Cell type clustering appears in the latent space. Spatial gradients materialize in the continuous representations. Lineage relationships crystallize through attention patterns.
+
+3. **Interpret After Training**: Once the model has learned from millions of cell-states across developmental time, we interrogate it: Which genes does it attend to when predicting position? How does it represent lineage divergence? The answers are discovered, not prescribed.
+
+4. **Challenge Our Assumptions**: When the model disagrees with textbook biology, we listen. Perhaps the "established" pathway is context-dependent. Perhaps the canonical cell type boundary is more fluid than believed. Data-driven discovery often precedes experimental validation.
+
+In practice, this means: no feature selection based on GO terms, no loss terms enforcing spatial smoothness, no architectural constraints mimicking known developmental trees. We build the capacity; training writes the program.
+
+---
+
 ## Coding Style & Structure Constraints
 
 ### No Versioning or Descriptive Names (Clean Architecture)
@@ -71,7 +91,7 @@ uv run python examples/build_anndata.py --variant extended
 
 ## Training
 
-Two main training scripts exist:
+Three training scripts are available:
 
 ```bash
 # Train BROT model on Large2025 transcriptome data (requires built AnnData)
@@ -80,11 +100,35 @@ uv run python examples/train_nema.py --epochs 30 --batch_size 3 --device cpu
 # Train on WormGUIDES 4D spatial dynamics (uses real Sulston lineage tree)
 uv run python examples/train_wormguides.py --epochs 30 --stride 10 --device cpu
 
-# Key hyperparameters for both:
+# Train cross-modal trimodal model (transcriptome + spatial + lineage)
+uv run python examples/train_trimodal_crossmodal.py \
+    --epochs 100 --batch_size 8 --device cuda \
+    --cross_modal_every 2 --augment_spatial
+
+# Key hyperparameters for all:
 # --lambda_ot 0.1       # Sinkhorn OT loss weight
 # --lambda_mass 0.01    # Mass matching loss weight
 # --lambda_energy 0.001 # Energy regularization weight
 # --grad_clip 1.0       # Gradient clipping
+```
+
+## Discovery & Evaluation
+
+After training, discover biological priors from the model:
+
+```bash
+# Extract learned gene-spatial relationships, cell types, trajectories
+uv run python examples/discover_priors.py \
+    --checkpoint checkpoints_trimodal_crossmodal/best.pt \
+    --output discoveries/
+
+# Evaluate modality completion (gene->spatial, spatial->gene)
+uv run python examples/evaluate_modality_completion.py \
+    --checkpoint checkpoints_trimodal_crossmodal/best.pt \
+    --test_mode gene_to_spatial
+
+# Monitor training progress
+./monitor.sh
 ```
 
 ## Architecture Overview
