@@ -26,6 +26,20 @@ from .states import (
     uniform_del_insertions,
 )
 from .trees import FlowNode, add_child, merge_nodes
+from .lineage import (
+    compute_lineage_bias,
+    batch_lineage_bias,
+    apply_lineage_bias_to_attention,
+    lineage_distance,
+    parse_lineage_name,
+)
+from .emergent_loss import (
+    emergent_context_loss,
+    sinkhorn_divergence,
+    cell_count_loss,
+    diversity_loss,
+    weak_anchor_loss,
+)
 
 __all__ = [
     # Core
@@ -64,4 +78,16 @@ __all__ = [
     # Trees
     "add_child",
     "merge_nodes",
+    # Lineage
+    "compute_lineage_bias",
+    "batch_lineage_bias",
+    "apply_lineage_bias_to_attention",
+    "lineage_distance",
+    "parse_lineage_name",
+    # Emergent Loss
+    "emergent_context_loss",
+    "sinkhorn_divergence",
+    "cell_count_loss",
+    "diversity_loss",
+    "weak_anchor_loss",
 ]

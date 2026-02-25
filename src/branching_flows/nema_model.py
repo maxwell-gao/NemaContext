@@ -89,6 +89,7 @@ class NemaFlowModel(nn.Module):
         self,
         t: torch.Tensor,
         state: BranchingState,
+        lineage_bias: torch.Tensor | None = None,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         """Forward pass.
 
@@ -96,6 +97,9 @@ class NemaFlowModel(nn.Module):
             t: Flow time, shape ``(B,)``.
             state: BranchingState with ``states[0]`` continuous ``(B, L, D)``
                 and ``states[1]`` discrete ``(B, L)``.
+            lineage_bias: Optional lineage-based attention bias of shape ``(B, L, L)``.
+                Computed from pairwise lineage distances. Closer cells in the
+                lineage tree receive higher attention bias.
 
         Returns:
             ``((x1_cont, x1_disc_logits), split_logits, del_logits)`` where:
@@ -125,7 +129,7 @@ class NemaFlowModel(nn.Module):
 
         # Transformer blocks
         for block in self.blocks:
-            x = block(x, t_cond, rope_cos, rope_sin, attn_mask)
+            x = block(x, t_cond, rope_cos, rope_sin, attn_mask, lineage_bias)
 
         # Output heads
         x1_cont = self.continuous_head(x)
@@ -184,6 +188,7 @@ class AdaLNTransformerBlock(nn.Module):
         rope_cos: torch.Tensor,
         rope_sin: torch.Tensor,
         attn_mask: torch.Tensor,
+        lineage_bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         B, L, D = x.shape
 
@@ -204,9 +209,15 @@ class AdaLNTransformerBlock(nn.Module):
         q = _apply_rope(q, rope_cos, rope_sin)
         k = _apply_rope(k, rope_cos, rope_sin)
 
-        # Scaled dot-product attention
+        # Scaled dot-product attention with optional lineage bias
         scale = self.head_dim ** -0.5
         attn = (q @ k.transpose(-2, -1)) * scale
+
+        # Apply lineage bias if provided (broadcast across heads)
+        if lineage_bias is not None:
+            # lineage_bias: [B, L, L] -> [B, 1, L, L] for broadcasting
+            attn = attn + lineage_bias.unsqueeze(1)
+
         attn = attn.masked_fill(~attn_mask, float("-inf"))
         attn = F.softmax(attn, dim=-1)
         attn = attn.masked_fill(~attn_mask, 0.0)
