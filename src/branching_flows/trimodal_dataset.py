@@ -49,6 +49,10 @@ class TrimodalDataset:
         ordering: Literal["random", "lineage", "spatial"] = "random",
         use_lineage_bias: bool = True,
         max_cells_per_bin: int | None = None,
+        augment_spatial: bool = True,
+        aug_rotation: bool = True,
+        aug_flip: bool = True,
+        aug_scale: float = 0.1,
     ):
         import anndata as ad
         import scipy.sparse as sp
@@ -57,6 +61,12 @@ class TrimodalDataset:
         self.use_lineage_bias = use_lineage_bias
         self.n_hvg = n_hvg
         self.max_cells_per_bin = max_cells_per_bin
+
+        # Data augmentation settings
+        self.augment_spatial = augment_spatial
+        self.aug_rotation = aug_rotation
+        self.aug_flip = aug_flip
+        self.aug_scale = aug_scale
 
         founders = self.FOUNDER_CATEGORIES
         self._founder_to_idx = {f: i for i, f in enumerate(founders)}
@@ -211,10 +221,17 @@ class TrimodalDataset:
 
         order = self._compute_order(n, sample)
 
+        # Get ordered continuous data
+        ordered_continuous = sample.continuous[order]
+
+        # Apply data augmentation if enabled
+        if self.augment_spatial and self._gene_dim > 0:
+            ordered_continuous = self._augment_continuous(ordered_continuous)
+
         elements: list[tuple[torch.Tensor, int]] = []
-        for i in order:
-            c = torch.from_numpy(sample.continuous[i])
-            d = int(sample.discrete[i])
+        for i, idx_in_order in enumerate(range(n)):
+            c = torch.from_numpy(ordered_continuous[i])
+            d = int(sample.discrete[order[i]])
             elements.append((c, d))
 
         state = SampleState(
@@ -231,6 +248,60 @@ class TrimodalDataset:
         state.lineage_names = [sample.lineage_names[i] for i in order]
 
         return state
+
+    def _augment_continuous(self, continuous: np.ndarray) -> np.ndarray:
+        """Apply spatial data augmentation.
+
+        Args:
+            continuous: Array of shape [N, continuous_dim] with genes first
+
+        Returns:
+            Augmented continuous array
+        """
+        if not self.augment_spatial:
+            return continuous
+
+        result = continuous.copy()
+        spatial = result[:, self._gene_dim : self._gene_dim + self._spatial_dim]
+
+        # Denormalize spatial to [0, 1] range
+        spatial_raw = (
+            spatial * (self._spatial_max - self._spatial_min) + self._spatial_min
+        )
+
+        # Random rotation around z-axis (most common in microscopy)
+        if self.aug_rotation and np.random.rand() < 0.5:
+            angle = np.random.uniform(0, 2 * np.pi)
+            cos_a, sin_a = np.cos(angle), np.sin(angle)
+            # Rotate x, y coordinates
+            x, y = spatial_raw[:, 0].copy(), spatial_raw[:, 1].copy()
+            spatial_raw[:, 0] = cos_a * x - sin_a * y
+            spatial_raw[:, 1] = sin_a * x + cos_a * y
+
+        # Random flip along axes
+        if self.aug_flip:
+            if np.random.rand() < 0.5:
+                spatial_raw[:, 0] = -spatial_raw[:, 0]  # Flip x
+            if np.random.rand() < 0.5:
+                spatial_raw[:, 1] = -spatial_raw[:, 1]  # Flip y
+            if np.random.rand() < 0.5:
+                spatial_raw[:, 2] = -spatial_raw[:, 2]  # Flip z
+
+        # Random scaling
+        if self.aug_scale > 0:
+            scale = np.random.uniform(1 - self.aug_scale, 1 + self.aug_scale)
+            # Scale relative to centroid
+            centroid = spatial_raw.mean(axis=0)
+            spatial_raw = centroid + (spatial_raw - centroid) * scale
+
+        # Renormalize
+        spatial = (spatial_raw - self._spatial_min) / (
+            self._spatial_max - self._spatial_min
+        ).clip(min=1e-6)
+
+        result[:, self._gene_dim : self._gene_dim + self._spatial_dim] = spatial
+
+        return result
 
     def _compute_order(
         self,
