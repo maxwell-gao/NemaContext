@@ -75,9 +75,7 @@ class AutoregressiveSimulator:
         state: BranchingState,
     ) -> tuple[BranchingState, dict]:
         """Take one Euler step: x(t+dt) = x(t) + dt * v(t, x)."""
-        velocity, pred_disc, split_logits, del_logits = self.velocity_field(
-            t, state
-        )
+        velocity, pred_disc, split_logits, del_logits = self.velocity_field(t, state)
 
         # Update continuous states
         current_cont = state.states[0]
@@ -97,7 +95,10 @@ class AutoregressiveSimulator:
 
         # Create new state
         new_state = BranchingState(
-            states=(new_cont, pred_disc.argmax(-1) if pred_disc is not None else current_disc),
+            states=(
+                new_cont,
+                pred_disc.argmax(-1) if pred_disc is not None else current_disc,
+            ),
             groupings=state.groupings,
             del_flags=state.del_flags,
             ids=state.ids,
@@ -136,22 +137,30 @@ class AutoregressiveSimulator:
         n_steps = int((t_end - t_start) / self.dt)
 
         for step in range(n_steps):
-            trajectory.append({
-                "t": t,
-                "n_cells": int(state.padmask.sum()),
-                "spatial_mean": state.states[0][0, state.padmask[0], -3:].mean(dim=0).cpu().numpy().tolist(),
-            })
+            trajectory.append(
+                {
+                    "t": t,
+                    "n_cells": int(state.padmask.sum()),
+                    "spatial_mean": state.states[0][0, state.padmask[0], -3:]
+                    .mean(dim=0)
+                    .cpu()
+                    .numpy()
+                    .tolist(),
+                }
+            )
 
             # Apply perturbation if scheduled
             if perturbation is not None and perturbation_time is not None:
                 if abs(t - perturbation_time) < self.dt / 2:
                     state = perturbation(state)
-                    events_log.append({
-                        "step": step,
-                        "t": t,
-                        "event": "perturbation",
-                        "n_cells_after": int(state.padmask.sum()),
-                    })
+                    events_log.append(
+                        {
+                            "step": step,
+                            "t": t,
+                            "event": "perturbation",
+                            "n_cells_after": int(state.padmask.sum()),
+                        }
+                    )
 
             # Take step
             state, events = self.step(t, state)
@@ -164,11 +173,19 @@ class AutoregressiveSimulator:
                 break
 
         # Final state
-        trajectory.append({
-            "t": t,
-            "n_cells": int(state.padmask.sum()),
-            "spatial_mean": state.states[0][0, state.padmask[0], -3:].mean(dim=0).cpu().numpy().tolist() if state.padmask.any() else [0, 0, 0],
-        })
+        trajectory.append(
+            {
+                "t": t,
+                "n_cells": int(state.padmask.sum()),
+                "spatial_mean": state.states[0][0, state.padmask[0], -3:]
+                .mean(dim=0)
+                .cpu()
+                .numpy()
+                .tolist()
+                if state.padmask.any()
+                else [0, 0, 0],
+            }
+        )
 
         return {
             "trajectory": trajectory,
@@ -205,7 +222,9 @@ def lineage_deletion_perturbation(
     lineage_names: list[str],
 ) -> BranchingState:
     """Remove cells from target lineage."""
-    mask = torch.ones(len(lineage_names), dtype=torch.bool, device=state.states[0].device)
+    mask = torch.ones(
+        len(lineage_names), dtype=torch.bool, device=state.states[0].device
+    )
     for idx, name in enumerate(lineage_names):
         if name and name.startswith(target_founder):
             mask[idx] = False
@@ -218,12 +237,20 @@ def lineage_deletion_perturbation(
 
     return BranchingState(
         states=(new_cont, new_disc),
-        groupings=torch.zeros(1, n_kept, dtype=torch.long, device=state.states[0].device),
-        del_flags=torch.zeros(1, n_kept, dtype=torch.bool, device=state.states[0].device),
-        ids=torch.arange(1, n_kept + 1, dtype=torch.long, device=state.states[0].device).unsqueeze(0),
+        groupings=torch.zeros(
+            1, n_kept, dtype=torch.long, device=state.states[0].device
+        ),
+        del_flags=torch.zeros(
+            1, n_kept, dtype=torch.bool, device=state.states[0].device
+        ),
+        ids=torch.arange(
+            1, n_kept + 1, dtype=torch.long, device=state.states[0].device
+        ).unsqueeze(0),
         padmask=torch.ones(1, n_kept, dtype=torch.bool, device=state.states[0].device),
         flowmask=torch.ones(1, n_kept, dtype=torch.bool, device=state.states[0].device),
-        branchmask=torch.ones(1, n_kept, dtype=torch.bool, device=state.states[0].device),
+        branchmask=torch.ones(
+            1, n_kept, dtype=torch.bool, device=state.states[0].device
+        ),
     )
 
 
@@ -345,16 +372,30 @@ def main():
             new_disc = state.states[1][:, mask] if state.states[1] is not None else None
             n_kept = mask.sum()
 
-            print(f"  [Perturbation at t={args.perturbation_time}] Deleted {n_delete} cells, {n_kept} remain")
+            print(
+                f"  [Perturbation at t={args.perturbation_time}] Deleted {n_delete} cells, {n_kept} remain"
+            )
 
             return BranchingState(
                 states=(new_cont, new_disc),
-                groupings=torch.zeros(1, n_kept, dtype=torch.long, device=state.states[0].device),
-                del_flags=torch.zeros(1, n_kept, dtype=torch.bool, device=state.states[0].device),
-                ids=torch.arange(1, n_kept + 1, dtype=torch.long, device=state.states[0].device).unsqueeze(0),
-                padmask=torch.ones(1, n_kept, dtype=torch.bool, device=state.states[0].device),
-                flowmask=torch.ones(1, n_kept, dtype=torch.bool, device=state.states[0].device),
-                branchmask=torch.ones(1, n_kept, dtype=torch.bool, device=state.states[0].device),
+                groupings=torch.zeros(
+                    1, n_kept, dtype=torch.long, device=state.states[0].device
+                ),
+                del_flags=torch.zeros(
+                    1, n_kept, dtype=torch.bool, device=state.states[0].device
+                ),
+                ids=torch.arange(
+                    1, n_kept + 1, dtype=torch.long, device=state.states[0].device
+                ).unsqueeze(0),
+                padmask=torch.ones(
+                    1, n_kept, dtype=torch.bool, device=state.states[0].device
+                ),
+                flowmask=torch.ones(
+                    1, n_kept, dtype=torch.bool, device=state.states[0].device
+                ),
+                branchmask=torch.ones(
+                    1, n_kept, dtype=torch.bool, device=state.states[0].device
+                ),
             )
 
         perturbation = random_deletion
@@ -385,20 +426,26 @@ def main():
 
     # Show trajectory summary
     print("Developmental trajectory:")
-    for i in range(0, len(results['trajectory']), max(1, len(results['trajectory']) // 10)):
-        traj = results['trajectory'][i]
-        print(f"  t={traj['t']:.2f}: {traj['n_cells']} cells, "
-              f"spatial_center=({traj['spatial_mean'][0]:.2f}, "
-              f"{traj['spatial_mean'][1]:.2f}, {traj['spatial_mean'][2]:.2f})")
+    for i in range(
+        0, len(results["trajectory"]), max(1, len(results["trajectory"]) // 10)
+    ):
+        traj = results["trajectory"][i]
+        print(
+            f"  t={traj['t']:.2f}: {traj['n_cells']} cells, "
+            f"spatial_center=({traj['spatial_mean'][0]:.2f}, "
+            f"{traj['spatial_mean'][1]:.2f}, {traj['spatial_mean'][2]:.2f})"
+        )
 
     # Check for biologically reasonable behavior
-    final_n = results['trajectory'][-1]['n_cells']
-    initial_n = results['trajectory'][0]['n_cells']
+    final_n = results["trajectory"][-1]["n_cells"]
+    initial_n = results["trajectory"][0]["n_cells"]
 
     print()
     if final_n > initial_n:
         growth_ratio = final_n / initial_n
-        print(f"✓ Cell proliferation detected: {initial_n} → {final_n} (x{growth_ratio:.1f})")
+        print(
+            f"✓ Cell proliferation detected: {initial_n} → {final_n} (x{growth_ratio:.1f})"
+        )
     elif final_n < initial_n:
         print(f"⚠ Cell count decreased: {initial_n} → {final_n}")
     else:

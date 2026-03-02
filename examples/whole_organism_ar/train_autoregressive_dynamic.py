@@ -77,12 +77,14 @@ class DynamicTrajectoryDataset(Dataset):
             if should_divide:
                 target_split[0, :] = 1.0  # All cells divide
 
-            trajectory.append({
-                'state': state,
-                'target_split': target_split,
-                'target_del': target_del,
-                'n_cells': n_cells,
-            })
+            trajectory.append(
+                {
+                    "state": state,
+                    "target_split": target_split,
+                    "target_del": target_del,
+                    "n_cells": n_cells,
+                }
+            )
 
             # Simulate next state (with division if scheduled)
             if should_divide:
@@ -91,14 +93,18 @@ class DynamicTrajectoryDataset(Dataset):
                 new_spatial = []
                 for i in range(n_cells):
                     # Daughter cells with small perturbation
-                    new_genes.extend([
-                        genes[i] + torch.randn_like(genes[i]) * 0.01,
-                        genes[i] + torch.randn_like(genes[i]) * 0.01
-                    ])
-                    new_spatial.extend([
-                        spatial[i] + torch.randn_like(spatial[i]) * 0.01,
-                        spatial[i] + torch.randn_like(spatial[i]) * 0.01
-                    ])
+                    new_genes.extend(
+                        [
+                            genes[i] + torch.randn_like(genes[i]) * 0.01,
+                            genes[i] + torch.randn_like(genes[i]) * 0.01,
+                        ]
+                    )
+                    new_spatial.extend(
+                        [
+                            spatial[i] + torch.randn_like(spatial[i]) * 0.01,
+                            spatial[i] + torch.randn_like(spatial[i]) * 0.01,
+                        ]
+                    )
                 genes = torch.stack(new_genes)
                 spatial = torch.stack(new_spatial)
                 n_cells *= 2
@@ -134,15 +140,15 @@ def train_epoch(model, loader, optimizer, device):
                 current_data = trajectory[t]
                 next_data = trajectory[t + 1]
 
-                current = current_data['state'].to(device)
-                target_split = current_data['target_split'].to(device)
-                target_del = current_data['target_del'].to(device)
+                current = current_data["state"].to(device)
+                target_split = current_data["target_split"].to(device)
+                target_del = current_data["target_del"].to(device)
 
                 # Forward
                 output = model.forward_step(current)
 
                 # State prediction loss
-                next_state = next_data['state'].to(device)
+                next_state = next_data["state"].to(device)
 
                 # For dynamic cells, we need to handle variable lengths
                 # For now, compute loss only on positions that exist in both states
@@ -156,10 +162,13 @@ def train_epoch(model, loader, optimizer, device):
                 cont_next = next_state.states[0][:, :min_len, :]
 
                 true_gene_delta = cont_next[..., :2000] - cont_current[..., :2000]
-                true_spatial_vel = cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
+                true_spatial_vel = (
+                    cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
+                )
 
-                state_loss = F.mse_loss(gene_delta_pred, true_gene_delta) + \
-                             F.mse_loss(spatial_vel_pred, true_spatial_vel)
+                state_loss = F.mse_loss(gene_delta_pred, true_gene_delta) + F.mse_loss(
+                    spatial_vel_pred, true_spatial_vel
+                )
 
                 # Event prediction loss
                 if output.split_logits is not None:
@@ -169,15 +178,23 @@ def train_epoch(model, loader, optimizer, device):
                     # Mask to valid cells
                     valid_mask = current.padmask
 
-                    split_loss = F.binary_cross_entropy(
-                        split_probs[valid_mask],
-                        target_split[valid_mask],
-                    ) if valid_mask.any() else torch.tensor(0.0, device=device)
+                    split_loss = (
+                        F.binary_cross_entropy(
+                            split_probs[valid_mask],
+                            target_split[valid_mask],
+                        )
+                        if valid_mask.any()
+                        else torch.tensor(0.0, device=device)
+                    )
 
-                    del_loss = F.binary_cross_entropy(
-                        del_probs[valid_mask],
-                        target_del[valid_mask],
-                    ) if valid_mask.any() else torch.tensor(0.0, device=device)
+                    del_loss = (
+                        F.binary_cross_entropy(
+                            del_probs[valid_mask],
+                            target_del[valid_mask],
+                        )
+                        if valid_mask.any()
+                        else torch.tensor(0.0, device=device)
+                    )
 
                     event_loss = split_loss + del_loss
                 else:
@@ -220,8 +237,8 @@ def validate(model, loader, device):
                 current_data = trajectory[t]
                 next_data = trajectory[t + 1]
 
-                current = current_data['state'].to(device)
-                next_state = next_data['state'].to(device)
+                current = current_data["state"].to(device)
+                next_state = next_data["state"].to(device)
 
                 output = model.forward_step(current)
 
@@ -234,10 +251,13 @@ def validate(model, loader, device):
                 cont_next = next_state.states[0][:, :min_len, :]
 
                 true_gene_delta = cont_next[..., :2000] - cont_current[..., :2000]
-                true_spatial_vel = cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
+                true_spatial_vel = (
+                    cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
+                )
 
-                loss = F.mse_loss(gene_delta_pred, true_gene_delta) + \
-                       F.mse_loss(spatial_vel_pred, true_spatial_vel)
+                loss = F.mse_loss(gene_delta_pred, true_gene_delta) + F.mse_loss(
+                    spatial_vel_pred, true_spatial_vel
+                )
                 traj_loss += loss.item()
                 n_valid += 1
 
@@ -251,12 +271,16 @@ def validate(model, loader, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train autoregressive model with dynamic cells")
+    parser = argparse.ArgumentParser(
+        description="Train autoregressive model with dynamic cells"
+    )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--save_dir", type=str, default="checkpoints_autoregressive_dynamic")
+    parser.add_argument(
+        "--save_dir", type=str, default="checkpoints_autoregressive_dynamic"
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -272,10 +296,16 @@ def main():
     val_dataset = DynamicTrajectoryDataset(n_trajectories=10)
 
     train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_trajectories
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_trajectories,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_trajectories
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_trajectories,
     )
     print(f"  Train: {len(train_dataset)} trajectories")
     print(f"  Val: {len(val_dataset)} trajectories")

@@ -40,7 +40,9 @@ def compare_trajectories(control_file: str, perturbed_file: str):
     print("TRAJECTORY COMPARISON")
     print("=" * 70)
     print(f"Control: {control['mode']} (initial: {control['initial_cells']} cells)")
-    print(f"Perturbed: {perturbed['mode']} (initial: {perturbed['initial_cells']} cells)")
+    print(
+        f"Perturbed: {perturbed['mode']} (initial: {perturbed['initial_cells']} cells)"
+    )
     print()
 
     # Extract trajectories
@@ -66,10 +68,12 @@ def compare_trajectories(control_file: str, perturbed_file: str):
 
         dist = np.linalg.norm(ctrl_pos - pert_pos)
 
-        print(f"{t:<8.2f} "
-              f"({ctrl['n_cells']:>3} cells) {ctrl_pos[2]:>6.2f}  "
-              f"({pert['n_cells']:>3} cells) {pert_pos[2]:>6.2f}  "
-              f"dist={dist:.3f}")
+        print(
+            f"{t:<8.2f} "
+            f"({ctrl['n_cells']:>3} cells) {ctrl_pos[2]:>6.2f}  "
+            f"({pert['n_cells']:>3} cells) {pert_pos[2]:>6.2f}  "
+            f"dist={dist:.3f}"
+        )
 
     # Final comparison
     print()
@@ -100,7 +104,7 @@ def compare_trajectories(control_file: str, perturbed_file: str):
 
     # Check compensatory behavior
     # If cell count changed but final position is similar -> compensation
-    cell_count_diff = abs(ctrl_final['n_cells'] - pert_final['n_cells'])
+    cell_count_diff = abs(ctrl_final["n_cells"] - pert_final["n_cells"])
 
     print()
     if cell_count_diff > 0 and final_dist < 1.0:

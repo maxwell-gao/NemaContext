@@ -42,10 +42,15 @@ class PerturbationExperiment:
         continuous = torch.cat([genes, spatial], dim=-1)
 
         return BranchingState(
-            states=(continuous, torch.zeros(1, n_cells, dtype=torch.long, device=self.device)),
+            states=(
+                continuous,
+                torch.zeros(1, n_cells, dtype=torch.long, device=self.device),
+            ),
             groupings=torch.zeros(1, n_cells, dtype=torch.long, device=self.device),
             del_flags=torch.zeros(1, n_cells, dtype=torch.bool, device=self.device),
-            ids=torch.arange(1, n_cells + 1, dtype=torch.long, device=self.device).unsqueeze(0),
+            ids=torch.arange(
+                1, n_cells + 1, dtype=torch.long, device=self.device
+            ).unsqueeze(0),
             padmask=torch.ones(1, n_cells, dtype=torch.bool, device=self.device),
             flowmask=torch.ones(1, n_cells, dtype=torch.bool, device=self.device),
             branchmask=torch.ones(1, n_cells, dtype=torch.bool, device=self.device),
@@ -58,7 +63,9 @@ class PerturbationExperiment:
 
         with torch.no_grad():
             for _ in range(self.n_steps):
-                state, _ = self.model.step(state, deterministic=True, apply_events=False)
+                state, _ = self.model.step(
+                    state, deterministic=True, apply_events=False
+                )
                 trajectory.append(state)
 
         return trajectory
@@ -91,15 +98,29 @@ class PerturbationExperiment:
 
                     state = BranchingState(
                         states=(new_cont, new_disc),
-                        groupings=torch.zeros(1, n_kept, dtype=torch.long, device=self.device),
-                        del_flags=torch.zeros(1, n_kept, dtype=torch.bool, device=self.device),
-                        ids=torch.arange(1, n_kept + 1, dtype=torch.long, device=self.device).unsqueeze(0),
-                        padmask=torch.ones(1, n_kept, dtype=torch.bool, device=self.device),
-                        flowmask=torch.ones(1, n_kept, dtype=torch.bool, device=self.device),
-                        branchmask=torch.ones(1, n_kept, dtype=torch.bool, device=self.device),
+                        groupings=torch.zeros(
+                            1, n_kept, dtype=torch.long, device=self.device
+                        ),
+                        del_flags=torch.zeros(
+                            1, n_kept, dtype=torch.bool, device=self.device
+                        ),
+                        ids=torch.arange(
+                            1, n_kept + 1, dtype=torch.long, device=self.device
+                        ).unsqueeze(0),
+                        padmask=torch.ones(
+                            1, n_kept, dtype=torch.bool, device=self.device
+                        ),
+                        flowmask=torch.ones(
+                            1, n_kept, dtype=torch.bool, device=self.device
+                        ),
+                        branchmask=torch.ones(
+                            1, n_kept, dtype=torch.bool, device=self.device
+                        ),
                     )
 
-                state, _ = self.model.step(state, deterministic=True, apply_events=False)
+                state, _ = self.model.step(
+                    state, deterministic=True, apply_events=False
+                )
                 trajectory.append(state)
 
         return trajectory
@@ -121,7 +142,9 @@ class PerturbationExperiment:
                     cont = state.states[0]
                     cont[..., -3:] += shift
 
-                state, _ = self.model.step(state, deterministic=True, apply_events=False)
+                state, _ = self.model.step(
+                    state, deterministic=True, apply_events=False
+                )
                 trajectory.append(state)
 
         return trajectory
@@ -144,7 +167,9 @@ class PerturbationExperiment:
                     cont = state.states[0]
                     cont[..., gene_idx] += activation
 
-                state, _ = self.model.step(state, deterministic=True, apply_events=False)
+                state, _ = self.model.step(
+                    state, deterministic=True, apply_events=False
+                )
                 trajectory.append(state)
 
         return trajectory
@@ -191,15 +216,13 @@ class PerturbationExperiment:
 
         # Cell count difference
         cell_diff = abs(
-            control_stats["n_cells"][final_idx] -
-            perturbed_stats["n_cells"][final_idx]
+            control_stats["n_cells"][final_idx] - perturbed_stats["n_cells"][final_idx]
         )
 
         # Trajectory divergence
         divergences = []
         for c_center, p_center in zip(
-            control_stats["spatial_centers"],
-            perturbed_stats["spatial_centers"]
+            control_stats["spatial_centers"], perturbed_stats["spatial_centers"]
         ):
             div = np.linalg.norm(c_center - p_center)
             divergences.append(div)
@@ -254,15 +277,23 @@ def main():
     initial = experiment.create_initial_state(n_cells=10)
 
     control = experiment.run_control(initial)
-    perturbed = experiment.run_deletion_perturbation(initial, perturb_time=5, fraction=0.3)
+    perturbed = experiment.run_deletion_perturbation(
+        initial, perturb_time=5, fraction=0.3
+    )
 
     comparison = experiment.compare_trajectories(control, perturbed)
     results["deletion_t5_f30"] = comparison
 
-    print(f"  Control final cells: {experiment.analyze_trajectory(control)['n_cells'][-1]}")
-    print(f"  Perturbed final cells: {experiment.analyze_trajectory(perturbed)['n_cells'][-1]}")
+    print(
+        f"  Control final cells: {experiment.analyze_trajectory(control)['n_cells'][-1]}"
+    )
+    print(
+        f"  Perturbed final cells: {experiment.analyze_trajectory(perturbed)['n_cells'][-1]}"
+    )
     print(f"  Spatial distance: {comparison['final_spatial_distance']:.4f}")
-    print(f"  Compensated: {'✓' if comparison['final_spatial_distance'] < 1.0 else '✗'}")
+    print(
+        f"  Compensated: {'✓' if comparison['final_spatial_distance'] < 1.0 else '✗'}"
+    )
     print()
 
     # Experiment 2: Spatial shift
@@ -293,7 +324,9 @@ def main():
     results["gene_activation_t5_g0"] = comparison
 
     print(f"  Spatial distance: {comparison['final_spatial_distance']:.4f}")
-    print(f"  Gene perturbation affected morphology: {'✓' if comparison['final_spatial_distance'] > 0.1 else '✗'}")
+    print(
+        f"  Gene perturbation affected morphology: {'✓' if comparison['final_spatial_distance'] > 0.1 else '✗'}"
+    )
     print()
 
     # Summary
@@ -301,7 +334,9 @@ def main():
     print("SUMMARY")
     print("=" * 70)
 
-    n_compensated = sum(1 for r in results.values() if r["final_spatial_distance"] < 1.0)
+    n_compensated = sum(
+        1 for r in results.values() if r["final_spatial_distance"] < 1.0
+    )
     print(f"Compensatory responses: {n_compensated}/{len(results)}")
 
     avg_distance = np.mean([r["final_spatial_distance"] for r in results.values()])

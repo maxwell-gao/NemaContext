@@ -108,9 +108,13 @@ def main():
             n_cells = int(state.padmask.sum())
 
             if i % 4 == 0:
-                split_probs = events.split_probs[0, :n_cells].mean().item() if events else 0
+                split_probs = (
+                    events.split_probs[0, :n_cells].mean().item() if events else 0
+                )
                 del_probs = events.del_probs[0, :n_cells].mean().item() if events else 0
-                print(f"  Step {i:2d}: {n_cells} cells (split_p={split_probs:.3f}, del_p={del_probs:.3f})")
+                print(
+                    f"  Step {i:2d}: {n_cells} cells (split_p={split_probs:.3f}, del_p={del_probs:.3f})"
+                )
 
             if n_cells == 0:
                 print("  All cells deleted!")

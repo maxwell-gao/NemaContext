@@ -73,10 +73,12 @@ def main():
             if i % 5 == 0:
                 spatial_pos = state.states[0][0, :, -3:]
                 n_cells = int(state.padmask.sum())
-                print(f"  Step {i:2d}: {n_cells} cells, "
-                      f"center=({spatial_pos.mean(dim=0)[0]:.2f}, "
-                      f"{spatial_pos.mean(dim=0)[1]:.2f}, "
-                      f"{spatial_pos.mean(dim=0)[2]:.2f})")
+                print(
+                    f"  Step {i:2d}: {n_cells} cells, "
+                    f"center=({spatial_pos.mean(dim=0)[0]:.2f}, "
+                    f"{spatial_pos.mean(dim=0)[1]:.2f}, "
+                    f"{spatial_pos.mean(dim=0)[2]:.2f})"
+                )
 
     print()
     print("=" * 70)

@@ -28,11 +28,19 @@ from src.branching_flows.trimodal_dataset import TrimodalDataset
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Discover biological priors from trained model")
+    p = argparse.ArgumentParser(
+        description="Discover biological priors from trained model"
+    )
     p.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
-    p.add_argument("--h5ad_path", default="dataset/processed/nema_extended_large2025.h5ad")
-    p.add_argument("--output", default="discoveries", help="Output directory for discoveries")
-    p.add_argument("--n_samples", type=int, default=50, help="Number of samples to analyze")
+    p.add_argument(
+        "--h5ad_path", default="dataset/processed/nema_extended_large2025.h5ad"
+    )
+    p.add_argument(
+        "--output", default="discoveries", help="Output directory for discoveries"
+    )
+    p.add_argument(
+        "--n_samples", type=int, default=50, help="Number of samples to analyze"
+    )
     p.add_argument("--device", default="cuda")
     return p.parse_args()
 
@@ -92,9 +100,15 @@ def main():
         dataset, n_samples=args.n_samples
     )
 
-    print(f"Top genes predictive of X position (indices): {correlation_results['top_genes_for_x'][:10]}")
-    print(f"Top genes predictive of Y position (indices): {correlation_results['top_genes_for_y'][:10]}")
-    print(f"Top genes predictive of Z position (indices): {correlation_results['top_genes_for_z'][:10]}")
+    print(
+        f"Top genes predictive of X position (indices): {correlation_results['top_genes_for_x'][:10]}"
+    )
+    print(
+        f"Top genes predictive of Y position (indices): {correlation_results['top_genes_for_y'][:10]}"
+    )
+    print(
+        f"Top genes predictive of Z position (indices): {correlation_results['top_genes_for_z'][:10]}"
+    )
 
     print("\n" + "=" * 70)
     print("PROBE 2: Cell Type Discovery in Latent Space")
@@ -118,7 +132,9 @@ def main():
     print()
 
     explorer = LatentSpaceExplorer(model, device=device)
-    manifold_results = explorer.discover_trajectory_manifold(dataset, n_samples=args.n_samples)
+    manifold_results = explorer.discover_trajectory_manifold(
+        dataset, n_samples=args.n_samples
+    )
 
     print(f"PCA explained variance: {manifold_results['explained_variance']}")
     print(f"Total cells in manifold: {len(manifold_results['time_labels'])}")
@@ -135,7 +151,9 @@ def main():
         lineage_names = [name for name in sample.lineage_names[:20] if name]
         if lineage_names:
             lineage_probe = LineageProbe(model)
-            lineage_sim = lineage_probe.extract_lineage_attention_patterns(lineage_names)
+            lineage_sim = lineage_probe.extract_lineage_attention_patterns(
+                lineage_names
+            )
             print(f"Analyzed {len(lineage_names)} cells with lineage information")
             print(f"Lineage similarity matrix shape: {lineage_sim.shape}")
         else:
@@ -198,7 +216,9 @@ def main():
     print("=" * 70)
     print(f"\nAll discoveries saved to: {output_dir}/")
     print("\nKey Findings:")
-    print(f"  - Identified {len(cell_type_results['markers'])} cell clusters from latent space")
+    print(
+        f"  - Identified {len(cell_type_results['markers'])} cell clusters from latent space"
+    )
     print("  - Ranked genes by spatial predictive power")
     print("  - Mapped developmental trajectory manifold")
     print("\nThese are DATA-DRIVEN discoveries, not injected priors.")

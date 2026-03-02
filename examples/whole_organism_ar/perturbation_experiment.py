@@ -72,15 +72,22 @@ def perturb_lineage_deletion(
 
             # Control: normal prediction
             cont_states = torch.stack([e[0] for e in sample.elements])
-            disc_states = torch.tensor([e[1] for e in sample.elements], dtype=torch.long)
+            disc_states = torch.tensor(
+                [e[1] for e in sample.elements], dtype=torch.long
+            )
 
             # Create branching state
             n_total = len(cont_states)
             control_state = BranchingState(
-                states=(cont_states.unsqueeze(0).to(device), disc_states.unsqueeze(0).to(device)),
+                states=(
+                    cont_states.unsqueeze(0).to(device),
+                    disc_states.unsqueeze(0).to(device),
+                ),
                 groupings=torch.zeros(1, n_total, dtype=torch.long, device=device),
                 del_flags=torch.zeros(1, n_total, dtype=torch.bool, device=device),
-                ids=torch.arange(1, n_total + 1, dtype=torch.long, device=device).unsqueeze(0),
+                ids=torch.arange(
+                    1, n_total + 1, dtype=torch.long, device=device
+                ).unsqueeze(0),
                 padmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
                 flowmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
                 branchmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
@@ -94,7 +101,9 @@ def perturb_lineage_deletion(
                 states=(perturbed_cont, perturbed_disc),
                 groupings=torch.zeros(1, n_kept, dtype=torch.long, device=device),
                 del_flags=torch.zeros(1, n_kept, dtype=torch.bool, device=device),
-                ids=torch.arange(1, n_kept + 1, dtype=torch.long, device=device).unsqueeze(0),
+                ids=torch.arange(
+                    1, n_kept + 1, dtype=torch.long, device=device
+                ).unsqueeze(0),
                 padmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
                 flowmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
                 branchmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
@@ -124,20 +133,24 @@ def perturb_lineage_deletion(
                 control_spread = xc_c[0, :, -3:].std(dim=0).cpu().numpy()
                 perturbed_spread = xc_p[0, :, -3:].std(dim=0).cpu().numpy()
 
-                results["control"].append({
-                    "t": t_val,
-                    "n_cells": len(cont_states),
-                    "spatial_mean": control_spatial.tolist(),
-                    "spatial_spread": control_spread.tolist(),
-                })
+                results["control"].append(
+                    {
+                        "t": t_val,
+                        "n_cells": len(cont_states),
+                        "spatial_mean": control_spatial.tolist(),
+                        "spatial_spread": control_spread.tolist(),
+                    }
+                )
 
-                results["perturbed"].append({
-                    "t": t_val,
-                    "n_cells": n_kept,
-                    "spatial_mean": perturbed_spatial.tolist(),
-                    "spatial_spread": perturbed_spread.tolist(),
-                    "n_removed": n_removed,
-                })
+                results["perturbed"].append(
+                    {
+                        "t": t_val,
+                        "n_cells": n_kept,
+                        "spatial_mean": perturbed_spatial.tolist(),
+                        "spatial_spread": perturbed_spread.tolist(),
+                        "n_removed": n_removed,
+                    }
+                )
 
     return results
 
@@ -172,8 +185,16 @@ def perturb_founder_swap(
             cont_states = torch.stack([e[0] for e in sample.elements])
 
             # Find cells from each founder
-            f1_indices = [j for j, name in enumerate(lineage_names) if name and name.startswith(founder1)]
-            f2_indices = [j for j, name in enumerate(lineage_names) if name and name.startswith(founder2)]
+            f1_indices = [
+                j
+                for j, name in enumerate(lineage_names)
+                if name and name.startswith(founder1)
+            ]
+            f2_indices = [
+                j
+                for j, name in enumerate(lineage_names)
+                if name and name.startswith(founder2)
+            ]
 
             if len(f1_indices) < 2 or len(f2_indices) < 2:
                 continue
@@ -189,20 +210,30 @@ def perturb_founder_swap(
             # Create states
             n_total = len(cont_states)
             original_state = BranchingState(
-                states=(cont_states.unsqueeze(0).to(device), torch.zeros(1, n_total, dtype=torch.long, device=device)),
+                states=(
+                    cont_states.unsqueeze(0).to(device),
+                    torch.zeros(1, n_total, dtype=torch.long, device=device),
+                ),
                 groupings=torch.zeros(1, n_total, dtype=torch.long, device=device),
                 del_flags=torch.zeros(1, n_total, dtype=torch.bool, device=device),
-                ids=torch.arange(1, n_total + 1, dtype=torch.long, device=device).unsqueeze(0),
+                ids=torch.arange(
+                    1, n_total + 1, dtype=torch.long, device=device
+                ).unsqueeze(0),
                 padmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
                 flowmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
                 branchmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
             )
 
             swapped_state = BranchingState(
-                states=(swapped_states.unsqueeze(0).to(device), torch.zeros(1, n_total, dtype=torch.long, device=device)),
+                states=(
+                    swapped_states.unsqueeze(0).to(device),
+                    torch.zeros(1, n_total, dtype=torch.long, device=device),
+                ),
                 groupings=torch.zeros(1, n_total, dtype=torch.long, device=device),
                 del_flags=torch.zeros(1, n_total, dtype=torch.bool, device=device),
-                ids=torch.arange(1, n_total + 1, dtype=torch.long, device=device).unsqueeze(0),
+                ids=torch.arange(
+                    1, n_total + 1, dtype=torch.long, device=device
+                ).unsqueeze(0),
                 padmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
                 flowmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
                 branchmask=torch.ones(1, n_total, dtype=torch.bool, device=device),
@@ -217,13 +248,17 @@ def perturb_founder_swap(
             orig_f1_spatial = xc_orig[0, f1_indices, -3:].mean(dim=0).cpu().numpy()
             swap_f1_spatial = xc_swap[0, f1_indices, -3:].mean(dim=0).cpu().numpy()
 
-            results["swaps"].append({
-                "n_f1_cells": len(f1_indices),
-                "n_f2_cells": len(f2_indices),
-                "original_f1_spatial": orig_f1_spatial.tolist(),
-                "swapped_f1_spatial": swap_f1_spatial.tolist(),
-                "spatial_shift": np.linalg.norm(orig_f1_spatial - swap_f1_spatial).item(),
-            })
+            results["swaps"].append(
+                {
+                    "n_f1_cells": len(f1_indices),
+                    "n_f2_cells": len(f2_indices),
+                    "original_f1_spatial": orig_f1_spatial.tolist(),
+                    "swapped_f1_spatial": swap_f1_spatial.tolist(),
+                    "spatial_shift": np.linalg.norm(
+                        orig_f1_spatial - swap_f1_spatial
+                    ).item(),
+                }
+            )
 
     return results
 
@@ -252,11 +287,13 @@ def analyze_compensation(results: dict) -> dict:
                 p_spread = np.array(p["spatial_spread"])
                 spread_change = np.abs(c_spread - p_spread).mean()
 
-                analysis["evidence"].append({
-                    "time": c["t"],
-                    "spatial_shift": shift,
-                    "spread_change": spread_change,
-                })
+                analysis["evidence"].append(
+                    {
+                        "time": c["t"],
+                        "spatial_shift": shift,
+                        "spread_change": spread_change,
+                    }
+                )
 
         # Compensation = spatial center adjusts, spread changes
         avg_shift = np.mean([e["spatial_shift"] for e in analysis["evidence"]])
@@ -391,7 +428,9 @@ def main():
     print("=" * 70)
 
     if args.perturb_type == "lineage_deletion":
-        print(f"Removed {results['perturbed'][0]['n_removed']} cells from {args.target} lineage")
+        print(
+            f"Removed {results['perturbed'][0]['n_removed']} cells from {args.target} lineage"
+        )
         print(f"Remaining cells: {results['perturbed'][0]['n_cells']}")
         print()
         print(f"Average spatial shift: {analysis['avg_spatial_shift']:.4f}")

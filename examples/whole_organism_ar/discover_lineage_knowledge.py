@@ -114,9 +114,7 @@ def main():
 
     print(f"Sibling pairs analyzed: {sibling_results['n_sibling_pairs']}")
     print(f"  Mean similarity: {sibling_results['sibling_similarity_mean']:.4f}")
-    print(
-        f"  (+/- {sibling_results['sibling_similarity_std']:.4f})"
-    )
+    print(f"  (+/- {sibling_results['sibling_similarity_std']:.4f})")
     print()
     print(f"Cousin pairs: {sibling_results['n_cousin_pairs']}")
     print(f"  Mean similarity: {sibling_results['cousin_similarity_mean']:.4f}")
@@ -136,20 +134,24 @@ def main():
     print("=" * 70)
     print("PROBE 2: Founder Lineage Separation")
     print("=" * 70)
-    print("Discovering: Does the model separate founder lineages (AB, MS, E, C, D, P4)?")
+    print(
+        "Discovering: Does the model separate founder lineages (AB, MS, E, C, D, P4)?"
+    )
     print()
 
-    founder_results = probe.discover_founder_lineage_separation(
-        dataset, args.n_samples
-    )
+    founder_results = probe.discover_founder_lineage_separation(dataset, args.n_samples)
     results["founder_separation"] = founder_results
 
     print("Founder cell counts:")
     for founder, count in founder_results["founder_cell_counts"].items():
         print(f"  {founder}: {count} cells")
     print()
-    print(f"Within-founder similarity: {founder_results['within_founder_similarity']:.4f}")
-    print(f"Between-founder similarity: {founder_results['between_founder_similarity']:.4f}")
+    print(
+        f"Within-founder similarity: {founder_results['within_founder_similarity']:.4f}"
+    )
+    print(
+        f"Between-founder similarity: {founder_results['between_founder_similarity']:.4f}"
+    )
     print(
         f"Separation ratio: {founder_results['founder_separation_ratio']:.4f} "
         f"(>1 = separated)"
@@ -158,7 +160,9 @@ def main():
 
     if founder_results["learned_founder_structure"]:
         print("✓ MODEL LEARNED: Founder lineages are distinct from each other")
-        print("  This matches biology: AB=neurons, MS=pharynx/muscle, E=intestine, etc.")
+        print(
+            "  This matches biology: AB=neurons, MS=pharynx/muscle, E=intestine, etc."
+        )
     else:
         print("  Model did not strongly separate founder lineages")
     print()
@@ -180,7 +184,9 @@ def main():
 
     if depth_results["variance_increases_with_depth"]:
         print("✓ MODEL LEARNED: Cell states diverge with developmental progression")
-        print("  This matches biology: early cells are similar, late cells differentiate")
+        print(
+            "  This matches biology: early cells are similar, late cells differentiate"
+        )
     else:
         print("  Model shows mixed depth progression pattern")
     print()
@@ -234,11 +240,23 @@ def main():
     print(f"  Biological patterns learned: {learned_count}/3")
     print()
     print("  1. Sibling similarity: ", end="")
-    print("✓ LEARNED" if sibling_results["learned_sibling_bias"] else "  Not strongly learned")
+    print(
+        "✓ LEARNED"
+        if sibling_results["learned_sibling_bias"]
+        else "  Not strongly learned"
+    )
     print("  2. Founder separation: ", end="")
-    print("✓ LEARNED" if founder_results["learned_founder_structure"] else "  Not strongly learned")
+    print(
+        "✓ LEARNED"
+        if founder_results["learned_founder_structure"]
+        else "  Not strongly learned"
+    )
     print("  3. Depth progression: ", end="")
-    print("✓ LEARNED" if depth_results["variance_increases_with_depth"] else "  Not strongly learned")
+    print(
+        "✓ LEARNED"
+        if depth_results["variance_increases_with_depth"]
+        else "  Not strongly learned"
+    )
     print()
     print("-" * 70)
     print("These patterns emerged WITHOUT explicit lineage supervision.")

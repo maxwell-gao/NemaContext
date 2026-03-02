@@ -56,8 +56,8 @@ class SyntheticTrajectoryDataset(Dataset):
         # Add some smooth dynamics
         for t in range(1, self.trajectory_length):
             # Smooth evolution with momentum
-            genes[t] = genes[t-1] + torch.randn_like(genes[t]) * 0.01
-            spatial[t] = spatial[t-1] + torch.randn_like(spatial[t]) * 0.01
+            genes[t] = genes[t - 1] + torch.randn_like(genes[t]) * 0.01
+            spatial[t] = spatial[t - 1] + torch.randn_like(spatial[t]) * 0.01
 
         # Add global drift (emulating development)
         spatial[:, :, 2] += torch.linspace(0, 1, self.trajectory_length).view(-1, 1)
@@ -73,7 +73,9 @@ class SyntheticTrajectoryDataset(Dataset):
                     states=(continuous[t].unsqueeze(0), discrete[t].unsqueeze(0)),
                     groupings=torch.zeros(1, self.n_cells, dtype=torch.long),
                     del_flags=torch.zeros(1, self.n_cells, dtype=torch.bool),
-                    ids=torch.arange(1, self.n_cells + 1, dtype=torch.long).unsqueeze(0),
+                    ids=torch.arange(1, self.n_cells + 1, dtype=torch.long).unsqueeze(
+                        0
+                    ),
                     padmask=torch.ones(1, self.n_cells, dtype=torch.bool),
                     flowmask=torch.ones(1, self.n_cells, dtype=torch.bool),
                     branchmask=torch.ones(1, self.n_cells, dtype=torch.bool),
@@ -184,10 +186,16 @@ def main():
     val_dataset = SyntheticTrajectoryDataset(n_trajectories=20)
 
     train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_states
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_states,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_states
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_states,
     )
     print(f"  Train: {len(train_dataset)} trajectories")
     print(f"  Val: {len(val_dataset)} trajectories")
