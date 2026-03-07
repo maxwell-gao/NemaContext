@@ -40,7 +40,12 @@ uv run python examples/whole_organism_ar/train_autoregressive_full.py \
   --trajectory_file dataset/processed/embryo_trajectory.json \
   --epochs 100
 
-# 3) Evaluate rollout behavior
+# 3) Train the multi-cell gene-context baseline
+uv run python examples/whole_organism_ar/train_gene_context.py \
+  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
+  --epochs 20
+
+# 4) Evaluate rollout behavior
 uv run python examples/whole_organism_ar/evaluate_rollout.py \
   --trajectory_file dataset/processed/embryo_trajectory.json \
   --checkpoint checkpoints_autoregressive_full/best.pt \

@@ -72,6 +72,15 @@ Definition of done:
 - the baseline trains on real transcriptome data,
 - evaluation reports future-state prediction quality and event calibration.
 
+Status update:
+
+- `src/data/gene_context_dataset.py` now builds pseudo-embryo multi-cell windows from
+  `nema_extended_large2025.h5ad`,
+- `src/branching_flows/gene_context.py` now provides the active baseline model,
+- `examples/whole_organism_ar/train_gene_context.py` and
+  `examples/whole_organism_ar/evaluate_gene_context.py` now provide the first
+  training/evaluation loop for this phase.
+
 ## Phase 3: Context Calibration
 
 Objective: verify that the model uses multi-cell context rather than collapsing to independent-cell averages.

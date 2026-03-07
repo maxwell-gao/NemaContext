@@ -3,6 +3,7 @@
 This directory is organized by project status:
 
 - `examples/whole_organism_ar/`: active scripts for the whole-organism autoregressive program.
+  This now includes the main rollout path and the active multi-cell gene-context baseline.
 - `examples/legacy/`: older scripts retained for reference.
 
 If you are starting new work, use `examples/whole_organism_ar/`.
