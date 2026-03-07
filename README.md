@@ -2,20 +2,21 @@
 
 NemaContext is focused on one goal:
 
-**Build a whole-organism developmental autoregressive model, updated in a diffusion-LLM style.**
+**Learn developmental context from real transcriptomic data before promoting the model to whole-embryo generative rollout.**
 
 ## Current Direction
 
-- Context unit: **entire embryo state at each timestep** (not isolated founder trajectories).
-- Dynamics: **autoregressive next-state updates** with dynamic division/deletion events.
-- Training upgrade: **diffusion-style denoising objective** integrated into AR learning.
+- Active training task: **anchor-centered multi-cell gene-context prediction** on real transcriptome windows.
+- Immediate question: **does structured multi-cell context improve short-horizon developmental prediction?**
+- Near-term priority: **repair split/delete supervision before pushing long-horizon generation**.
+- Later direction: **use Branching Flows-style variable-length generation only after context and event supervision are validated**.
 
 ## Repository Layout
 
 - `src/branching_flows/`: core modeling code (`autoregressive_model.py`, `dynamic_cell_manager.py`, `fusion.py`)
 - `src/branching_flows/legacy/`: archived trimodal, lineage-biased, and crossmodal modules
 - `src/legacy_model/`: archived graph and multimodal utilities used only by legacy workflows
-- `src/data/`: whole-embryo trajectory extraction and data pipeline
+- `src/data/`: transcriptome window datasets, trajectory extraction, and data pipeline
 - `examples/whole_organism_ar/`: active scripts
 - `examples/legacy/`: previous-generation experiments
 - `docs/`: canonical architecture and roadmap
@@ -29,30 +30,32 @@ See:
 ## Quick Start
 
 ```bash
-# 1) Extract whole-embryo trajectory
-uv run python src/data/trajectory_extractor.py \
-  --output dataset/processed/embryo_trajectory.json \
-  --max_time 400 \
-  --time_resolution 10
-
-# 2) Train whole-organism AR model
-uv run python examples/whole_organism_ar/train_autoregressive_full.py \
-  --trajectory_file dataset/processed/embryo_trajectory.json \
-  --epochs 100
-
-# 3) Train the multi-cell gene-context baseline
+# 1) Train the active multi-cell gene-context baseline
 uv run python examples/whole_organism_ar/train_gene_context.py \
   --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
-  --epochs 20
+  --sampling_strategy spatial_anchor \
+  --context_size 64 \
+  --global_context_size 16 \
+  --epochs 10
 
-# 4) Evaluate rollout behavior
-uv run python examples/whole_organism_ar/evaluate_rollout.py \
-  --trajectory_file dataset/processed/embryo_trajectory.json \
-  --checkpoint checkpoints_autoregressive_full/best.pt \
-  --output result/autoregressive_results/evaluation_rollout.json
+# 2) Evaluate whether context is actually used
+uv run python examples/whole_organism_ar/evaluate_gene_context.py \
+  --checkpoint checkpoints_gene_context/best.pt \
+  --context_ablation full \
+  --output result/gene_context/evaluation.json
+
+# 3) Compare with anchor-only evaluation
+uv run python examples/whole_organism_ar/evaluate_gene_context.py \
+  --checkpoint checkpoints_gene_context/best.pt \
+  --context_ablation anchor_only \
+  --output result/gene_context/evaluation_anchor_only.json
 
 Founder-specific perturbation, visualization, and demo scripts are retained under
 `examples/legacy/whole_organism_ar/`, not in the active path.
 Synthetic and per-founder trajectory generation is archived under
 `src/data/legacy/trajectory_extractor.py`.
 ```
+
+Whole-organism autoregressive rollout remains in the repository as downstream
+infrastructure, but it is not the primary scientific path until event
+supervision becomes stronger.

@@ -20,6 +20,11 @@ Relevant code:
 The active baseline is not a spatial simulator and not a lineage-conditioned
 classifier.
 
+It is also not the same thing as the later `Branching Flows` generative goal.
+In the current roadmap, this baseline comes first. It is the stage where we
+validate that developmental context can be learned from real transcriptomic
+windows before trying to build a variable-length generator on top.
+
 It is a developmental transition model over real single-cell transcriptomic
 snapshots:
 
@@ -79,6 +84,25 @@ Biologically, this represents the surrounding developmental population:
 This is important because development is not an independent-cell process.
 Cells change state in the presence of other cells undergoing coordinated
 programs.
+
+### `structured anchor-centered context`
+
+The active input format is now more specific than a generic random time window.
+
+In the strongest current setting, one sample contains:
+
+- one anchor cell whose future is the main supervised query,
+- a local neighborhood around that anchor,
+- a smaller set of global background cells from the same developmental window.
+
+Biologically, this means the model is asked:
+
+- what does this focal cell do next,
+- given its nearby developmental neighborhood,
+- while also seeing a coarse summary of the broader embryo state.
+
+This is the current best approximation to "context" without injecting a
+lineage tree as model input.
 
 ### What Is Not Input
 
@@ -214,7 +238,7 @@ targets should be interpreted.
 The active baseline combines assumptions that are uncommon in combination:
 
 - real transcriptome is the primary state,
-- one input sample is a **multi-cell developmental context window**,
+- one input sample is a **structured multi-cell developmental context window**,
 - lineage is excluded from model inputs,
 - time is allowed as a condition,
 - output includes both future gene-state change and event propensity.
@@ -278,6 +302,34 @@ Biologically, this is plausible:
 - developmental state is constrained by the broader composition of the embryo,
 - context helps distinguish true transition from spurious uncertainty.
 
+## Current Context-Usage Result
+
+We also ran a more targeted context-usage check using the structured
+anchor-centered input format.
+
+Setup:
+
+- `context_size = 64`
+- compare `global_context_size = 0` vs `16`
+- evaluate each checkpoint in two modes:
+  - `full`: full structured context available
+  - `anchor_only`: only the anchor token remains visible at evaluation time
+
+Observed result:
+
+- both models perform better in `full` than in `anchor_only`,
+- adding global background context gives a small additional gain,
+- the gain appears mainly in the event-loss terms rather than in the gene MSE.
+
+Interpretation:
+
+- the model is not merely using anchor-local information,
+- structured context is actually contributing,
+- global background context is weakly but consistently useful,
+- event supervision is still too weak for strong precision/recall claims, so
+  the current signal is best interpreted as improved calibration rather than
+  solved event prediction.
+
 ## Current Limits of Biological Interpretation
 
 This baseline is meaningful, but it is not yet a full developmental model.
@@ -287,6 +339,8 @@ Important limitations:
 - future pairing is still weak and local,
 - split/delete labels are approximate,
 - `delete` is not yet a clean death label,
+- many validation subsets have too few positive split/delete events for strong
+  event metrics,
 - no explicit cell-cell signaling mechanism is modeled,
 - no real whole-embryo rollout exists yet for this transcriptomic path.
 

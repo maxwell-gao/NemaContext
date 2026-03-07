@@ -33,6 +33,11 @@ def parse_args():
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--output", default="result/gene_context/evaluation.json")
+    p.add_argument(
+        "--context_ablation",
+        choices=["full", "anchor_only"],
+        default="full",
+    )
     return p.parse_args()
 
 
@@ -45,11 +50,18 @@ def main():
         h5ad_path=args.h5ad_path,
         n_hvg=cfg["n_hvg"],
         context_size=cfg["context_size"],
+        global_context_size=cfg.get("global_context_size"),
         dt_minutes=cfg["dt_minutes"],
         time_window_minutes=cfg["time_window_minutes"],
-        samples_per_pair=max(1, cfg["samples_per_pair"] // 2),
+        samples_per_pair=cfg.get("val_samples_per_pair") or max(
+            1, cfg["samples_per_pair"] // 2
+        ),
         min_cells_per_window=cfg["min_cells_per_window"],
+        sampling_strategy=cfg.get("sampling_strategy", "random_window"),
+        min_spatial_cells_per_window=cfg.get("min_spatial_cells_per_window", 8),
+        spatial_neighbor_pool_size=cfg.get("spatial_neighbor_pool_size"),
         split=args.split,
+        val_fraction=cfg.get("val_fraction", 0.2),
         random_seed=cfg["seed"] + 2000,
     )
     loader = DataLoader(
@@ -77,12 +89,19 @@ def main():
     with torch.no_grad():
         for batch in loader:
             batch = {k: v.to(args.device) for k, v in batch.items()}
+            model_valid_mask = batch["valid_mask"]
+            if args.context_ablation == "anchor_only":
+                model_valid_mask = (
+                    batch.get("anchor_mask", batch["valid_mask"]) & batch["valid_mask"]
+                )
             output = model(
                 genes=batch["genes"],
                 time=batch["time"],
                 future_time=batch["future_time"],
                 token_times=batch["token_times"],
-                valid_mask=batch["valid_mask"],
+                valid_mask=model_valid_mask,
+                context_role=batch.get("context_role"),
+                anchor_distance_bucket=batch.get("anchor_distance_bucket"),
             )
             _, metrics = compute_metrics(
                 output,
@@ -94,11 +113,13 @@ def main():
                 totals[key] = totals.get(key, 0.0) + value
             n_batches += 1
 
-            valid = batch["valid_mask"]
-            split_pred = torch.sigmoid(output.split_logits[valid]) >= 0.5
-            split_true = batch["split_target"][valid] >= 0.5
-            del_pred = torch.sigmoid(output.del_logits[valid]) >= 0.5
-            del_true = batch["del_target"][valid] >= 0.5
+            supervision_mask = (
+                batch.get("anchor_mask", batch["valid_mask"]) & batch["valid_mask"]
+            )
+            split_pred = torch.sigmoid(output.split_logits[supervision_mask]) >= 0.5
+            split_true = batch["split_target"][supervision_mask] >= 0.5
+            del_pred = torch.sigmoid(output.del_logits[supervision_mask]) >= 0.5
+            del_true = batch["del_target"][supervision_mask] >= 0.5
 
             split_tp += float((split_pred & split_true).sum().item())
             split_fp += float((split_pred & ~split_true).sum().item())
@@ -114,6 +135,7 @@ def main():
     results["del_recall"] = del_tp / max(1.0, del_tp + del_fn)
     results["split"] = args.split
     results["checkpoint"] = args.checkpoint
+    results["context_ablation"] = args.context_ablation
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

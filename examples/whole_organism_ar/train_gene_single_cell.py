@@ -32,10 +32,20 @@ def parse_args():
     )
     p.add_argument("--n_hvg", type=int, default=256)
     p.add_argument("--context_size", type=int, default=64)
+    p.add_argument("--global_context_size", type=int, default=None)
     p.add_argument("--dt_minutes", type=float, default=20.0)
     p.add_argument("--time_window_minutes", type=float, default=10.0)
     p.add_argument("--samples_per_pair", type=int, default=4)
+    p.add_argument("--val_samples_per_pair", type=int, default=None)
     p.add_argument("--min_cells_per_window", type=int, default=32)
+    p.add_argument("--val_fraction", type=float, default=0.2)
+    p.add_argument(
+        "--sampling_strategy",
+        choices=["random_window", "spatial_neighbors", "spatial_anchor"],
+        default="random_window",
+    )
+    p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
+    p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -57,22 +67,32 @@ def main():
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
+        global_context_size=args.global_context_size,
         dt_minutes=args.dt_minutes,
         time_window_minutes=args.time_window_minutes,
         samples_per_pair=args.samples_per_pair,
         min_cells_per_window=args.min_cells_per_window,
+        sampling_strategy=args.sampling_strategy,
+        min_spatial_cells_per_window=args.min_spatial_cells_per_window,
+        spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         split="train",
+        val_fraction=args.val_fraction,
         random_seed=args.seed,
     )
     val_ds = GeneContextDataset(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
+        global_context_size=args.global_context_size,
         dt_minutes=args.dt_minutes,
         time_window_minutes=args.time_window_minutes,
-        samples_per_pair=max(1, args.samples_per_pair // 2),
+        samples_per_pair=args.val_samples_per_pair or max(1, args.samples_per_pair // 2),
         min_cells_per_window=args.min_cells_per_window,
+        sampling_strategy=args.sampling_strategy,
+        min_spatial_cells_per_window=args.min_spatial_cells_per_window,
+        spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         split="val",
+        val_fraction=args.val_fraction,
         random_seed=args.seed + 1000,
     )
 

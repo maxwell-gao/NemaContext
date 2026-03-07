@@ -23,7 +23,8 @@ from src.data.gene_context_dataset import (  # noqa: E402
 
 
 def compute_metrics(output, batch, split_weight: float, del_weight: float):
-    match_mask = batch["match_mask"] & batch["valid_mask"]
+    supervision_mask = batch.get("anchor_mask", batch["valid_mask"]) & batch["valid_mask"]
+    match_mask = batch["match_mask"] & supervision_mask
     if match_mask.any():
         current = batch["genes"][match_mask]
         target = batch["target_genes"][match_mask]
@@ -32,7 +33,7 @@ def compute_metrics(output, batch, split_weight: float, del_weight: float):
     else:
         gene_loss = torch.tensor(0.0, device=batch["genes"].device)
 
-    split_mask = batch["valid_mask"]
+    split_mask = supervision_mask
     split_targets = batch["split_target"][split_mask]
     del_targets = batch["del_target"][split_mask]
     split_logits = output.split_logits[split_mask]
@@ -57,7 +58,11 @@ def compute_metrics(output, batch, split_weight: float, del_weight: float):
         "gene": gene_loss.item(),
         "split": split_loss.item(),
         "del": del_loss.item(),
-        "match_rate": match_mask.float().mean().item(),
+        "match_rate": (
+            (match_mask.float().sum() / supervision_mask.float().sum()).item()
+            if supervision_mask.any()
+            else 0.0
+        ),
         "split_rate": split_targets.mean().item() if split_targets.numel() else 0.0,
         "del_rate": del_targets.mean().item() if del_targets.numel() else 0.0,
     }
@@ -77,6 +82,8 @@ def run_epoch(model, loader, optimizer, device, split_weight: float, del_weight:
             future_time=batch["future_time"],
             token_times=batch["token_times"],
             valid_mask=batch["valid_mask"],
+            context_role=batch.get("context_role"),
+            anchor_distance_bucket=batch.get("anchor_distance_bucket"),
         )
         loss, metrics = compute_metrics(output, batch, split_weight, del_weight)
         if train:
@@ -99,10 +106,20 @@ def parse_args():
     )
     p.add_argument("--n_hvg", type=int, default=256)
     p.add_argument("--context_size", type=int, default=64)
+    p.add_argument("--global_context_size", type=int, default=None)
     p.add_argument("--dt_minutes", type=float, default=20.0)
     p.add_argument("--time_window_minutes", type=float, default=10.0)
     p.add_argument("--samples_per_pair", type=int, default=4)
+    p.add_argument("--val_samples_per_pair", type=int, default=None)
     p.add_argument("--min_cells_per_window", type=int, default=32)
+    p.add_argument("--val_fraction", type=float, default=0.2)
+    p.add_argument(
+        "--sampling_strategy",
+        choices=["random_window", "spatial_neighbors", "spatial_anchor"],
+        default="spatial_anchor",
+    )
+    p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
+    p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -126,22 +143,32 @@ def main():
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
+        global_context_size=args.global_context_size,
         dt_minutes=args.dt_minutes,
         time_window_minutes=args.time_window_minutes,
         samples_per_pair=args.samples_per_pair,
         min_cells_per_window=args.min_cells_per_window,
+        sampling_strategy=args.sampling_strategy,
+        min_spatial_cells_per_window=args.min_spatial_cells_per_window,
+        spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         split="train",
+        val_fraction=args.val_fraction,
         random_seed=args.seed,
     )
     val_ds = GeneContextDataset(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
+        global_context_size=args.global_context_size,
         dt_minutes=args.dt_minutes,
         time_window_minutes=args.time_window_minutes,
-        samples_per_pair=max(1, args.samples_per_pair // 2),
+        samples_per_pair=args.val_samples_per_pair or max(1, args.samples_per_pair // 2),
         min_cells_per_window=args.min_cells_per_window,
+        sampling_strategy=args.sampling_strategy,
+        min_spatial_cells_per_window=args.min_spatial_cells_per_window,
+        spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         split="val",
+        val_fraction=args.val_fraction,
         random_seed=args.seed + 1000,
     )
 

@@ -41,6 +41,8 @@ class GeneContextModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
+        self.context_role_emb = nn.Embedding(4, d_model)
+        self.anchor_distance_emb = nn.Embedding(16, d_model)
         self.blocks = nn.ModuleList(
             [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_layers)]
         )
@@ -76,12 +78,20 @@ class GeneContextModel(nn.Module):
         future_time: torch.Tensor,
         token_times: torch.Tensor,
         valid_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        anchor_distance_bucket: torch.Tensor | None = None,
     ) -> GeneContextOutput:
         x = self.gene_proj(genes)
         global_time = torch.stack([time, future_time - time], dim=-1)
         time_emb = self.time_proj(global_time).unsqueeze(1)
         x = x + time_emb
         x = x + token_times.unsqueeze(-1)
+        if context_role is not None:
+            x = x + self.context_role_emb(context_role.clamp(min=0, max=3))
+        if anchor_distance_bucket is not None:
+            x = x + self.anchor_distance_emb(
+                anchor_distance_bucket.clamp(min=0, max=15)
+            )
 
         for block in self.blocks:
             x = block(x, valid_mask)
@@ -144,6 +154,8 @@ class SingleCellGeneTimeModel(nn.Module):
         future_time: torch.Tensor,
         token_times: torch.Tensor,
         valid_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        anchor_distance_bucket: torch.Tensor | None = None,
     ) -> GeneContextOutput:
         global_time = time.unsqueeze(1).expand_as(token_times)
         delta_time = (future_time - time).unsqueeze(1).expand_as(token_times)

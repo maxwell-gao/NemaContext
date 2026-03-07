@@ -1,163 +1,196 @@
-# Roadmap: Whole-Organism Developmental Context
+# Roadmap: Developmental Context Before Generative Rollout
 
 ## Goal
 
-Build a whole-organism developmental model that learns biological context from data rather than from injected lineage or spatial priors.
+Build a developmental model that learns embryo context from real data and only
+later promotes that context model into a variable-length generator.
 
-The target system should:
+The ordering matters:
 
-1. use real developmental observations as the primary training signal,
-2. treat gene state as the main developmental state,
-3. model multi-cell context at each developmental time window,
-4. support split/delete events without hand-coded lineage structure,
-5. eventually produce stable whole-embryo rollouts.
+1. first prove the model uses multi-cell context,
+2. then make split/delete supervision credible,
+3. only then build whole-embryo generative dynamics on top.
 
-## Current Status
+This is a tighter version of the original roadmap. The main correction is that
+`Branching Flows` is not the current training core. It is the future generative
+shell for a context model that first has to be validated on real transcriptomic
+supervision.
 
-What is already in place:
+## Current Position
 
-- whole-embryo trajectory extraction exists,
-- autoregressive rollout infrastructure exists,
-- split/delete event heads exist,
-- real WormGUIDES spatial trajectories can be extracted,
-- transcriptome-centered multimodal integration exists through the AnnData builder,
-- rollout evaluation scripts exist.
+What is already established:
 
-What has been falsified or downgraded:
+- real transcriptome windows can be sampled from `nema_extended_large2025.h5ad`,
+- the active baseline predicts short-horizon gene-state change from multi-cell
+  transcriptomic context,
+- anchor-centered structured context now exists,
+- the model uses context rather than only anchor-local signal,
+- adding global background context gives a small but real gain on validation
+  loss,
+- autoregressive rollout code and BranchingFlows-derived dynamic machinery
+  remain available as downstream infrastructure.
 
-- synthetic gene or synthetic spatial patterns are not acceptable as the main path,
-- spatial-only modeling is an engineering baseline, not the biological main model,
-- explicit lineage embeddings as model inputs are treated as injected prior,
-- inference-time top-k event rules are archived diagnostic heuristics, not part of the active path.
+What remains weak:
 
-## Phase 1: Data Grounding
+- split/delete supervision is still sparse and weakly constructed,
+- event precision/recall are not yet informative in many validation slices,
+- whole-embryo rollout would currently rest on labels that are not strong
+  enough,
+- Branching Flows-style generation is therefore ahead of the supervision.
 
-Objective: ensure the main training path is based on real data only.
+## Phase 1: Context Validation
 
-Tasks:
+Objective: prove that multi-cell context is genuinely used and improves
+prediction beyond single-cell conditioning.
 
-- keep real WormGUIDES extraction available for engineering diagnostics,
-- make `Large2025` the primary source for developmental gene state,
-- use lineage metadata only for sample construction or evaluation, not as model input,
-- keep synthetic and per-founder extraction isolated under legacy code,
-- document which outputs are real, pseudo-assembled, or synthetic.
-
-Definition of done:
-
-- the active training path does not depend on synthetic gene features,
-- the active training path does not depend on synthetic spatial trajectories,
-- every dataset artifact has an explicit provenance label.
-
-## Phase 2: Gene-Context Baseline
-
-Objective: build the first biologically meaningful baseline.
-
-Model requirements:
-
-- primary token state is gene expression or a learned gene-state projection,
-- each sample contains multiple cells from the same developmental time window,
-- time is allowed as conditioning input,
-- lineage is not provided as an embedding or architectural bias,
-- space is optional auxiliary context, not the primary state.
-
-Training task:
-
-- input: multi-cell gene context at time window `t`,
-- output: future gene-state transition and split/delete propensity for each cell,
-- target construction may use lineage only as a weak pairing filter for future candidates.
-
-Definition of done:
-
-- a training script exists for multi-cell gene-context learning,
-- the baseline trains on real transcriptome data,
-- evaluation reports future-state prediction quality and event calibration.
-
-Status update:
-
-- `src/data/gene_context_dataset.py` now builds pseudo-embryo multi-cell windows from
-  `nema_extended_large2025.h5ad`,
-- `src/branching_flows/gene_context.py` now provides the active baseline model,
-- `examples/whole_organism_ar/train_gene_context.py` and
-  `examples/whole_organism_ar/evaluate_gene_context.py` now provide the first
-  training/evaluation loop for this phase.
-
-## Phase 3: Context Calibration
-
-Objective: verify that the model uses multi-cell context rather than collapsing to independent-cell averages.
+This is the active main path.
 
 Tasks:
 
-- measure cross-cell influence within the same time window,
-- compare single-cell and multi-cell baselines,
-- evaluate split/delete calibration separately from continuous state prediction,
-- test whether biologically coherent structure emerges in latent space without lineage inputs.
+- keep transcriptome as the primary developmental state,
+- use anchor-centered context windows as the default input format,
+- compare local-only and local-plus-global context construction,
+- compare single-cell and multi-cell baselines under matched data construction,
+- run context ablations such as `full` vs `anchor_only`,
+- run perturbation tests such as token dropout, neighborhood shuffling, and
+  context corruption.
 
 Definition of done:
 
-- multi-cell context outperforms a single-cell baseline,
-- split/delete heads are calibrated on held-out data,
-- latent analyses show emergent developmental structure without explicit lineage injection.
+- multi-cell context consistently outperforms single-cell controls,
+- `full` context outperforms `anchor_only` across repeated runs,
+- larger or more structured context improves validation loss in a stable way,
+- the model's gains can be attributed to context access rather than only to a
+  larger backbone.
 
-## Phase 4: Whole-Embryo Assembly
+Status:
 
-Objective: move from local context prediction to embryo-level state evolution.
+- `src/data/gene_context_dataset.py` supports structured anchor-centered
+  context,
+- `src/branching_flows/gene_context.py` uses plain bidirectional attention with
+  lightweight context-role and distance labels,
+- current experiments show that `full` context beats `anchor_only`,
+- current experiments also show a small gain from adding global background
+  tokens.
+
+## Phase 2: Supervision Repair
+
+Objective: make event supervision strong enough that dynamic modeling is worth
+trusting.
+
+This phase is higher priority than rollout or full generative training.
 
 Tasks:
 
-- construct pseudo-embryo context slices from real transcriptome time windows,
-- define rollout targets that do not smuggle in lineage structure,
-- integrate dynamic cell management with the gene-context model,
-- report embryo-level growth, event balance, and state consistency.
+- measure true split/delete positive coverage under the current windowing
+  scheme,
+- separate unmatched cells from genuine disappearance as much as the data allow,
+- improve future matching so that event targets are less dominated by weak
+  fallback matches,
+- construct evaluation subsets enriched for meaningful split/delete events,
+- report event metrics on subsets where positive labels are actually present.
 
 Definition of done:
 
-- the model can evolve a multi-cell embryo context across multiple steps,
-- rollout does not rely on deterministic top-k event rules,
-- embryo-level metrics are stable enough for comparison experiments.
+- split/delete labels have enough support to produce meaningful held-out event
+  metrics,
+- event losses correlate with actual detection quality rather than only class
+  imbalance,
+- event supervision is no longer the bottleneck for dynamic modeling.
+
+Why this phase exists:
+
+- current context experiments are scientifically useful,
+- current event labels are not yet strong enough to justify ambitious rollout
+  claims,
+- without this repair, generative dynamics would be technically runnable but
+  scientifically under-grounded.
+
+## Phase 3: Context-to-Dynamics Transition
+
+Objective: turn the validated context predictor into a stable short-horizon
+  dynamic model.
+
+Tasks:
+
+- keep the context encoder fixed in spirit: bidirectional attention over
+  structured multi-cell windows,
+- predict short-horizon future state under repeated application,
+- add dynamic event handling only after event supervision is credible,
+- evaluate multi-step degradation, cell-count drift, and event-balance drift,
+- avoid heuristic inference rules as the primary way to make rollout appear
+  stable.
+
+Definition of done:
+
+- repeated short-horizon rollout is measurably more stable than naive
+  independent-cell prediction,
+- event balance remains plausible over multiple steps,
+- embryo-level context does not collapse immediately under autoregressive use.
+
+## Phase 4: Branching Flows Integration
+
+Objective: use Branching Flows as the variable-length generative framework
+after the context model and event supervision are both validated.
+
+Role of Branching Flows in this roadmap:
+
+- not the current primary learner,
+- yes as the long-horizon generative mechanism,
+- yes as the formal language for split/delete/base-process coupling,
+- no as the first thing to optimize before supervision is ready.
+
+Tasks:
+
+- define a biologically defensible `Z` construction for developmental data,
+- connect the base process to the learned transcriptomic context predictor,
+- move split/delete from weak auxiliary heads toward true generative events,
+- compare plain autoregressive rollout to Branching Flows-style rollout only
+  after both are trained on credible supervision.
+
+Definition of done:
+
+- Branching Flows integration improves variable-cell-count generation or
+  long-horizon stability,
+- gains hold on real-data evaluation rather than synthetic demonstrations,
+- the method is still consistent with `Discover, Don't Inject`.
 
 ## Phase 5: Spatial Reintegration
 
-Objective: add spatial information back in as auxiliary signal once the gene-context path is stable.
+Objective: reintroduce spatial information as auxiliary context once the
+transcriptomic context path is stable.
 
 Tasks:
 
-- use spatial coordinates as optional context or readout,
-- test whether gene-state latents predict spatial organization,
-- avoid promoting spatial dynamics to the main developmental driver,
-- compare gene-only and gene-plus-spatial variants.
+- use space as optional context, readout, or evaluation axis,
+- test whether transcriptomic latents recover spatial organization,
+- compare local transcriptomic context alone versus transcriptomic context plus
+  spatial support,
+- avoid making spatial coordinates the main developmental state.
 
 Definition of done:
 
-- adding spatial information improves prediction or interpretability,
-- the main developmental signal remains gene-context driven,
-- the model still respects the `Discover, Don't Inject` constraint.
-
-## Phase 6: Diffusion-Style Upgrade
-
-Objective: reintroduce diffusion-style training only after the non-synthetic gene-context baseline is working.
-
-Tasks:
-
-- apply denoising objectives to the validated gene-context path,
-- compare plain AR and diffusion-style training on the same real-data task,
-- retain rollout compatibility without inference-time heuristics.
-
-Definition of done:
-
-- diffusion-style training improves robustness or long-horizon stability,
-- gains are demonstrated on real-data evaluation, not synthetic artifacts.
+- spatial information improves prediction, calibration, or interpretability,
+- transcriptomic context remains the main driver,
+- no explicit anatomical prior is required.
 
 ## Immediate Next Steps
 
-1. Build a multi-cell gene-context dataset from real transcriptome data.
-2. Implement a baseline model with gene state plus time, but no lineage embedding input.
-3. Define evaluation for future gene-state prediction, split calibration, and delete calibration.
-4. Keep spatial rollout code only as an engineering diagnostic branch.
+1. Promote `spatial_anchor` structured context to the default experimental
+   interface.
+2. Run a clean context-usage matrix:
+   `context_size` sweep, `global_context_size` sweep, `full` vs `anchor_only`,
+   and single-cell vs multi-cell controls.
+3. Quantify split/delete positive coverage and identify where event supervision
+   is failing.
+4. Build event-enriched validation subsets before claiming dynamic progress.
+5. Delay any major Branching Flows training push until Phase 2 is in better
+   shape.
 
 ## Non-Goals
 
-- no active training path built on synthetic gene features,
-- no active training path built on synthetic spatial patterns,
-- no lineage embedding injected as model input,
-- no architectural constraints that encode the developmental tree,
-- no success criteria based only on spatial rollout aesthetics.
+- no active claims based only on visually plausible rollout,
+- no promotion of Branching Flows to the main path before supervision is ready,
+- no injected lineage embeddings as model input,
+- no architectural shortcuts that encode the developmental tree directly,
+- no regression to synthetic data as the main evidence source.

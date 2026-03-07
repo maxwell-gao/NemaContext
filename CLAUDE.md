@@ -133,9 +133,28 @@ uv run python examples/evaluate_modality_completion.py \
 
 ## Architecture Overview
 
+### Active Path (`src/branching_flows/`)
+
+The current main research path is the transcriptomic `gene-context` baseline:
+
+- structured anchor-centered multi-cell context windows,
+- short-horizon gene-state transition prediction,
+- auxiliary split/delete heads used cautiously because event supervision is
+  still weak,
+- context validation first, generative rollout later.
+
+Key active classes:
+
+- `GeneContextModel` - bidirectional attention model over structured
+  transcriptomic context windows
+- `SingleCellGeneTimeModel` - control baseline without multi-cell context
+- `GeneContextDataset` - transcriptome time-window dataset with anchor, local,
+  and global background context construction
+
 ### BranchingFlows Framework (`src/branching_flows/`)
 
-The core generative modeling framework extends flow matching to variable-length sequences:
+The BranchingFlows-derived stack remains in the repository as downstream
+infrastructure for later generative phases:
 
 - **Core abstraction**: `BranchingState` - batched state container with masks for padding (`padmask`), flow evolution (`flowmask`), and branching/deletion permissions (`branchmask`)
 - **Flow process**: `CoalescentFlow` wraps base processes (OUFlow, DiscreteInterpolatingFlow) with split/deletion handling

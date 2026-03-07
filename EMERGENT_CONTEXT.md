@@ -1,5 +1,18 @@
 # Emergent Context Implementation
 
+## Status
+
+This document describes a legacy or exploratory direction, not the current main
+research path.
+
+The current roadmap prioritizes:
+
+1. transcriptomic context validation,
+2. supervision repair for split/delete targets,
+3. only then more ambitious generative dynamics.
+
+Read this file as historical or optional reference material.
+
 This document describes the implementation of the Emergent Context architecture for NemaContext.
 
 ## Overview
