@@ -19,7 +19,7 @@ The key insight is that **spatial context matters more than absolute position**.
 Parses WormGUIDES nuclei 4D position data (360 timepoints covering embryonic development).
 
 ```python
-from src.model import SpatialDataParser, compute_cell_distances
+from src.legacy_model import SpatialDataParser, compute_cell_distances
 
 # Initialize parser
 parser = SpatialDataParser("dataset/raw/wormguides/nuclei_files")
@@ -45,7 +45,7 @@ tensor, timepoints, cell_names = parser.build_4d_tensor()
 Builds graphs where nodes are cells and edges represent spatial proximity.
 
 ```python
-from src.model import SpatialDataParser, SpatialGraphBuilder, graph_to_pyg_data
+from src.legacy_model import SpatialDataParser, SpatialGraphBuilder, graph_to_pyg_data
 
 parser = SpatialDataParser("dataset/raw/wormguides/nuclei_files")
 builder = SpatialGraphBuilder(parser)
@@ -81,7 +81,7 @@ pyg_data = graph_to_pyg_data(graph)
 Integrates transcriptome, spatial, and lineage data into a unified dataset.
 
 ```python
-from src.model import MultimodalDataset, LineageTree
+from src.legacy_model import MultimodalDataset, LineageTree
 
 # Create dataset
 dataset = MultimodalDataset("dataset/raw")
@@ -152,7 +152,7 @@ The `graph_to_pyg_data()` function returns data in PyG format:
 Analyze the relationship between spatial neighborhoods and lineage:
 
 ```python
-from src.model import (
+from src.legacy_model import (
     SpatialGraphBuilder,
     SpatialDataParser,
     LineageTree,

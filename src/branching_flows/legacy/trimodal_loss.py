@@ -56,7 +56,7 @@ def masked_sinkhorn_divergence(
     Returns:
         Weighted Sinkhorn divergence
     """
-    from .emergent_loss import sinkhorn_divergence
+    from ..emergent_loss import sinkhorn_divergence
 
     B, L, D = pred.shape
 
@@ -129,7 +129,7 @@ def trimodal_context_loss(
     Returns:
         (total_loss, loss_dict)
     """
-    from .emergent_loss import diversity_loss, cell_count_loss
+    from ..emergent_loss import diversity_loss, cell_count_loss
 
     # Sinkhorn divergence (modality-aware)
     sink_loss = masked_sinkhorn_divergence(

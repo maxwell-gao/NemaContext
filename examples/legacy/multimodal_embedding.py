@@ -34,8 +34,8 @@ import numpy as np
 
 def load_spatial_graph(timepoint: int = 200, k: int = 10):
     """Load spatial graph for a given timepoint."""
-    from src.model.spatial import SpatialDataParser
-    from src.model.spatial_graph import SpatialGraphBuilder, graph_to_pyg_data
+    from src.legacy_model.spatial import SpatialDataParser
+    from src.legacy_model.spatial_graph import SpatialGraphBuilder, graph_to_pyg_data
 
     parser = SpatialDataParser("dataset/raw/wormguides/nuclei_files")
     builder = SpatialGraphBuilder(parser)
@@ -55,7 +55,7 @@ def load_lineage_features(cell_names: List[str]) -> np.ndarray:
     - Lineage depth (normalized)
     - Binary features for common patterns
     """
-    from src.model.multimodal import LineageTree
+    from src.legacy_model.multimodal import LineageTree
 
     tree = LineageTree()
     tree.build_from_cell_names(cell_names)
@@ -101,7 +101,7 @@ def load_lineage_features(cell_names: List[str]) -> np.ndarray:
 
 def compute_lineage_distance_matrix(cell_names: List[str]) -> np.ndarray:
     """Compute pairwise lineage distances between cells."""
-    from src.model.multimodal import LineageTree
+    from src.legacy_model.multimodal import LineageTree
 
     tree = LineageTree()
     tree.build_from_cell_names(cell_names)
@@ -381,7 +381,7 @@ def main():
 
     # Compute spatial distances
     print("\n[4] Computing spatial distance matrix...")
-    from src.model.spatial import compute_cell_distances
+    from src.legacy_model.spatial import compute_cell_distances
 
     spatial_distances = compute_cell_distances(positions)
 

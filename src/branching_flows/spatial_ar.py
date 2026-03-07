@@ -34,7 +34,6 @@ class SpatialAutoregressiveModel(nn.Module):
         head_dim: int = 32,
         max_seq_len: int = 512,
         dt: float = 1.0,
-        deterministic_topk_events: bool = False,
     ):
         super().__init__()
         self.continuous_dim = continuous_dim
@@ -77,7 +76,6 @@ class SpatialAutoregressiveModel(nn.Module):
             del_threshold=0.5,
             max_cells=max_seq_len,
             use_gumbel=True,
-            deterministic_topk=deterministic_topk_events,
         )
 
         self._init_weights()

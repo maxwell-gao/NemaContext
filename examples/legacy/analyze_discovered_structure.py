@@ -29,9 +29,9 @@ from src.branching_flows import (
     OUFlow,
     generate,
 )
-from src.branching_flows.nema_model import NemaFlowModel
+from src.branching_flows.legacy.nema_model import NemaFlowModel
 from src.branching_flows.wormguides_dataset import WormGUIDESDataset
-from src.branching_flows.lineage import parse_lineage_name
+from src.branching_flows.legacy.lineage import parse_lineage_name
 from src.branching_flows.states import BranchingState
 
 

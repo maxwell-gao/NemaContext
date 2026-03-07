@@ -289,18 +289,12 @@ def main():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--gene_dim", type=int, default=2000)
     parser.add_argument("--spatial_dim", type=int, default=3)
-    parser.add_argument("--discrete_k", type=int, default=7)
     parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--n_layers", type=int, default=6)
     parser.add_argument("--n_heads", type=int, default=8)
     parser.add_argument("--cross_modal_every", type=int, default=2)
     parser.add_argument("--max_seq_len", type=int, default=128)
     parser.add_argument("--dt", type=float, default=0.1)
-    parser.add_argument(
-        "--deterministic_topk_events",
-        action="store_true",
-        help="Use top-k event selection at deterministic inference time for ablations.",
-    )
     parser.add_argument("--max_steps", type=int, default=20)
     parser.add_argument("--split_threshold", type=float, default=0.5)
     parser.add_argument("--perturb_times", type=str, default="2,4,6")
@@ -309,7 +303,6 @@ def main():
     parser.add_argument("--uncertainty_samples", type=int, default=8)
     parser.add_argument("--sigma_min", type=float, default=0.01)
     parser.add_argument("--sigma_max", type=float, default=0.2)
-    parser.add_argument("--strict_load", action="store_true")
     parser.add_argument(
         "--output",
         type=str,
@@ -324,19 +317,17 @@ def main():
     model = AutoregressiveNemaModel(
         gene_dim=args.gene_dim,
         spatial_dim=args.spatial_dim,
-        discrete_K=args.discrete_k,
         d_model=args.d_model,
         n_layers=args.n_layers,
         n_heads=args.n_heads,
         cross_modal_every=args.cross_modal_every,
         max_seq_len=args.max_seq_len,
         dt=args.dt,
-        deterministic_topk_events=args.deterministic_topk_events,
     ).to(args.device)
 
     ckpt = torch.load(args.checkpoint, map_location=args.device)
     state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-    load_result = model.load_state_dict(state_dict, strict=args.strict_load)
+    load_result = model.load_state_dict(state_dict, strict=False)
     model.eval()
 
     perturb_times = [int(x.strip()) for x in args.perturb_times.split(",") if x.strip()]
@@ -352,11 +343,9 @@ def main():
             "uncertainty_samples": args.uncertainty_samples,
             "sigma_min": args.sigma_min,
             "sigma_max": args.sigma_max,
-            "strict_load": args.strict_load,
             "model": {
                 "gene_dim": args.gene_dim,
                 "spatial_dim": args.spatial_dim,
-                "discrete_k": args.discrete_k,
                 "d_model": args.d_model,
                 "n_layers": args.n_layers,
                 "n_heads": args.n_heads,

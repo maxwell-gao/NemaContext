@@ -160,7 +160,6 @@ def test_model_forward_without_founder_features(trajectory_file):
     model = AutoregressiveNemaModel(
         gene_dim=2000,
         spatial_dim=3,
-        discrete_K=7,
         d_model=64,
         n_layers=2,
         n_heads=2,
@@ -174,7 +173,6 @@ def test_model_forward_without_founder_features(trajectory_file):
 
     assert output.gene_delta is not None
     assert output.spatial_vel is not None
-    assert output.discrete_logits is not None
     assert output.split_logits is not None
     assert output.del_logits is not None
 
@@ -196,7 +194,6 @@ def test_model_multi_cell_attention(trajectory_file):
     model = AutoregressiveNemaModel(
         gene_dim=2000,
         spatial_dim=3,
-        discrete_K=7,
         d_model=64,
         n_layers=2,
         n_heads=2,

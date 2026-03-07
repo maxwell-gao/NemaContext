@@ -38,7 +38,7 @@ from src.branching_flows.loss import (
     energy_regularization,
 )
 from src.branching_flows.nema_dataset import NemaDataset
-from src.branching_flows.nema_model import NemaFlowModel
+from src.branching_flows.legacy.nema_model import NemaFlowModel
 
 
 def parse_args():

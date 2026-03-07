@@ -75,7 +75,7 @@ def verify_trimodal_dataset():
 
 def verify_trimodal_loss():
     """Verify trimodal loss functions work."""
-    from src.branching_flows.trimodal_loss import (
+    from src.branching_flows.legacy.trimodal_loss import (
         trimodal_context_loss,
         curriculum_trimodal_loss,
         masked_mse_loss,
@@ -146,7 +146,7 @@ def verify_trimodal_loss():
 
 def verify_model_compatibility():
     """Verify NemaFlowModel works with trimodal dimensions."""
-    from src.branching_flows.nema_model import NemaFlowModel
+    from src.branching_flows.legacy.nema_model import NemaFlowModel
 
     print("\n" + "=" * 60)
     print("Verifying Model Compatibility")

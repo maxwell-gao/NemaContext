@@ -181,7 +181,7 @@ def test_time_dynamic_contact_graph():
         )
 
     # Test 4: Build time-dynamic graph
-    from src.model import TimeDynamicContactGraph, ContactGraph
+    from src.legacy_model import TimeDynamicContactGraph, ContactGraph
 
     # Build graphs for first few frames
     graphs = {}
@@ -230,7 +230,7 @@ def test_contact_gnn():
     print("=" * 60)
 
     from src.data.builder import CShaperProcessor
-    from src.model import (
+    from src.legacy_model import (
         ContactMessagePassing,
         ContactGNN,
         build_contact_graph_from_cshaper,

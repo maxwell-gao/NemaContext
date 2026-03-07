@@ -75,7 +75,7 @@ def main():
     print("Loading model...")
     checkpoint = torch.load(args.checkpoint, map_location=args.device)
 
-    from src.branching_flows.crossmodal_model import CrossModalNemaModel
+    from src.branching_flows.legacy.crossmodal_model import CrossModalNemaModel
 
     model = CrossModalNemaModel(
         gene_dim=2000,

@@ -98,19 +98,9 @@ class EmbryoTrajectoryDataset(Dataset):
         with open(trajectory_file) as f:
             data = json.load(f)
 
-        # Handle both formats: list (whole-embryo) or dict (legacy per-founder)
         if isinstance(data, list):
-            # New whole-embryo format
             self.trajectory = data
             self.is_whole_embryo = True
-        elif isinstance(data, dict):
-            # Legacy format: flatten all founders into single trajectory
-            print("WARNING: Loading legacy format (separate founder trajectories)")
-            print(
-                "  Consider regenerating with: uv run python src/data/trajectory_extractor.py"
-            )
-            self.trajectory = self._flatten_legacy_trajectories(data)
-            self.is_whole_embryo = False
         else:
             raise ValueError(f"Unknown trajectory format: {type(data)}")
 
@@ -122,72 +112,6 @@ class EmbryoTrajectoryDataset(Dataset):
             print(f"  Cell count range: {min(n_cells)} -> {max(n_cells)}")
             if self.is_whole_embryo:
                 print("  Format: Whole-embryo (all lineages coexist)")
-
-    def _flatten_legacy_trajectories(self, data: dict) -> list:
-        """Convert legacy per-founder dict to unified timeline."""
-        # Collect all time points from all founders
-        all_events = []
-        for founder, traj in data.items():
-            for state in traj:
-                all_events.append(
-                    {
-                        "time": state["time"],
-                        "state": state,
-                        "founder": founder,
-                    }
-                )
-
-        # Group by time
-        time_groups = {}
-        for event in all_events:
-            t = event["time"]
-            if t not in time_groups:
-                time_groups[t] = []
-            time_groups[t].append(event["state"])
-
-        # Merge states at each time point
-        merged = []
-        for t in sorted(time_groups.keys()):
-            states = time_groups[t]
-            merged_state = self._merge_states(states, t)
-            merged.append(merged_state)
-
-        return merged
-
-    def _merge_states(self, states: list[dict], time: float) -> dict:
-        """Merge multiple founder states into single embryo state."""
-        cell_names = []
-        founders = []
-        founder_ids = []
-        positions = []
-        genes = []
-        divisions = []
-
-        cell_offset = 0
-        for state in states:
-            n = state["n_cells"]
-            cell_names.extend(state["cell_names"])
-            founders.extend(state.get("founders", ["AB"] * n))
-            founder_ids.extend(state.get("founder_ids", [0] * n))
-            positions.extend(state["positions"])
-            genes.extend(state["genes"])
-
-            # Adjust division indices
-            for div_idx in state.get("divisions", []):
-                divisions.append(div_idx + cell_offset)
-
-            cell_offset += n
-
-        return {
-            "time": time,
-            "n_cells": len(cell_names),
-            "cell_names": cell_names,
-            "founders": founders,
-            "founder_ids": founder_ids,
-            "positions": positions,
-            "genes": genes,
-            "divisions": divisions,
-        }
 
     def __len__(self):
         return max(0, len(self.trajectory) - 1)
@@ -289,7 +213,6 @@ def compute_autoregressive_loss(
     lambda_denoise: float = 0.2,
     sigma_cond_drop_prob: float = 0.1,
     lambda_event_count: float = 0.0,
-    lambda_discrete: float = 0.0,
 ) -> tuple[torch.Tensor, dict]:
     """Compute AR next-step + diffusion-style denoising + event losses."""
     currents = batch["current"]
@@ -376,13 +299,6 @@ def compute_autoregressive_loss(
             spatial_loss = torch.tensor(0.0, device=device)
             denoise_loss = torch.tensor(0.0, device=device)
 
-        if matched_names and next_state.states[1] is not None:
-            discrete_logits = output.discrete_logits[0, current_indices, :]
-            discrete_target = next_state.states[1][0, next_indices]
-            discrete_loss = F.cross_entropy(discrete_logits, discrete_target)
-        else:
-            discrete_loss = torch.tensor(0.0, device=device)
-
         n_current = current.states[0].shape[1]
         valid_mask = current.padmask.squeeze(0)[:n_current]
 
@@ -431,7 +347,6 @@ def compute_autoregressive_loss(
         sample_loss = (
             gene_loss
             + spatial_loss
-            + lambda_discrete * discrete_loss
             + 0.5 * split_loss
             + 0.5 * del_loss
             + lambda_event_count * count_loss
@@ -445,7 +360,7 @@ def compute_autoregressive_loss(
         all_losses["del"].append(del_loss.item())
         all_losses["denoise"].append(denoise_loss.item())
         all_losses["count"].append(count_loss.item())
-        all_losses["discrete"].append(discrete_loss.item())
+        all_losses["discrete"].append(0.0)
 
     # Average over batch
     batch_size = max(1, len(all_losses["gene"]))
@@ -475,7 +390,6 @@ def train_epoch(
     lambda_denoise: float,
     sigma_cond_drop_prob: float,
     lambda_event_count: float,
-    lambda_discrete: float,
 ) -> dict:
     """Train for one epoch."""
     model.train()
@@ -504,7 +418,6 @@ def train_epoch(
             lambda_denoise=lambda_denoise,
             sigma_cond_drop_prob=sigma_cond_drop_prob,
             lambda_event_count=lambda_event_count,
-            lambda_discrete=lambda_discrete,
         )
 
         loss.backward()
@@ -528,7 +441,6 @@ def validate(
     lambda_denoise: float,
     sigma_cond_drop_prob: float,
     lambda_event_count: float,
-    lambda_discrete: float,
 ) -> dict:
     """Validate model."""
     model.eval()
@@ -555,7 +467,6 @@ def validate(
             lambda_denoise=lambda_denoise,
             sigma_cond_drop_prob=sigma_cond_drop_prob,
             lambda_event_count=lambda_event_count,
-            lambda_discrete=lambda_discrete,
         )
 
         for k in total_losses:
@@ -649,7 +560,6 @@ def main():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--gene_dim", type=int, default=2000)
     parser.add_argument("--spatial_dim", type=int, default=3)
-    parser.add_argument("--discrete_k", type=int, default=7)
     parser.add_argument("--d_model", type=int, default=256)
     parser.add_argument("--n_layers", type=int, default=6)
     parser.add_argument("--n_heads", type=int, default=8)
@@ -660,12 +570,6 @@ def main():
     parser.add_argument("--sigma_max", type=float, default=0.2)
     parser.add_argument("--lambda_denoise", type=float, default=0.2)
     parser.add_argument("--lambda_event_count", type=float, default=0.0)
-    parser.add_argument(
-        "--lambda_discrete",
-        type=float,
-        default=0.0,
-        help="Discrete-state loss weight. Kept for compatibility; inactive when no discrete state is provided.",
-    )
     parser.add_argument(
         "--sigma_cond_drop_prob",
         type=float,
@@ -681,11 +585,6 @@ def main():
         default=None,
         help="Optional checkpoint to warm-start from.",
     )
-    parser.add_argument(
-        "--deterministic_topk_events",
-        action="store_true",
-        help="Use top-k event selection at deterministic inference time for ablations.",
-    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -698,8 +597,7 @@ def main():
         f"sigma_drop={args.sigma_cond_drop_prob}"
     )
     print(
-        f"Event config: lambda_event_count={args.lambda_event_count}, "
-        f"lambda_discrete={args.lambda_discrete}"
+        f"Event config: lambda_event_count={args.lambda_event_count}"
     )
     print()
 
@@ -741,14 +639,12 @@ def main():
     model = AutoregressiveNemaModel(
         gene_dim=args.gene_dim,
         spatial_dim=args.spatial_dim,
-        discrete_K=args.discrete_k,
         d_model=args.d_model,
         n_layers=args.n_layers,
         n_heads=args.n_heads,
         cross_modal_every=args.cross_modal_every,
         max_seq_len=args.max_seq_len,
         dt=args.dt,
-        deterministic_topk_events=args.deterministic_topk_events,
     ).to(args.device)
 
     print(f"  Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -785,7 +681,6 @@ def main():
             lambda_denoise=args.lambda_denoise,
             sigma_cond_drop_prob=args.sigma_cond_drop_prob,
             lambda_event_count=args.lambda_event_count,
-            lambda_discrete=args.lambda_discrete,
         )
         val_losses = validate(
             model,
@@ -796,7 +691,6 @@ def main():
             lambda_denoise=args.lambda_denoise,
             sigma_cond_drop_prob=args.sigma_cond_drop_prob,
             lambda_event_count=args.lambda_event_count,
-            lambda_discrete=args.lambda_discrete,
         )
         scheduler.step()
 

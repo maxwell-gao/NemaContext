@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 
-from .crossmodal_model import CrossModalFusion
+from .fusion import CrossModalFusion
 from .dynamic_cell_manager import DynamicCellManager, EventDecision
 from .states import BranchingState
 
@@ -23,7 +23,6 @@ class StepOutput:
 
     gene_delta: torch.Tensor  # [B, L, gene_dim] change in gene expression
     spatial_vel: torch.Tensor  # [B, L, 3] velocity in space
-    discrete_logits: torch.Tensor  # [B, L, K] discrete state prediction
     split_logits: torch.Tensor  # [B, L, 1] logit for cell division
     del_logits: torch.Tensor  # [B, L, 1] logit for cell deletion
     noise_pred: torch.Tensor | None = None  # [B, L, gene_dim+spatial_dim]
@@ -41,7 +40,6 @@ class AutoregressiveNemaModel(nn.Module):
     Args:
         gene_dim: Dimension of gene expression (2000)
         spatial_dim: Dimension of spatial coordinates (3)
-        discrete_K: Number of discrete states
         d_model: Hidden dimension
         n_heads: Number of attention heads
         n_layers: Number of transformer layers
@@ -53,7 +51,6 @@ class AutoregressiveNemaModel(nn.Module):
         self,
         gene_dim: int = 2000,
         spatial_dim: int = 3,
-        discrete_K: int = 7,
         d_model: int = 256,
         n_heads: int = 8,
         n_layers: int = 6,
@@ -62,12 +59,10 @@ class AutoregressiveNemaModel(nn.Module):
         max_seq_len: int = 2048,
         cross_modal_every: int = 2,
         dt: float = 0.02,
-        deterministic_topk_events: bool = False,
     ):
         super().__init__()
         self.gene_dim = gene_dim
         self.spatial_dim = spatial_dim
-        self.discrete_K = discrete_K
         self.d_model = d_model
         self.dt = dt
         self.cross_modal_every = cross_modal_every
@@ -77,7 +72,6 @@ class AutoregressiveNemaModel(nn.Module):
         # Projections (MIGRATED from CrossModalNemaModel)
         self.gene_proj = nn.Linear(gene_dim, half_dim)
         self.spatial_proj = nn.Linear(spatial_dim, half_dim)
-        self.discrete_embed = nn.Embedding(discrete_K, half_dim)
 
         # Combine continuous modalities
         self.fusion_proj = nn.Linear(d_model, d_model)
@@ -124,7 +118,6 @@ class AutoregressiveNemaModel(nn.Module):
             # No activation - velocity can be positive or negative
         )
 
-        self.discrete_head = nn.Linear(d_model, discrete_K)
         # Predict diffusion noise (epsilon-style) for denoising objective.
         self.noise_head = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
@@ -152,7 +145,6 @@ class AutoregressiveNemaModel(nn.Module):
             del_threshold=0.5,
             max_cells=max_seq_len,
             use_gumbel=True,
-            deterministic_topk=deterministic_topk_events,
         )
 
         self._init_weights()
@@ -169,15 +161,12 @@ class AutoregressiveNemaModel(nn.Module):
         """Encode current state to latent representation.
 
         Args:
-            state: BranchingState with continuous and discrete states
+            state: BranchingState with continuous state
 
         Returns:
             [B, L, d_model] latent representation
         """
         cont = state.states[0]  # [B, L, gene_dim + spatial_dim]
-        disc = state.states[1] if len(state.states) > 1 else None  # [B, L]
-
-        B, L = cont.shape[:2]
 
         # Split continuous into gene and spatial
         genes = cont[..., : self.gene_dim]
@@ -189,12 +178,6 @@ class AutoregressiveNemaModel(nn.Module):
 
         # Combine
         combined = torch.cat([g_emb, s_emb], dim=-1)  # [B, L, d_model]
-
-        # Add discrete embedding if available
-        if disc is not None:
-            d_emb = self.discrete_embed(disc.clamp(0, self.discrete_K - 1))
-            # Project discrete embedding to full dimension
-            combined = combined + torch.cat([d_emb, d_emb], dim=-1)
 
         return self.fusion_proj(combined)
 
@@ -223,7 +206,6 @@ class AutoregressiveNemaModel(nn.Module):
             empty_spatial = torch.zeros(
                 B, 0, self.spatial_dim, device=device, dtype=dtype
             )
-            empty_disc = torch.zeros(B, 0, self.discrete_K, device=device, dtype=dtype)
             empty_event = torch.zeros(B, 0, 1, device=device, dtype=dtype)
             empty_noise = torch.zeros(
                 B, 0, self.gene_dim + self.spatial_dim, device=device, dtype=dtype
@@ -231,7 +213,6 @@ class AutoregressiveNemaModel(nn.Module):
             return StepOutput(
                 gene_delta=empty_gene,
                 spatial_vel=empty_spatial,
-                discrete_logits=empty_disc,
                 split_logits=empty_event,
                 del_logits=empty_event,
                 noise_pred=empty_noise,
@@ -285,7 +266,6 @@ class AutoregressiveNemaModel(nn.Module):
         # Predict changes (not absolute values!)
         gene_delta = self.gene_head(h_out) * self.dt  # Constrained changes
         spatial_vel = self.spatial_head(h_out) * self.dt  # Velocity
-        discrete_logits = self.discrete_head(h_out)
 
         # Event predictions
         split_logits = self.split_head(h_out)
@@ -296,7 +276,6 @@ class AutoregressiveNemaModel(nn.Module):
         pad_mask = state.padmask.unsqueeze(-1)
         gene_delta = gene_delta * pad_mask
         spatial_vel = spatial_vel * pad_mask
-        discrete_logits = discrete_logits * pad_mask
         split_logits = split_logits * pad_mask
         del_logits = del_logits * pad_mask
         noise_pred = noise_pred * pad_mask
@@ -304,7 +283,6 @@ class AutoregressiveNemaModel(nn.Module):
         return StepOutput(
             gene_delta=gene_delta,
             spatial_vel=spatial_vel,
-            discrete_logits=discrete_logits,
             split_logits=split_logits,
             del_logits=del_logits,
             noise_pred=noise_pred,
@@ -341,17 +319,9 @@ class AutoregressiveNemaModel(nn.Module):
 
             new_cont = torch.cat([new_genes, new_spatial], dim=-1)
 
-            # Update discrete state
-            if state.states[1] is not None:
-                # Founder identity is lineage metadata, not a latent state the
-                # rollout should freely rewrite at each Euler step.
-                new_disc = state.states[1].clone()
-            else:
-                new_disc = None
-
             # Create intermediate state
             intermediate_state = BranchingState(
-                states=(new_cont, new_disc),
+                states=(new_cont, None),
                 groupings=state.groupings,
                 del_flags=state.del_flags,
                 ids=state.ids,
@@ -497,18 +467,8 @@ def autoregressive_loss(
     gene_loss = F.mse_loss(output.gene_delta, true_gene_delta)
     spatial_loss = F.mse_loss(output.spatial_vel, true_spatial_vel)
 
-    # Discrete state loss (if available)
-    if next_state.states[1] is not None:
-        disc_loss = F.cross_entropy(
-            output.discrete_logits.reshape(-1, output.discrete_logits.size(-1)),
-            next_state.states[1].reshape(-1),
-            ignore_index=-100,
-        )
-    else:
-        disc_loss = torch.tensor(0.0, device=gene_loss.device)
-
     # Total state loss
-    state_loss = gene_loss + spatial_loss + 0.1 * disc_loss
+    state_loss = gene_loss + spatial_loss
 
     # Event losses (need target events from data)
     # For now, assume we don't have ground truth events
@@ -522,7 +482,6 @@ def autoregressive_loss(
         "total": total_loss.item(),
         "gene": gene_loss.item(),
         "spatial": spatial_loss.item(),
-        "discrete": disc_loss.item(),
         "split": split_loss.item(),
         "delete": del_loss.item(),
     }

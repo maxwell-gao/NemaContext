@@ -16,10 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 def verify_crossmodal_model():
     """Verify CrossModalNemaModel works."""
-    from src.branching_flows.crossmodal_model import (
+    from src.branching_flows.legacy.crossmodal_model import (
         CrossModalNemaModel,
-        CrossModalFusion,
     )
+    from src.branching_flows.fusion import CrossModalFusion
     from src.branching_flows import BranchingState
 
     print("=" * 60)

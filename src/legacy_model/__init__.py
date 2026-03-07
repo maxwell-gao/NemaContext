@@ -1,7 +1,7 @@
 """
-Model module for C. elegans multi-modal analysis.
+Legacy model module for archived multi-modal analysis.
 
-This module provides components for:
+This module provides archived components for:
 - Spatial data parsing and 4D position tracking
 - Spatial neighborhood graph construction
 - Contact graph neural networks (CShaper-based)

@@ -104,7 +104,6 @@ def main():
     parser.add_argument("--max_steps", type=int, default=10)
     parser.add_argument("--split_threshold", type=float, default=0.5)
     parser.add_argument("--del_threshold", type=float, default=0.7)
-    parser.add_argument("--deterministic_topk_events", action="store_true")
     parser.add_argument(
         "--output",
         default="result/autoregressive_results/evaluation_spatial_rollout.json",
@@ -122,7 +121,6 @@ def main():
         n_layers=args.n_layers,
         n_heads=args.n_heads,
         max_seq_len=args.max_seq_len,
-        deterministic_topk_events=args.deterministic_topk_events,
     ).to(args.device)
     model.cell_manager.split_threshold = args.split_threshold
     model.cell_manager.del_threshold = args.del_threshold

@@ -38,7 +38,7 @@ from src.branching_flows import (
 from src.branching_flows.emergent_loss import (
     emergent_context_loss,
 )
-from src.branching_flows.nema_model import NemaFlowModel
+from src.branching_flows.legacy.nema_model import NemaFlowModel
 from src.branching_flows.wormguides_dataset import WormGUIDESDataset
 
 

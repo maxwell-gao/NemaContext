@@ -49,11 +49,15 @@ This gives LLM-like iterative next-state generation with diffusion-inspired deno
 
 - `src/branching_flows/autoregressive_model.py`
   - transformer backbone
-  - heads for gene delta, spatial velocity, discrete state, split, delete
+  - heads for gene delta, spatial velocity, split, delete
 - `src/branching_flows/dynamic_cell_manager.py`
   - event sampling and application
 - `src/data/trajectory_extractor.py`
-  - unified whole-embryo trajectory source
+  - active real-data whole-embryo trajectory source
+
+Archived synthetic and per-founder extraction paths live in
+`src/data/legacy/trajectory_extractor.py` and are not part of the active
+whole-organism route.
 
 ## Immediate Implementation Direction
 

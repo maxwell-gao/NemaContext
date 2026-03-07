@@ -8,111 +8,14 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
+from ..fusion import CrossModalFusion
 from .nema_model import (
     AdaLNTransformerBlock,
     RandomFourierFeatures,
     RotaryPositionalEncoding,
 )
-from .states import BranchingState
-
-
-class CrossModalFusion(nn.Module):
-    """Cross-modal attention between gene and spatial features.
-
-    Allows information to flow between modalities:
-    - Genes attend to spatial context (where am I?)
-    - Spatial attends to gene expression (what is around me?)
-    """
-
-    def __init__(self, d_model: int, n_heads: int = 4):
-        super().__init__()
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.head_dim = d_model // n_heads
-
-        # Cross-attention: genes -> spatial
-        self.gene_to_spatial_q = nn.Linear(d_model, d_model)
-        self.gene_to_spatial_kv = nn.Linear(d_model, 2 * d_model)
-
-        # Cross-attention: spatial -> genes
-        self.spatial_to_gene_q = nn.Linear(d_model, d_model)
-        self.spatial_to_gene_kv = nn.Linear(d_model, 2 * d_model)
-
-        # Output projections
-        self.gene_out = nn.Linear(d_model, d_model)
-        self.spatial_out = nn.Linear(d_model, d_model)
-
-        self.scale = self.head_dim**-0.5
-
-    def forward(
-        self,
-        gene_features: torch.Tensor,
-        spatial_features: torch.Tensor,
-        mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Cross-modal fusion.
-
-        Args:
-            gene_features: [B, L, D] gene embeddings
-            spatial_features: [B, L, D] spatial embeddings
-            mask: Optional attention mask
-
-        Returns:
-            (updated_gene, updated_spatial) both [B, L, D]
-        """
-        B, L, _ = gene_features.shape
-
-        # Gene features attend to spatial context
-        q_g = self.gene_to_spatial_q(gene_features).view(
-            B, L, self.n_heads, self.head_dim
-        )
-        kv_s = self.gene_to_spatial_kv(spatial_features).view(
-            B, L, self.n_heads, 2 * self.head_dim
-        )
-        k_s, v_s = kv_s.chunk(2, dim=-1)
-
-        # Spatial features attend to gene context
-        q_s = self.spatial_to_gene_q(spatial_features).view(
-            B, L, self.n_heads, self.head_dim
-        )
-        kv_g = self.spatial_to_gene_kv(gene_features).view(
-            B, L, self.n_heads, 2 * self.head_dim
-        )
-        k_g, v_g = kv_g.chunk(2, dim=-1)
-
-        # Cross-attention: genes query spatial
-        # einsum 'blhd,bmhd->blhm' produces [B, L_q, H, L_k]
-        attn_gs = torch.einsum("blhd,bmhd->blhm", q_g, k_s) * self.scale
-        if mask is not None:
-            # mask is [B, L_k], expand to [B, 1, H, L_k] for broadcasting
-            # Shape: [B, L_k] -> [B, 1, L_k] -> [B, 1, 1, L_k] -> [B, 1, H, L_k]
-            mask_expanded = (
-                mask.unsqueeze(1).unsqueeze(1).expand(-1, -1, self.n_heads, -1)
-            )
-            attn_gs = attn_gs.masked_fill(~mask_expanded, float("-inf"))
-        attn_gs = F.softmax(attn_gs, dim=-1)  # softmax over L_k dimension
-        # For einsum, we need [B, L_q, H, L_k] @ [B, L_k, H, D] -> [B, L_q, H, D]
-        # But v_s is [B, L, H, D], so we transpose: [B, H, L_k, D]
-        gene_update = torch.einsum("blhm,bmhd->blhd", attn_gs, v_s).reshape(
-            B, L, self.d_model
-        )
-
-        # Cross-attention: spatial query genes
-        attn_sg = torch.einsum("blhd,bmhd->blhm", q_s, k_g) * self.scale
-        if mask is not None:
-            attn_sg = attn_sg.masked_fill(~mask_expanded, float("-inf"))
-        attn_sg = F.softmax(attn_sg, dim=-1)
-        spatial_update = torch.einsum("blhm,bmhd->blhd", attn_sg, v_g).reshape(
-            B, L, self.d_model
-        )
-
-        # Output projections with residual
-        gene_out = gene_features + self.gene_out(gene_update)
-        spatial_out = spatial_features + self.spatial_out(spatial_update)
-
-        return gene_out, spatial_out
+from ..states import BranchingState
 
 
 class CrossModalNemaModel(nn.Module):

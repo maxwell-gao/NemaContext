@@ -14,3 +14,5 @@ This repo is now organized around one primary objective:
 
 Legacy trimodal/crossmodal and early experiments are kept in code under `examples/legacy/`,
 but they are no longer the primary direction.
+Archived supporting modules also live under `src/branching_flows/legacy/`,
+`src/legacy_model/`, and `src/data/legacy/`.

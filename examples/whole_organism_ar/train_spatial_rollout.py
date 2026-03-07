@@ -303,7 +303,6 @@ def main():
     parser.add_argument("--split_threshold", type=float, default=0.5)
     parser.add_argument("--del_threshold", type=float, default=0.7)
     parser.add_argument("--save_dir", type=str, default="checkpoints_spatial_rollout")
-    parser.add_argument("--deterministic_topk_events", action="store_true")
     args = parser.parse_args()
 
     dataset = SpatialTrajectoryDataset(
@@ -335,7 +334,6 @@ def main():
         n_layers=args.n_layers,
         n_heads=args.n_heads,
         max_seq_len=args.max_seq_len,
-        deterministic_topk_events=args.deterministic_topk_events,
     ).to(args.device)
     model.cell_manager.split_threshold = args.split_threshold
     model.cell_manager.del_threshold = args.del_threshold

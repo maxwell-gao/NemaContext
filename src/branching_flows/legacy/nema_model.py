@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .states import BranchingState
+from ..states import BranchingState
 
 
 class NemaFlowModel(nn.Module):

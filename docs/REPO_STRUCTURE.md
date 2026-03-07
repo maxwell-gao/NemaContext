@@ -4,7 +4,7 @@
 
 - `src/`: model and data pipeline source code.
 - `examples/whole_organism_ar/`: active scripts for whole-organism autoregressive work.
-- `examples/legacy/`: older experiments kept for reference only.
+- `examples/legacy/`: older experiments kept outside the active path.
 - `tests/`: integration tests.
 - `dataset/`: raw and processed data artifacts.
 - `docs/`: current documentation.
@@ -14,11 +14,15 @@
 - `src/branching_flows/`
   - `autoregressive_model.py`: core whole-organism AR model.
   - `dynamic_cell_manager.py`: split/delete dynamic cell operations.
-  - `cross_lineage_probe.py`: cross-lineage influence analysis.
-  - supporting modules from prior BranchingFlows implementation.
+  - `fusion.py`: active gene/spatial fusion utility.
+  - supporting modules from the current BranchingFlows-derived stack.
+  - `legacy/`: archived trimodal, lineage-biased, and crossmodal modules kept for legacy scripts only.
+- `src/legacy_model/`
+  - archived graph, contact-GNN, and multimodal utilities used only by legacy scripts.
 
 - `src/data/`
   - `trajectory_extractor.py`: whole-embryo trajectory extraction.
+  - `legacy/trajectory_extractor.py`: archived synthetic and per-founder extraction paths.
   - `downloader/`: dataset downloaders.
   - `builder/`: AnnData and integration utilities (legacy + supporting tooling).
 
@@ -34,7 +38,7 @@
 ### Legacy (`examples/legacy/`)
 
 Trimodal/crossmodal and earlier data-integration training/evaluation scripts.
-These are not the default path for new development.
+These are outside the active path for new development.
 
 - `whole_organism_ar/`: older autoregressive scripts that depend on synthetic trajectories,
   explicit lineage supervision, founder-centric perturbation analysis, or

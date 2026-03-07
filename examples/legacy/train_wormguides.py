@@ -37,7 +37,7 @@ from src.branching_flows.loss import (
     mass_matching_loss,
     energy_regularization,
 )
-from src.branching_flows.nema_model import NemaFlowModel
+from src.branching_flows.legacy.nema_model import NemaFlowModel
 from src.branching_flows.wormguides_dataset import WormGUIDESDataset
 
 

@@ -30,10 +30,10 @@ from src.branching_flows import (
     OUFlow,
     branching_bridge,
 )
-from src.branching_flows.lineage import batch_lineage_bias
-from src.branching_flows.nema_model import NemaFlowModel
+from src.branching_flows.legacy.lineage import batch_lineage_bias
+from src.branching_flows.legacy.nema_model import NemaFlowModel
 from src.branching_flows.trimodal_dataset import TrimodalDataset
-from src.branching_flows.trimodal_loss import (
+from src.branching_flows.legacy.trimodal_loss import (
     curriculum_trimodal_loss,
     trimodal_context_loss,
     weak_anchor_loss_masked,

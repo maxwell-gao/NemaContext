@@ -12,4 +12,4 @@ Legacy note:
 - `examples/legacy/whole_organism_ar/` contains older autoregressive scripts that rely on
   synthetic trajectories, explicit lineage supervision, founder-centric
   perturbation analysis, founder-centric demos/visualization, or trimodal/crossmodal checkpoints.
-  They are retained for reference only and are not the current entry points.
+  They are archived and are not the current entry points.

@@ -29,9 +29,9 @@ from src.branching_flows import (
     OUFlow,
     branching_bridge,
 )
-from src.branching_flows.crossmodal_model import CrossModalNemaModel
+from src.branching_flows.legacy.crossmodal_model import CrossModalNemaModel
 from src.branching_flows.trimodal_dataset import TrimodalDataset
-from src.branching_flows.trimodal_loss import (
+from src.branching_flows.legacy.trimodal_loss import (
     curriculum_trimodal_loss,
     weak_anchor_loss_masked,
 )
@@ -256,7 +256,7 @@ def main():
                     sinkhorn_blur=args.sinkhorn_blur,
                 )
             else:
-                from src.branching_flows.trimodal_loss import trimodal_context_loss
+                from src.branching_flows.legacy.trimodal_loss import trimodal_context_loss
 
                 loss, loss_dict = trimodal_context_loss(
                     xc,

@@ -12,10 +12,12 @@ NemaContext is focused on one goal:
 
 ## Repository Layout
 
-- `src/branching_flows/`: core modeling code (`autoregressive_model.py`, `dynamic_cell_manager.py`, probes)
+- `src/branching_flows/`: core modeling code (`autoregressive_model.py`, `dynamic_cell_manager.py`, `fusion.py`)
+- `src/branching_flows/legacy/`: archived trimodal, lineage-biased, and crossmodal modules
+- `src/legacy_model/`: archived graph and multimodal utilities used only by legacy workflows
 - `src/data/`: whole-embryo trajectory extraction and data pipeline
 - `examples/whole_organism_ar/`: active scripts
-- `examples/legacy/`: previous-generation experiments (reference only)
+- `examples/legacy/`: previous-generation experiments
 - `docs/`: canonical architecture and roadmap
 
 See:
@@ -45,5 +47,7 @@ uv run python examples/whole_organism_ar/evaluate_rollout.py \
   --output result/autoregressive_results/evaluation_rollout.json
 
 Founder-specific perturbation, visualization, and demo scripts are retained under
-`examples/legacy/whole_organism_ar/` for reference, not as the default path.
+`examples/legacy/whole_organism_ar/`, not in the active path.
+Synthetic and per-founder trajectory generation is archived under
+`src/data/legacy/trajectory_extractor.py`.
 ```

@@ -17,7 +17,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.branching_flows.crossmodal_model import CrossModalNemaModel
+from src.branching_flows.legacy.crossmodal_model import CrossModalNemaModel
 from src.branching_flows.model_probe import (
     CrossModalProbe,
     LatentSpaceExplorer,

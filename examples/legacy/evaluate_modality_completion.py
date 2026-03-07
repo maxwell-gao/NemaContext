@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.branching_flows.crossmodal_model import CrossModalNemaModel
+from src.branching_flows.legacy.crossmodal_model import CrossModalNemaModel
 from src.branching_flows.trimodal_dataset import TrimodalDataset
 
 

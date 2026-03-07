@@ -28,7 +28,7 @@ What has been falsified or downgraded:
 - synthetic gene or synthetic spatial patterns are not acceptable as the main path,
 - spatial-only modeling is an engineering baseline, not the biological main model,
 - explicit lineage embeddings as model inputs are treated as injected prior,
-- inference-time top-k event rules are diagnostic tools only, not the default solution.
+- inference-time top-k event rules are archived diagnostic heuristics, not part of the active path.
 
 ## Phase 1: Data Grounding
 
@@ -39,13 +39,13 @@ Tasks:
 - keep real WormGUIDES extraction available for engineering diagnostics,
 - make `Large2025` the primary source for developmental gene state,
 - use lineage metadata only for sample construction or evaluation, not as model input,
-- keep synthetic fallback paths disabled by default,
+- keep synthetic and per-founder extraction isolated under legacy code,
 - document which outputs are real, pseudo-assembled, or synthetic.
 
 Definition of done:
 
-- the default training path does not depend on synthetic gene features,
-- the default training path does not depend on synthetic spatial trajectories,
+- the active training path does not depend on synthetic gene features,
+- the active training path does not depend on synthetic spatial trajectories,
 - every dataset artifact has an explicit provenance label.
 
 ## Phase 2: Gene-Context Baseline
@@ -103,7 +103,7 @@ Tasks:
 Definition of done:
 
 - the model can evolve a multi-cell embryo context across multiple steps,
-- rollout does not rely on deterministic top-k event rules by default,
+- rollout does not rely on deterministic top-k event rules,
 - embryo-level metrics are stable enough for comparison experiments.
 
 ## Phase 5: Spatial Reintegration
@@ -147,8 +147,8 @@ Definition of done:
 
 ## Non-Goals
 
-- no default training path built on synthetic gene features,
-- no default training path built on synthetic spatial patterns,
+- no active training path built on synthetic gene features,
+- no active training path built on synthetic spatial patterns,
 - no lineage embedding injected as model input,
 - no architectural constraints that encode the developmental tree,
 - no success criteria based only on spatial rollout aesthetics.

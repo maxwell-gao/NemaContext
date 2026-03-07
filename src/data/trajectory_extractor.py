@@ -225,6 +225,10 @@ class WholeEmbryoTrajectoryExtractor:
         """Represent missing gene modality explicitly with zeros."""
         return np.zeros((n_cells, n_genes), dtype=np.float32)
 
+    @staticmethod
+    def _time_grid(max_time: float, time_resolution: float) -> np.ndarray:
+        return np.arange(0, max_time + time_resolution, time_resolution)
+
     def extract_wormguides_trajectory(
         self,
         nuclei_dir: str | Path,
@@ -332,7 +336,7 @@ class WholeEmbryoTrajectoryExtractor:
         self,
         max_time: float = 400.0,
         time_resolution: float = 10.0,
-        source: str = "auto",
+        source: str = "wormguides",
         nuclei_dir: str | Path = "dataset/raw/wormguides/nuclei_files",
         deaths_csv: str | Path | None = "dataset/raw/wormguides/CellDeaths.csv",
     ) -> list[dict[str, Any]]:
@@ -349,136 +353,17 @@ class WholeEmbryoTrajectoryExtractor:
             List of embryo states, one per time point
         """
         nuclei_path = Path(nuclei_dir)
-        if source not in {"auto", "wormguides", "synthetic"}:
+        if source != "wormguides":
             raise ValueError(f"Unsupported source: {source}")
+        if not nuclei_path.exists():
+            raise FileNotFoundError(f"WormGUIDES nuclei directory not found: {nuclei_path}")
 
-        if source in {"auto", "wormguides"} and nuclei_path.exists():
-            return self.extract_wormguides_trajectory(
-                nuclei_dir=nuclei_path,
-                deaths_csv=deaths_csv,
-                max_time=max_time,
-                time_resolution=time_resolution,
-            )
-        if source == "wormguides":
-            raise FileNotFoundError(
-                f"WormGUIDES nuclei directory not found: {nuclei_path}"
-            )
-
-        trajectory = []
-
-        for t in np.arange(0, max_time + time_resolution, time_resolution):
-            # Get ALL cells alive at this time (cross-lineage)
-            cells_at_t = self.get_all_cells_at_time(t)
-
-            if not cells_at_t:
-                continue
-
-            # Synthesize positions in GLOBAL coordinates
-            positions = self._synthesize_global_positions(cells_at_t, t)
-
-            # Get founder identity for each cell (discrete feature)
-            founders = [self.get_founder(c) for c in cells_at_t]
-            founder_ids = [self.founder_map.get(f, 0) for f in founders]
-
-            # Create unified embryo state
-            state = {
-                "time": float(t),
-                "n_cells": len(cells_at_t),
-                "cell_names": cells_at_t,
-                "founders": founders,  # Discrete feature: lineage identity
-                "founder_ids": founder_ids,
-                "positions": positions.tolist(),
-                "genes": self._synthesize_genes(cells_at_t).tolist(),
-                "divisions": self._detect_divisions(cells_at_t, t),
-            }
-
-            trajectory.append(state)
-
-        return trajectory
-
-    def extract_trajectory(
-        self,
-        founder: str = "AB",
-        max_depth: int = 8,
-        time_resolution: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Legacy method: extract trajectory for a single founder lineage.
-
-        Deprecated: Use extract_embryo_trajectory() for whole-embryo context.
-        """
-        trajectory = []
-        max_time = 20.0 + max_depth * 12.0
-
-        for t in np.arange(0, max_time + time_resolution, time_resolution):
-            cells_at_t = []
-
-            for depth in range(max_depth + 1):
-                depth_start = 20.0 + depth * 12.0
-                depth_end = depth_start + 12.0
-
-                if depth_start <= t < depth_end:
-                    for name in self.tree.keys():
-                        if (
-                            name.startswith(founder)
-                            and len(name) == len(founder) + depth
-                        ):
-                            cells_at_t.append(name)
-
-            if not cells_at_t:
-                continue
-
-            cells_at_t = sorted(cells_at_t)
-
-            state = {
-                "time": float(t),
-                "n_cells": len(cells_at_t),
-                "cell_names": cells_at_t,
-                "founders": [founder] * len(cells_at_t),
-                "founder_ids": [self.founder_map.get(founder, 0)] * len(cells_at_t),
-                "division_depth": int((t - 20.0) / 12.0) if t >= 20 else 0,
-            }
-
-            state["positions"] = self._synthesize_global_positions(
-                cells_at_t, t
-            ).tolist()
-            state["genes"] = self._synthesize_genes(cells_at_t).tolist()
-
-            divisions = []
-            for i, cell in enumerate(cells_at_t):
-                cell_depth = len(cell) - len(founder)
-                cell_start = 20.0 + cell_depth * 12.0 if cell_depth > 0 else 0
-                if abs(t - cell_start) < 5.0:
-                    divisions.append(i)
-            state["divisions"] = divisions
-
-            trajectory.append(state)
-
-        return trajectory
-
-    def extract_all_trajectories(
-        self,
-        founders: list[str] | None = None,
-        **kwargs,
-    ) -> dict[str, list]:
-        """Extract trajectories for all founder lineages (legacy format).
-
-        Deprecated: Use extract_embryo_trajectory() for whole-embryo context.
-        """
-        if founders is None:
-            founders = ["AB", "MS", "E", "C", "D"]
-
-        trajectories = {}
-        for founder in founders:
-            print(f"Extracting {founder} lineage...")
-            traj = self.extract_trajectory(founder, **kwargs)
-            if traj:
-                trajectories[founder] = traj
-                n_cells = [s["n_cells"] for s in traj]
-                print(
-                    f"  {len(traj)} time points, {min(n_cells)}->{max(n_cells)} cells"
-                )
-
-        return trajectories
+        return self.extract_wormguides_trajectory(
+            nuclei_dir=nuclei_path,
+            deaths_csv=deaths_csv,
+            max_time=max_time,
+            time_resolution=time_resolution,
+        )
 
 
 def save_trajectory(
@@ -497,20 +382,6 @@ def save_trajectory(
     if trajectory:
         n_cells = [s["n_cells"] for s in trajectory]
         print(f"  Cell count: {min(n_cells)} -> {max(n_cells)}")
-
-
-def save_trajectories(
-    trajectories: dict[str, list],
-    output_file: str | Path,
-):
-    """Save trajectories to disk (legacy format)."""
-    output_file = Path(output_file)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(output_file, "w") as f:
-        json.dump(trajectories, f, indent=2)
-
-    print(f"\nTrajectories saved to: {output_file}")
 
 
 def main():
@@ -533,9 +404,9 @@ def main():
     parser.add_argument(
         "--source",
         type=str,
-        default="auto",
-        choices=["auto", "wormguides", "synthetic"],
-        help="Trajectory source: real WormGUIDES if available, or synthetic fallback.",
+        default="wormguides",
+        choices=["wormguides"],
+        help="Trajectory source for the active whole-embryo path.",
     )
     parser.add_argument(
         "--nuclei_dir",
@@ -547,33 +418,18 @@ def main():
         type=str,
         default="dataset/raw/wormguides/CellDeaths.csv",
     )
-    parser.add_argument(
-        "--legacy",
-        action="store_true",
-        help="Output legacy format (separate trajectories per founder)",
-    )
     args = parser.parse_args()
 
     extractor = WholeEmbryoTrajectoryExtractor(args.lineage_file)
-
-    if args.legacy:
-        # Legacy mode: separate trajectories per founder
-        trajectories = extractor.extract_all_trajectories(
-            max_depth=8,
-            time_resolution=args.time_resolution,
-        )
-        save_trajectories(trajectories, args.output)
-    else:
-        # New mode: whole-embryo trajectory
-        print("Extracting whole-embryo trajectory...")
-        trajectory = extractor.extract_embryo_trajectory(
-            max_time=args.max_time,
-            time_resolution=args.time_resolution,
-            source=args.source,
-            nuclei_dir=args.nuclei_dir,
-            deaths_csv=args.deaths_csv,
-        )
-        save_trajectory(trajectory, args.output)
+    print("Extracting whole-embryo trajectory...")
+    trajectory = extractor.extract_embryo_trajectory(
+        max_time=args.max_time,
+        time_resolution=args.time_resolution,
+        source=args.source,
+        nuclei_dir=args.nuclei_dir,
+        deaths_csv=args.deaths_csv,
+    )
+    save_trajectory(trajectory, args.output)
 
 
 if __name__ == "__main__":
