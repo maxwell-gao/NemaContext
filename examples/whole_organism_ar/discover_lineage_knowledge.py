@@ -22,8 +22,8 @@ import torch
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.model_probe import LineageProbe
-from src.branching_flows.trimodal_dataset import TrimodalDataset
+from src.branching_flows.model_probe import LineageProbe  # noqa: E402
+from src.branching_flows.trimodal_dataset import TrimodalDataset  # noqa: E402
 
 
 def main():
@@ -55,7 +55,7 @@ def main():
     print("DISCOVERING LINEAGE KNOWLEDGE FROM TRAINED MODEL")
     print("=" * 70)
     print(f"Checkpoint: {args.checkpoint}")
-    print(f"Following the creed: 'Discover, Don't Inject'")
+    print("Following the creed: 'Discover, Don't Inject'")
     print()
 
     # Load dataset

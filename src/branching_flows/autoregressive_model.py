@@ -26,6 +26,7 @@ class StepOutput:
     discrete_logits: torch.Tensor  # [B, L, K] discrete state prediction
     split_logits: torch.Tensor  # [B, L, 1] logit for cell division
     del_logits: torch.Tensor  # [B, L, 1] logit for cell deletion
+    noise_pred: torch.Tensor | None = None  # [B, L, gene_dim+spatial_dim]
     events: EventDecision | None = None  # Event decisions if using dynamic cells
 
 
@@ -61,6 +62,7 @@ class AutoregressiveNemaModel(nn.Module):
         max_seq_len: int = 2048,
         cross_modal_every: int = 2,
         dt: float = 0.02,
+        deterministic_topk_events: bool = False,
     ):
         super().__init__()
         self.gene_dim = gene_dim
@@ -79,6 +81,13 @@ class AutoregressiveNemaModel(nn.Module):
 
         # Combine continuous modalities
         self.fusion_proj = nn.Linear(d_model, d_model)
+        # Diffusion-style conditioning on noise level sigma.
+        self.sigma_embed = nn.Sequential(
+            nn.Linear(1, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.sigma_film = nn.Linear(d_model, 2 * d_model)
 
         # Transformer blocks (MIGRATED from CrossModalNemaModel)
         self.blocks = nn.ModuleList(
@@ -116,6 +125,13 @@ class AutoregressiveNemaModel(nn.Module):
         )
 
         self.discrete_head = nn.Linear(d_model, discrete_K)
+        # Predict diffusion noise (epsilon-style) for denoising objective.
+        self.noise_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.LayerNorm(d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, gene_dim + spatial_dim),
+        )
 
         # Event prediction heads (MIGRATED but repurposed)
         self.split_head = nn.Sequential(
@@ -136,6 +152,7 @@ class AutoregressiveNemaModel(nn.Module):
             del_threshold=0.5,
             max_cells=max_seq_len,
             use_gumbel=True,
+            deterministic_topk=deterministic_topk_events,
         )
 
         self._init_weights()
@@ -184,6 +201,7 @@ class AutoregressiveNemaModel(nn.Module):
     def forward_step(
         self,
         state: BranchingState,
+        sigma: torch.Tensor | float | None = None,
     ) -> StepOutput:
         """Single autoregressive step: predict changes from current state.
 
@@ -198,10 +216,49 @@ class AutoregressiveNemaModel(nn.Module):
             StepOutput with predicted changes and event probabilities
         """
         B, L = state.states[0].shape[:2]
-        device = state.states[0].device
+        if L == 0:
+            device = state.states[0].device
+            dtype = state.states[0].dtype
+            empty_gene = torch.zeros(B, 0, self.gene_dim, device=device, dtype=dtype)
+            empty_spatial = torch.zeros(
+                B, 0, self.spatial_dim, device=device, dtype=dtype
+            )
+            empty_disc = torch.zeros(B, 0, self.discrete_K, device=device, dtype=dtype)
+            empty_event = torch.zeros(B, 0, 1, device=device, dtype=dtype)
+            empty_noise = torch.zeros(
+                B, 0, self.gene_dim + self.spatial_dim, device=device, dtype=dtype
+            )
+            return StepOutput(
+                gene_delta=empty_gene,
+                spatial_vel=empty_spatial,
+                discrete_logits=empty_disc,
+                split_logits=empty_event,
+                del_logits=empty_event,
+                noise_pred=empty_noise,
+            )
 
         # Encode current state
         h = self.encode_state(state)  # [B, L, d_model]
+        # Apply sigma conditioning as FiLM over token states.
+        if sigma is None:
+            sigma_tensor = torch.zeros(B, device=h.device, dtype=h.dtype)
+        elif not torch.is_tensor(sigma):
+            sigma_tensor = torch.full(
+                (B,), float(sigma), device=h.device, dtype=h.dtype
+            )
+        else:
+            sigma_tensor = sigma.to(device=h.device, dtype=h.dtype).flatten()
+            if sigma_tensor.numel() == 1 and B > 1:
+                sigma_tensor = sigma_tensor.expand(B)
+            if sigma_tensor.numel() != B:
+                raise ValueError(
+                    f"sigma batch size mismatch: expected {B}, got {sigma_tensor.numel()}"
+                )
+
+        sigma_cond = self.sigma_embed(sigma_tensor.unsqueeze(-1))  # [B, d_model]
+        gamma_beta = self.sigma_film(sigma_cond)  # [B, 2*d_model]
+        gamma, beta = gamma_beta.chunk(2, dim=-1)
+        h = h * (1.0 + gamma.unsqueeze(1)) + beta.unsqueeze(1)
 
         # Create causal mask (can only attend to previous cells)
         # For developmental simulation, we use permutation-invariant attention
@@ -233,6 +290,7 @@ class AutoregressiveNemaModel(nn.Module):
         # Event predictions
         split_logits = self.split_head(h_out)
         del_logits = self.del_head(h_out)
+        noise_pred = self.noise_head(h_out)
 
         # Apply padding mask
         pad_mask = state.padmask.unsqueeze(-1)
@@ -241,6 +299,7 @@ class AutoregressiveNemaModel(nn.Module):
         discrete_logits = discrete_logits * pad_mask
         split_logits = split_logits * pad_mask
         del_logits = del_logits * pad_mask
+        noise_pred = noise_pred * pad_mask
 
         return StepOutput(
             gene_delta=gene_delta,
@@ -248,6 +307,7 @@ class AutoregressiveNemaModel(nn.Module):
             discrete_logits=discrete_logits,
             split_logits=split_logits,
             del_logits=del_logits,
+            noise_pred=noise_pred,
         )
 
     def step(
@@ -283,7 +343,9 @@ class AutoregressiveNemaModel(nn.Module):
 
             # Update discrete state
             if state.states[1] is not None:
-                new_disc = output.discrete_logits.argmax(dim=-1)
+                # Founder identity is lineage metadata, not a latent state the
+                # rollout should freely rewrite at each Euler step.
+                new_disc = state.states[1].clone()
             else:
                 new_disc = None
 
@@ -304,6 +366,7 @@ class AutoregressiveNemaModel(nn.Module):
                     output.split_logits,
                     output.del_logits,
                     deterministic=deterministic,
+                    valid_mask=state.padmask,
                 )
                 new_state = self.cell_manager.apply_events(intermediate_state, events)
                 return new_state, events

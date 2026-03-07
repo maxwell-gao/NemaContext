@@ -14,18 +14,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from src.branching_flows.crossmodal_model import CrossModalNemaModel
-from src.branching_flows.trimodal_dataset import TrimodalDataset
-from autoregressive_simulation import (
-    AutoregressiveSimulator,
-    create_initial_state,
-)
 
 
 def compare_trajectories(control_file: str, perturbed_file: str):

@@ -14,7 +14,7 @@ The enhanced builder creates AnnData objects with additional:
 """
 
 import logging
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 import anndata as ad
 import numpy as np
@@ -540,8 +540,6 @@ class EnhancedAnnDataBuilder(TrimodalAnnDataBuilder):
         rows = []
         cols = []
         data = []
-
-        ancestor_to_idx = {a: i for i, a in enumerate(ancestor_list)}
 
         for ai, anc_i in enumerate(ancestor_list):
             cells_i = ancestor_to_cells.get(anc_i, [])

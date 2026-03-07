@@ -183,7 +183,9 @@ def mass_matching_loss(
         Scalar loss.
     """
     if split_transform is None:
-        split_transform = lambda x: torch.exp(torch.clamp(x, -100.0, 11.0))
+
+        def split_transform(x: torch.Tensor) -> torch.Tensor:
+            return torch.exp(torch.clamp(x, -100.0, 11.0))
 
     mask_f = padmask.float()
     current_count = mask_f.sum(dim=1)  # (B,)

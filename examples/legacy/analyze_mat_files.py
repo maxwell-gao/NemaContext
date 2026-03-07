@@ -243,8 +243,6 @@ def extract_cell_positions(frame_idx=1, embryo_idx=0):
         print(f"File not found: {mat_file}")
         return None
 
-    cells = []
-
     with h5py.File(mat_file, "r") as f:
         dataset = f["Dataset"]
         embryo_positions = f[dataset[0, 0]]

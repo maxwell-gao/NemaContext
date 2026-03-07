@@ -67,9 +67,7 @@ class CrossModalProbe:
                     handles.append(handle)
 
             # Forward pass
-            _ = self.model.cross_modal_layers[0](
-                gene_features, spatial_features, mask
-            )
+            _ = self.model.cross_modal_layers[0](gene_features, spatial_features, mask)
 
             # Remove hooks
             for handle in handles:
@@ -116,9 +114,15 @@ class CrossModalProbe:
 
         return {
             "correlation_matrix": np.mean(gene_spatial_corr, axis=0),
-            "top_genes_for_x": np.argsort(-np.mean(gene_spatial_corr, axis=0)[:, 0])[:20],
-            "top_genes_for_y": np.argsort(-np.mean(gene_spatial_corr, axis=0)[:, 1])[:20],
-            "top_genes_for_z": np.argsort(-np.mean(gene_spatial_corr, axis=0)[:, 2])[:20],
+            "top_genes_for_x": np.argsort(-np.mean(gene_spatial_corr, axis=0)[:, 0])[
+                :20
+            ],
+            "top_genes_for_y": np.argsort(-np.mean(gene_spatial_corr, axis=0)[:, 1])[
+                :20
+            ],
+            "top_genes_for_z": np.argsort(-np.mean(gene_spatial_corr, axis=0)[:, 2])[
+                :20
+            ],
         }
 
     def discover_cell_type_markers(
@@ -349,7 +353,9 @@ class LineageProbe:
             "sibling_similarity_mean": np.mean(sibling_sims) if sibling_sims else 0,
             "sibling_similarity_std": np.std(sibling_sims) if sibling_sims else 0,
             "cousin_similarity_mean": np.mean(cousin_sims) if cousin_sims else 0,
-            "unrelated_similarity_mean": np.mean(unrelated_sims) if unrelated_sims else 0,
+            "unrelated_similarity_mean": np.mean(unrelated_sims)
+            if unrelated_sims
+            else 0,
             "n_sibling_pairs": len(sibling_sims),
             "n_cousin_pairs": len(cousin_sims),
             "n_unrelated_pairs": len(unrelated_sims),
@@ -584,7 +590,11 @@ class LatentSpaceExplorer:
             explained_variance = pca.explained_variance_ratio_.tolist()
         except Exception:
             # Fallback: use first 3 dimensions normalized
-            pca_coords = all_latents[:, :3] if all_latents.shape[1] >= 3 else np.pad(all_latents, ((0, 0), (0, 3 - all_latents.shape[1])))
+            pca_coords = (
+                all_latents[:, :3]
+                if all_latents.shape[1] >= 3
+                else np.pad(all_latents, ((0, 0), (0, 3 - all_latents.shape[1])))
+            )
             explained_variance = [0.5, 0.3, 0.2]
 
         return {

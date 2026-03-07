@@ -18,8 +18,8 @@ import torch
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.autoregressive_model import AutoregressiveNemaModel
-from src.branching_flows.states import BranchingState
+from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
+from src.branching_flows.states import BranchingState  # noqa: E402
 
 
 def create_realistic_daughters(
@@ -322,7 +322,7 @@ def test_biological_division_pattern():
 
     # Force division to create AB and P1
     with torch.no_grad():
-        output = model.forward_step(state)
+        model.forward_step(state)
 
         # Apply division
         parent_cont = state.states[0][0, 0]
@@ -349,7 +349,7 @@ def test_biological_division_pattern():
 
     # Next division: AB -> ABa + ABp, P1 -> EMS + P2
     with torch.no_grad():
-        output = model.forward_step(state)
+        model.forward_step(state)
 
         new_continuous = []
         new_discrete = []

@@ -1,241 +1,471 @@
-"""Extract developmental trajectories from Sulston lineage tree.
+"""Extract whole-embryo developmental trajectories from Sulston lineage tree.
 
-Converts the static lineage tree into time-series trajectories
-for autoregressive model training.
+Converts the static lineage tree into unified time-series trajectories
+where all cells coexist in global embryonic coordinates.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import torch
+import numpy as np  # noqa: E402
+
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.branching_flows.wormguides_parser import parse_wormguides  # noqa: E402
 
 
-class SulstonTrajectoryExtractor:
-    """Extract trajectories from C. elegans Sulston lineage tree.
+class WholeEmbryoTrajectoryExtractor:
+    """Extract unified whole-embryo trajectories from C. elegans Sulston lineage.
 
-    The Sulston tree records:
-    - Cell names (lineage nomenclature: AB, ABa, ABal, etc.)
-    - Division times (in minutes post-fertilization)
-    - Parent-child relationships
-
-    This extractor converts the tree into sequences of cell states
-    suitable for autoregressive training.
+    Key principle: Cells from all lineages (AB, MS, E, C, D, etc.) coexist
+    in a shared global coordinate system at each time point. Founder identity
+    is preserved as a discrete feature, not a trajectory separator.
     """
 
     def __init__(self, lineage_file: str | Path):
         """Initialize with lineage data.
 
         Args:
-            lineage_file: Path to WormBase lineage JSON
+            lineage_file: Path to WormBase lineage JSON (parent-children format)
         """
         self.lineage_file = Path(lineage_file)
         with open(self.lineage_file) as f:
-            self.data = json.load(f)
+            self.tree = json.load(f)
 
-        # Build lookup tables
-        self._build_indices()
+        # Load timing data if available
+        timing_file = self.lineage_file.parent / "cell_timing.json"
+        if timing_file.exists():
+            with open(timing_file) as f:
+                self.timing = json.load(f)
+        else:
+            self.timing = {}
 
-    def _build_indices(self):
-        """Build efficient lookup structures."""
-        self.cell_by_name = {}
-        self.cell_by_time = {}
+        # Founder mapping for discrete features
+        self.founder_map = {
+            "P0": 0,
+            "AB": 1,
+            "MS": 2,
+            "E": 3,
+            "C": 4,
+            "D": 5,
+            "P4": 6,
+        }
+        self.founders = list(self.founder_map.keys())
 
-        for cell in self.data.get("cells", []):
-            name = cell["name"]
-            self.cell_by_name[name] = cell
+    def get_founder(self, cell_name: str) -> str:
+        """Get founder lineage for a cell."""
+        for founder in self.founders:
+            if cell_name.startswith(founder):
+                return founder
+        return "P0" if cell_name == "P0" else "UNKNOWN"
 
-            # Index by time ranges
-            start = cell.get("start_time", 0)
-            end = cell.get("end_time", start)
+    def get_cell_birth_time(self, cell_name: str) -> float:
+        """Get birth time for a cell from timing data or estimate from depth."""
+        if cell_name in self.timing:
+            return self.timing[cell_name].get("birth_time_min", 0.0)
 
-            for t in range(int(start), int(end) + 1, 10):  # 10-min bins
-                if t not in self.cell_by_time:
-                    self.cell_by_time[t] = []
-                self.cell_by_time[t].append(cell)
+        # Estimate from division depth
+        if cell_name == "P0":
+            return 0.0
 
-    def extract_trajectory(
-        self,
-        founder: str = "AB",
-        time_resolution: int = 10,  # minutes
-        add_spatial: bool = True,
-    ) -> list[dict[str, Any]]:
-        """Extract trajectory for a founder lineage.
+        depth = len(cell_name) - len(self.get_founder(cell_name))
+        base_time = 20.0  # First division
+        time_per_division = 12.0
+        return base_time + depth * time_per_division
 
-        Args:
-            founder: Founder cell (AB, MS, E, C, D, P4)
-            time_resolution: Time step in minutes
-            add_spatial: Whether to add synthetic spatial positions
+    def get_cell_division_time(self, cell_name: str) -> float | None:
+        """Get division time for a cell, or None if terminal."""
+        if cell_name in self.timing:
+            return self.timing[cell_name].get("division_time_min")
 
-        Returns:
-            List of time points, each with cell states
-        """
-        trajectory = []
+        # Estimate: alive for ~12 minutes per division level
+        return self.get_cell_birth_time(cell_name) + 12.0
 
-        # Get time range for this founder
-        if founder not in self.cell_by_name:
-            return trajectory
+    def is_cell_alive_at_time(self, cell_name: str, time: float) -> bool:
+        """Check if a cell exists at given time."""
+        birth = self.get_cell_birth_time(cell_name)
+        division = self.get_cell_division_time(cell_name)
 
-        founder_cell = self.cell_by_name[founder]
-        start_time = founder_cell.get("start_time", 0)
-        end_time = max(
-            c.get("end_time", 0)
-            for c in self.cell_by_name.values()
-            if c["name"].startswith(founder)
-        )
+        if time < birth:
+            return False
+        # Cell is alive from birth (inclusive) to division (exclusive)
+        if division is not None and time >= division:
+            return False
+        return True
 
-        # Generate trajectory
-        for t in range(int(start_time), int(end_time) + 1, time_resolution):
-            cells_at_t = self._get_cells_at_time(founder, t)
-
-            if not cells_at_t:
-                continue
-
-            # Create state representation
-            state = {
-                "time": t,
-                "n_cells": len(cells_at_t),
-                "cell_names": [c["name"] for c in cells_at_t],
-                "cell_ids": list(range(1, len(cells_at_t) + 1)),
-            }
-
-            # Add synthetic gene expression based on lineage
-            if add_spatial:
-                state["positions"] = self._synthesize_positions(cells_at_t, t)
-                state["genes"] = self._synthesize_genes(cells_at_t)
-
-            # Record division events
-            state["divisions"] = self._detect_divisions(cells_at_t, t, time_resolution)
-            state["deaths"] = self._detect_deaths(cells_at_t, t, time_resolution)
-
-            trajectory.append(state)
-
-        return trajectory
-
-    def _get_cells_at_time(self, founder: str, time: int) -> list[dict]:
-        """Get all cells of a lineage alive at given time."""
+    def get_all_cells_at_time(self, time: float) -> list[str]:
+        """Get all cells alive at given time across ALL lineages."""
         cells = []
-
-        for name, cell in self.cell_by_name.items():
-            if not name.startswith(founder):
+        for cell_name in self.tree.keys():
+            # Only include cells that have timing data (embryonic cells)
+            if cell_name not in self.timing:
                 continue
+            if self.is_cell_alive_at_time(cell_name, time):
+                cells.append(cell_name)
+        return sorted(cells)
 
-            start = cell.get("start_time", 0)
-            end = cell.get("end_time", start)
+    def _synthesize_global_positions(self, cells: list[str], time: float) -> np.ndarray:
+        """Synthesize spatial positions in GLOBAL embryo coordinates.
 
-            if start <= time <= end:
-                cells.append(cell)
-
-        return cells
-
-    def _synthesize_positions(
-        self, cells: list[dict], time: int
-    ) -> np.ndarray:
-        """Synthesize spatial positions based on lineage.
-
-        In real embryo:
-        - AB lineage: anterior (neurons, epidermis)
-        - MS lineage: ventral (pharynx, muscle)
-        - E lineage: posterior (intestine)
-        - C/D lineages: posterior (muscle, germline)
+        Coordinate system:
+        - X: Anterior-Posterior axis, 0=anterior, 1=posterior
+        - Y: Dorsal-Ventral axis, 0=dorsal, 1=ventral
+        - Z: Left-Right axis, 0=left, 1=right
         """
         positions = []
 
         for cell in cells:
-            name = cell["name"]
+            founder = self.get_founder(cell)
+            depth = len(cell) - len(founder) if founder != "P0" else 0
 
-            # Founder-specific base positions
-            if name.startswith("AB"):
-                base = np.array([0.5, 0.5, 0.3])  # Anterior
-            elif name.startswith("MS"):
-                base = np.array([0.5, 0.3, 0.5])  # Ventral
-            elif name.startswith("E"):
-                base = np.array([0.5, 0.5, 0.8])  # Posterior
+            # Founder-specific base positions in GLOBAL coordinates
+            # These positions reflect the actual anatomical locations in embryo
+            if founder == "P0":
+                base = np.array([0.5, 0.5, 0.5])  # Center at start
+            elif founder == "AB":
+                # AB lineage: anterior, spreads dorsal-ventral with division
+                base_x = 0.15 + depth * 0.02  # Anterior region
+                base_y = 0.5 + (hash(cell) % 100 / 100 - 0.5) * 0.3 * depth * 0.1
+                base_z = 0.5 + (hash(cell[::-1]) % 100 / 100 - 0.5) * 0.2
+                base = np.array([base_x, base_y, base_z])
+            elif founder == "MS":
+                # MS lineage: ventral-anterior to ventral-posterior
+                base_x = 0.35 + depth * 0.03
+                base_y = 0.3  # Ventral
+                base_z = 0.5
+                base = np.array([base_x, base_y, base_z])
+            elif founder == "E":
+                # E lineage: posterior-ventral (gut)
+                base_x = 0.7 + depth * 0.02
+                base_y = 0.4
+                base_z = 0.5
+                base = np.array([base_x, base_y, base_z])
+            elif founder == "C":
+                # C lineage: posterior-dorsal (hypodermis)
+                base_x = 0.75 + depth * 0.02
+                base_y = 0.7  # Dorsal
+                base_z = 0.5
+                base = np.array([base_x, base_y, base_z])
+            elif founder == "D":
+                # D lineage: posterior (muscle)
+                base_x = 0.8 + depth * 0.015
+                base_y = 0.6
+                base_z = 0.5
+                base = np.array([base_x, base_y, base_z])
+            elif founder == "P4":
+                # P4: posterior pole (germline)
+                base_x = 0.9
+                base_y = 0.5
+                base_z = 0.5
+                base = np.array([base_x, base_y, base_z])
             else:
-                base = np.array([0.5, 0.7, 0.7])  # Posterior/dorsal
+                base = np.array([0.5, 0.5, 0.5])
 
-            # Add lineage-specific offset
-            depth = len(name) - 1  # Division depth
-            noise = np.random.randn(3) * 0.05 * depth
+            # Add small deterministic noise based on cell name
+            name_hash = sum(ord(c) for c in cell)
+            np.random.seed(name_hash)
+            noise = np.random.randn(3) * 0.02 * max(1, depth)
+            np.random.seed()
 
-            # Time-based migration
-            migration = np.array([0, 0, time * 0.001])
-
-            positions.append(base + noise + migration)
+            positions.append(base + noise)
 
         return np.array(positions)
 
-    def _synthesize_genes(self, cells: list[dict]) -> np.ndarray:
+    def _synthesize_genes(self, cells: list[str]) -> np.ndarray:
         """Synthesize gene expression based on cell type."""
         n_genes = 2000
         expressions = []
 
         for cell in cells:
-            name = cell["name"]
+            founder = self.get_founder(cell)
+            name_hash = sum(ord(c) for c in cell)
+            np.random.seed(name_hash)
 
             # Base expression
             expr = np.random.randn(n_genes) * 0.1
 
-            # Founder-specific markers
-            if name.startswith("AB"):
-                # Neuronal markers
-                expr[0:50] += 2.0
-            elif name.startswith("MS"):
-                # Muscle markers
-                expr[50:100] += 2.0
-            elif name.startswith("E"):
-                # Gut markers
-                expr[100:150] += 2.0
+            # Founder-specific marker genes
+            if founder == "AB":
+                expr[0:50] += 1.5  # Neuronal markers
+                expr[100:120] -= 0.5
+            elif founder == "MS":
+                expr[50:100] += 1.5  # Muscle markers
+                expr[0:20] -= 0.5
+            elif founder == "E":
+                expr[100:150] += 1.5  # Gut markers
+            elif founder in ["C", "D"]:
+                expr[150:200] += 1.5  # Hypodermis/muscle markers
+            elif founder == "P4":
+                expr[200:220] += 1.5  # Germline markers
 
-            # Lineage depth effect
-            depth = len(name) - 1
+            # Depth effect (differentiation)
+            depth = len(cell)
             expr += np.random.randn(n_genes) * 0.01 * depth
 
             expressions.append(expr)
+            np.random.seed()
 
         return np.array(expressions)
 
-    def _detect_divisions(
-        self, cells: list[dict], time: int, dt: int
-    ) -> list[int]:
-        """Detect which cells divide in this time window."""
+    def _detect_divisions(self, cells: list[str], time: float) -> list[int]:
+        """Detect which current cells are about to divide."""
         divisions = []
-
         for i, cell in enumerate(cells):
-            end_time = cell.get("end_time", None)
-            if end_time and time <= end_time < time + dt:
-                # This cell ends in this window = division
+            division_time = self.get_cell_division_time(cell)
+            if division_time is not None and abs(time - division_time) < 5.0:
                 divisions.append(i)
-
         return divisions
 
-    def _detect_deaths(
-        self, cells: list[dict], time: int, dt: int
-    ) -> list[int]:
-        """Detect programmed cell deaths in this window."""
-        deaths = []
+    def _zero_genes(self, n_cells: int, n_genes: int = 2000) -> np.ndarray:
+        """Represent missing gene modality explicitly with zeros."""
+        return np.zeros((n_cells, n_genes), dtype=np.float32)
 
-        death_set = {"C1", "C2", "C3"}  # Known deaths in C. elegans
+    def extract_wormguides_trajectory(
+        self,
+        nuclei_dir: str | Path,
+        deaths_csv: str | Path | None = None,
+        max_time: float = 400.0,
+        time_resolution: float = 10.0,
+    ) -> list[dict[str, Any]]:
+        """Build whole-embryo trajectory from real WormGUIDES nuclei tracking.
 
-        for i, cell in enumerate(cells):
-            if cell["name"] in death_set:
-                end_time = cell.get("end_time", None)
-                if end_time and time <= end_time < time + dt:
-                    deaths.append(i)
+        Uses observed cell names and 3D coordinates directly. Gene expression is
+        left as an all-zero placeholder to mark the modality as unavailable
+        rather than inventing synthetic transcriptomic structure.
+        """
+        wg = parse_wormguides(nuclei_dir, deaths_csv)
+        trajectory = []
 
-        return deaths
+        all_coords = np.array(
+            [
+                [x, y, z]
+                for traj in wg.cell_trajectories.values()
+                for _, x, y, z in traj
+            ],
+            dtype=np.float32,
+        )
+        coord_min = all_coords.min(axis=0)
+        coord_range = np.clip(
+            all_coords.max(axis=0) - coord_min, a_min=1e-6, a_max=None
+        )
+
+        sampled_minutes = np.arange(0, max_time + time_resolution, time_resolution)
+        sampled_tps = sorted(
+            {
+                max(
+                    1,
+                    int(round((minute - wg.START_TIME_MIN) / wg.TIME_RESOLUTION_MIN))
+                    + 1,
+                )
+                for minute in sampled_minutes
+                if minute >= wg.START_TIME_MIN
+            }
+        )
+
+        division_map: dict[int, dict[str, tuple[str, str]]] = {}
+        for event in wg.division_events:
+            division_map.setdefault(event.t_division, {})[event.parent] = (
+                event.child1,
+                event.child2,
+            )
+
+        for tp in sampled_tps:
+            if tp > wg.n_timepoints:
+                break
+
+            cells = sorted(wg.cells_at(tp), key=lambda cell: cell.name)
+            if not cells:
+                continue
+
+            names = [cell.name for cell in cells]
+            founders = [self.get_founder(name) for name in names]
+            founder_ids = [self.founder_map.get(founder, 0) for founder in founders]
+            positions = [
+                (
+                    (np.array([cell.x, cell.y, cell.z], dtype=np.float32) - coord_min)
+                    / coord_range
+                ).tolist()
+                for cell in cells
+            ]
+
+            divisions = []
+            current_divisions = division_map.get(tp, {})
+            next_names = {cell.name for cell in wg.cells_at(tp + 1)}
+            for idx, name in enumerate(names):
+                children = current_divisions.get(name)
+                if children is not None and all(
+                    child in next_names for child in children
+                ):
+                    divisions.append(idx)
+
+            deaths = []
+            for idx, name in enumerate(names):
+                if name in wg.death_set and all(
+                    child.name != name for child in wg.cells_at(tp + 1)
+                ):
+                    deaths.append(idx)
+
+            trajectory.append(
+                {
+                    "time": float(wg.timepoint_to_minutes(tp)),
+                    "timepoint": int(tp),
+                    "source": "wormguides",
+                    "n_cells": len(names),
+                    "cell_names": names,
+                    "founders": founders,
+                    "founder_ids": founder_ids,
+                    "positions": positions,
+                    "genes": self._zero_genes(len(names)).tolist(),
+                    "divisions": divisions,
+                    "deaths": deaths,
+                }
+            )
+
+        return trajectory
+
+    def extract_embryo_trajectory(
+        self,
+        max_time: float = 400.0,
+        time_resolution: float = 10.0,
+        source: str = "auto",
+        nuclei_dir: str | Path = "dataset/raw/wormguides/nuclei_files",
+        deaths_csv: str | Path | None = "dataset/raw/wormguides/CellDeaths.csv",
+    ) -> list[dict[str, Any]]:
+        """Extract complete whole-embryo trajectory.
+
+        Returns a single global timeline where all cells from all lineages
+        coexist at each time point in shared embryonic coordinates.
+
+        Args:
+            max_time: Maximum developmental time in minutes (~400 for hatching)
+            time_resolution: Time step in minutes
+
+        Returns:
+            List of embryo states, one per time point
+        """
+        nuclei_path = Path(nuclei_dir)
+        if source not in {"auto", "wormguides", "synthetic"}:
+            raise ValueError(f"Unsupported source: {source}")
+
+        if source in {"auto", "wormguides"} and nuclei_path.exists():
+            return self.extract_wormguides_trajectory(
+                nuclei_dir=nuclei_path,
+                deaths_csv=deaths_csv,
+                max_time=max_time,
+                time_resolution=time_resolution,
+            )
+        if source == "wormguides":
+            raise FileNotFoundError(
+                f"WormGUIDES nuclei directory not found: {nuclei_path}"
+            )
+
+        trajectory = []
+
+        for t in np.arange(0, max_time + time_resolution, time_resolution):
+            # Get ALL cells alive at this time (cross-lineage)
+            cells_at_t = self.get_all_cells_at_time(t)
+
+            if not cells_at_t:
+                continue
+
+            # Synthesize positions in GLOBAL coordinates
+            positions = self._synthesize_global_positions(cells_at_t, t)
+
+            # Get founder identity for each cell (discrete feature)
+            founders = [self.get_founder(c) for c in cells_at_t]
+            founder_ids = [self.founder_map.get(f, 0) for f in founders]
+
+            # Create unified embryo state
+            state = {
+                "time": float(t),
+                "n_cells": len(cells_at_t),
+                "cell_names": cells_at_t,
+                "founders": founders,  # Discrete feature: lineage identity
+                "founder_ids": founder_ids,
+                "positions": positions.tolist(),
+                "genes": self._synthesize_genes(cells_at_t).tolist(),
+                "divisions": self._detect_divisions(cells_at_t, t),
+            }
+
+            trajectory.append(state)
+
+        return trajectory
+
+    def extract_trajectory(
+        self,
+        founder: str = "AB",
+        max_depth: int = 8,
+        time_resolution: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Legacy method: extract trajectory for a single founder lineage.
+
+        Deprecated: Use extract_embryo_trajectory() for whole-embryo context.
+        """
+        trajectory = []
+        max_time = 20.0 + max_depth * 12.0
+
+        for t in np.arange(0, max_time + time_resolution, time_resolution):
+            cells_at_t = []
+
+            for depth in range(max_depth + 1):
+                depth_start = 20.0 + depth * 12.0
+                depth_end = depth_start + 12.0
+
+                if depth_start <= t < depth_end:
+                    for name in self.tree.keys():
+                        if (
+                            name.startswith(founder)
+                            and len(name) == len(founder) + depth
+                        ):
+                            cells_at_t.append(name)
+
+            if not cells_at_t:
+                continue
+
+            cells_at_t = sorted(cells_at_t)
+
+            state = {
+                "time": float(t),
+                "n_cells": len(cells_at_t),
+                "cell_names": cells_at_t,
+                "founders": [founder] * len(cells_at_t),
+                "founder_ids": [self.founder_map.get(founder, 0)] * len(cells_at_t),
+                "division_depth": int((t - 20.0) / 12.0) if t >= 20 else 0,
+            }
+
+            state["positions"] = self._synthesize_global_positions(
+                cells_at_t, t
+            ).tolist()
+            state["genes"] = self._synthesize_genes(cells_at_t).tolist()
+
+            divisions = []
+            for i, cell in enumerate(cells_at_t):
+                cell_depth = len(cell) - len(founder)
+                cell_start = 20.0 + cell_depth * 12.0 if cell_depth > 0 else 0
+                if abs(t - cell_start) < 5.0:
+                    divisions.append(i)
+            state["divisions"] = divisions
+
+            trajectory.append(state)
+
+        return trajectory
 
     def extract_all_trajectories(
         self,
         founders: list[str] | None = None,
         **kwargs,
     ) -> dict[str, list]:
-        """Extract trajectories for all founder lineages."""
+        """Extract trajectories for all founder lineages (legacy format).
+
+        Deprecated: Use extract_embryo_trajectory() for whole-embryo context.
+        """
         if founders is None:
-            founders = ["AB", "MS", "E", "C", "D", "P4"]
+            founders = ["AB", "MS", "E", "C", "D"]
 
         trajectories = {}
         for founder in founders:
@@ -243,33 +473,42 @@ class SulstonTrajectoryExtractor:
             traj = self.extract_trajectory(founder, **kwargs)
             if traj:
                 trajectories[founder] = traj
-                print(f"  {len(traj)} time points, up to {max(s['n_cells'] for s in traj)} cells")
+                n_cells = [s["n_cells"] for s in traj]
+                print(
+                    f"  {len(traj)} time points, {min(n_cells)}->{max(n_cells)} cells"
+                )
 
         return trajectories
+
+
+def save_trajectory(
+    trajectory: list[dict],
+    output_file: str | Path,
+):
+    """Save single whole-embryo trajectory to disk."""
+    output_file = Path(output_file)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_file, "w") as f:
+        json.dump(trajectory, f, indent=2)
+
+    print(f"\nTrajectory saved to: {output_file}")
+    print(f"  {len(trajectory)} time points")
+    if trajectory:
+        n_cells = [s["n_cells"] for s in trajectory]
+        print(f"  Cell count: {min(n_cells)} -> {max(n_cells)}")
 
 
 def save_trajectories(
     trajectories: dict[str, list],
     output_file: str | Path,
 ):
-    """Save trajectories to disk."""
+    """Save trajectories to disk (legacy format)."""
     output_file = Path(output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Convert numpy arrays to lists for JSON serialization
-    serializable = {}
-    for founder, traj in trajectories.items():
-        serializable[founder] = []
-        for state in traj:
-            state_copy = state.copy()
-            if "positions" in state_copy:
-                state_copy["positions"] = state_copy["positions"].tolist()
-            if "genes" in state_copy:
-                state_copy["genes"] = state_copy["genes"].tolist()
-            serializable[founder].append(state_copy)
-
     with open(output_file, "w") as f:
-        json.dump(serializable, f, indent=2)
+        json.dump(trajectories, f, indent=2)
 
     print(f"\nTrajectories saved to: {output_file}")
 
@@ -282,22 +521,59 @@ def main():
     parser.add_argument(
         "--lineage_file",
         type=str,
-        default="dataset/raw/wormbase/lineage.json",
+        default="dataset/raw/wormbase/lineage_tree.json",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="dataset/processed/sulston_trajectories.json",
+        default="dataset/processed/embryo_trajectory.json",
     )
-    parser.add_argument("--time_resolution", type=int, default=10)
+    parser.add_argument("--max_time", type=float, default=400.0)
+    parser.add_argument("--time_resolution", type=float, default=10.0)
+    parser.add_argument(
+        "--source",
+        type=str,
+        default="auto",
+        choices=["auto", "wormguides", "synthetic"],
+        help="Trajectory source: real WormGUIDES if available, or synthetic fallback.",
+    )
+    parser.add_argument(
+        "--nuclei_dir",
+        type=str,
+        default="dataset/raw/wormguides/nuclei_files",
+    )
+    parser.add_argument(
+        "--deaths_csv",
+        type=str,
+        default="dataset/raw/wormguides/CellDeaths.csv",
+    )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Output legacy format (separate trajectories per founder)",
+    )
     args = parser.parse_args()
 
-    extractor = SulstonTrajectoryExtractor(args.lineage_file)
-    trajectories = extractor.extract_all_trajectories(
-        time_resolution=args.time_resolution,
-    )
+    extractor = WholeEmbryoTrajectoryExtractor(args.lineage_file)
 
-    save_trajectories(trajectories, args.output)
+    if args.legacy:
+        # Legacy mode: separate trajectories per founder
+        trajectories = extractor.extract_all_trajectories(
+            max_depth=8,
+            time_resolution=args.time_resolution,
+        )
+        save_trajectories(trajectories, args.output)
+    else:
+        # New mode: whole-embryo trajectory
+        print("Extracting whole-embryo trajectory...")
+        trajectory = extractor.extract_embryo_trajectory(
+            max_time=args.max_time,
+            time_resolution=args.time_resolution,
+            source=args.source,
+            nuclei_dir=args.nuclei_dir,
+            deaths_csv=args.deaths_csv,
+        )
+        save_trajectory(trajectory, args.output)
 
 
 if __name__ == "__main__":

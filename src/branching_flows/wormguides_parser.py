@@ -173,7 +173,6 @@ def parse_wormguides(
 
     # Detect death events
     death_events: list[DeathEvent] = []
-    dividing_cells = {d.parent for d in division_events}
     for name in sorted(death_set):
         if name in cell_trajectories:
             traj = cell_trajectories[name]

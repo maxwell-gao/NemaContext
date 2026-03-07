@@ -91,7 +91,11 @@ def masked_sinkhorn_divergence(
         loss = loss + spatial_loss * spatial_mask.float().mean()
         weights = weights + spatial_mask.float().mean()
 
-    return loss / weights.clamp(min=1e-6) if weights > 0 else torch.tensor(0.0, device=pred.device)
+    return (
+        loss / weights.clamp(min=1e-6)
+        if weights > 0
+        else torch.tensor(0.0, device=pred.device)
+    )
 
 
 def trimodal_context_loss(

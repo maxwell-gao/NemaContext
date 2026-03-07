@@ -305,7 +305,9 @@ def run_cross_lineage_discovery(
 ):
     """Run full cross-lineage discovery pipeline."""
     from src.branching_flows.autoregressive_model import AutoregressiveNemaModel
-    from examples.whole_organism_ar.train_autoregressive_full import EmbryoTrajectoryDataset
+    from examples.whole_organism_ar.train_autoregressive_full import (
+        EmbryoTrajectoryDataset,
+    )
 
     print("=" * 70)
     print("CROSS-LINEAGE DISCOVERY PIPELINE")

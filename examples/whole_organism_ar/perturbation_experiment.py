@@ -24,9 +24,9 @@ import torch
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.crossmodal_model import CrossModalNemaModel
-from src.branching_flows.trimodal_dataset import TrimodalDataset
-from src.branching_flows.states import BranchingState
+from src.branching_flows.crossmodal_model import CrossModalNemaModel  # noqa: E402
+from src.branching_flows.trimodal_dataset import TrimodalDataset  # noqa: E402
+from src.branching_flows.states import BranchingState  # noqa: E402
 
 
 def perturb_lineage_deletion(

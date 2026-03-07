@@ -19,8 +19,8 @@ from torch.utils.data import Dataset, DataLoader
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.autoregressive_model import AutoregressiveNemaModel
-from src.branching_flows.states import BranchingState
+from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
+from src.branching_flows.states import BranchingState  # noqa: E402
 
 
 class DivisionSupervisedDataset(Dataset):

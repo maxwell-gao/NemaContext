@@ -238,7 +238,9 @@ class ExpressionMatcher:
 
             # Handle slash alternatives
             if "/" in lin_clean:
-                lin_options = [l.strip() for l in lin_clean.split("/")]
+                lin_options = [
+                    lin_option.strip() for lin_option in lin_clean.split("/")
+                ]
             else:
                 lin_options = [lin_clean]
 

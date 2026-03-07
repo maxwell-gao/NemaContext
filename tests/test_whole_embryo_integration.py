@@ -67,7 +67,15 @@ def test_trajectory_extraction(lineage_file):
     assert isinstance(trajectory, list)
 
     # Check each state has required fields
-    required_fields = ["time", "n_cells", "cell_names", "founders", "founder_ids", "positions", "genes"]
+    required_fields = [
+        "time",
+        "n_cells",
+        "cell_names",
+        "founders",
+        "founder_ids",
+        "positions",
+        "genes",
+    ]
     for state in trajectory:
         for field in required_fields:
             assert field in state, f"Missing field: {field}"
@@ -240,6 +248,7 @@ def test_global_spatial_coordinates(lineage_file):
         positions = state["positions"]
         if len(positions) > 0:
             import numpy as np
+
             positions_array = np.array(positions)
 
             # All coordinates should be in [0, 1] range

@@ -1715,7 +1715,6 @@ class StandardSpatialLoader:
         """
         import h5py
 
-        cache_key = (frame, embryo_idx)
         # Use frame as cache key since embryo_idx is usually 0
         if frame in self._coord_cache:
             return self._coord_cache[frame]

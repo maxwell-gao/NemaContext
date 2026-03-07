@@ -237,7 +237,6 @@ class TrimodalAnnDataBuilder:
             }
 
         # Get clean lineages (valid for matching)
-        clean_mask = lineage_df["lineage_valid"].values
         lineages = cell_df[lineage_col].fillna("").tolist()
 
         # Get embryo time if available

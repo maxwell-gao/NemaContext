@@ -39,18 +39,21 @@ class DynamicCellManager:
         max_cells: int = 1024,
         use_gumbel: bool = True,
         tau: float = 0.1,
+        deterministic_topk: bool = False,
     ):
         self.split_threshold = split_threshold
         self.del_threshold = del_threshold
         self.max_cells = max_cells
         self.use_gumbel = use_gumbel
         self.tau = tau  # Temperature for Gumbel-Softmax
+        self.deterministic_topk = deterministic_topk
 
     def sample_events(
         self,
         split_logits: torch.Tensor,
         del_logits: torch.Tensor,
         deterministic: bool = False,
+        valid_mask: torch.Tensor | None = None,
     ) -> EventDecision:
         """Sample division and deletion events.
 
@@ -71,9 +74,42 @@ class DynamicCellManager:
         del_probs = torch.sigmoid(del_logits)
 
         if deterministic:
-            # Hard thresholding for inference
-            split_samples = (split_probs > self.split_threshold).float()
-            del_samples = (del_probs > self.del_threshold).float()
+            if self.deterministic_topk:
+                if valid_mask is None:
+                    valid_mask = torch.ones_like(split_probs, dtype=torch.bool)
+
+                split_samples = torch.zeros_like(split_probs)
+                del_samples = torch.zeros_like(del_probs)
+
+                for b in range(split_probs.shape[0]):
+                    valid_indices = torch.where(valid_mask[b])[0]
+                    if valid_indices.numel() == 0:
+                        continue
+
+                    valid_del_probs = del_probs[b, valid_indices]
+                    n_delete = int(torch.round(valid_del_probs.sum()).item())
+                    n_delete = max(0, min(n_delete, valid_indices.numel()))
+                    if n_delete > 0:
+                        del_topk = torch.topk(valid_del_probs, k=n_delete).indices
+                        del_samples[b, valid_indices[del_topk]] = 1.0
+
+                    survivor_indices = valid_indices[
+                        del_samples[b, valid_indices] < 0.5
+                    ]
+                    if survivor_indices.numel() == 0:
+                        continue
+
+                    valid_split_probs = split_probs[b, survivor_indices]
+                    n_split = int(torch.round(valid_split_probs.sum()).item())
+                    n_split = max(0, min(n_split, survivor_indices.numel()))
+                    if n_split > 0:
+                        split_topk = torch.topk(valid_split_probs, k=n_split).indices
+                        split_samples[b, survivor_indices[split_topk]] = 1.0
+            else:
+                # Default deterministic inference uses plain thresholds to avoid
+                # injecting a hand-crafted event-count policy into rollout.
+                split_samples = (split_probs > self.split_threshold).float()
+                del_samples = (del_probs > self.del_threshold).float()
         else:
             # Differentiable sampling for training
             if self.use_gumbel:

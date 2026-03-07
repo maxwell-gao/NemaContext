@@ -37,7 +37,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data.builder import TrimodalAnnDataBuilder
+from src.data.builder import TrimodalAnnDataBuilder  # noqa: E402
 
 
 def setup_logging(verbose: bool = False) -> None:

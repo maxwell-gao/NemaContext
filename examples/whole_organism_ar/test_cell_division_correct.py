@@ -24,11 +24,13 @@ import torch
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.autoregressive_model import AutoregressiveNemaModel
-from src.branching_flows.states import BranchingState
+from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
+from src.branching_flows.states import BranchingState  # noqa: E402
 
 
-def divide_cell(parent_state: BranchingState, model: AutoregressiveNemaModel) -> BranchingState:
+def divide_cell(
+    parent_state: BranchingState, model: AutoregressiveNemaModel
+) -> BranchingState:
     """Divide cells using model-predicted daughter states.
 
     Instead of manually creating daughter cells with programmed noise,
@@ -61,12 +63,16 @@ def divide_cell(parent_state: BranchingState, model: AutoregressiveNemaModel) ->
 
         for i in range(n_cells):
             parent_cont = parent_state.states[0][b, i]  # [gene_dim + spatial]
-            parent_disc = parent_state.states[1][b, i] if parent_state.states[1] is not None else 0
+            parent_disc = (
+                parent_state.states[1][b, i]
+                if parent_state.states[1] is not None
+                else 0
+            )
 
             # Split gene and spatial
             gene_dim = 2000
             parent_genes = parent_cont[:gene_dim]
-            parent_spatial = parent_cont[gene_dim:gene_dim + 3]
+            parent_spatial = parent_cont[gene_dim : gene_dim + 3]
 
             # === CRITICAL: DO NOT PROGRAM ASYMMETRY ===
             # Instead, use the model's predicted gene_delta
@@ -101,7 +107,9 @@ def divide_cell(parent_state: BranchingState, model: AutoregressiveNemaModel) ->
 
         if batch_continuous:
             new_continuous.append(torch.stack(batch_continuous))
-            new_discrete.append(torch.tensor(batch_discrete, dtype=torch.long, device=device))
+            new_discrete.append(
+                torch.tensor(batch_discrete, dtype=torch.long, device=device)
+            )
 
     # Stack batch
     max_cells = max(c.shape[0] for c in new_continuous)
@@ -130,7 +138,9 @@ def divide_cell(parent_state: BranchingState, model: AutoregressiveNemaModel) ->
         states=(new_cont_tensor, new_disc_tensor),
         groupings=torch.zeros(B, max_cells, dtype=torch.long, device=device),
         del_flags=torch.zeros(B, max_cells, dtype=torch.bool, device=device),
-        ids=torch.arange(1, max_cells + 1, dtype=torch.long, device=device).unsqueeze(0).expand(B, -1),
+        ids=torch.arange(1, max_cells + 1, dtype=torch.long, device=device)
+        .unsqueeze(0)
+        .expand(B, -1),
         padmask=torch.ones(B, max_cells, dtype=torch.bool, device=device),
         flowmask=torch.ones(B, max_cells, dtype=torch.bool, device=device),
         branchmask=torch.ones(B, max_cells, dtype=torch.bool, device=device),

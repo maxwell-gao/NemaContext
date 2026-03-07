@@ -15,17 +15,14 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
-import torch.nn.functional as F
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.crossmodal_model import CrossModalNemaModel
-from src.branching_flows.trimodal_dataset import TrimodalDataset
-from src.branching_flows.states import BranchingState
+from src.branching_flows.crossmodal_model import CrossModalNemaModel  # noqa: E402
+from src.branching_flows.states import BranchingState  # noqa: E402
 
 
 class AutoregressiveSimulator:

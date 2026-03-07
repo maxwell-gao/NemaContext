@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 project_root = Path(__file__).parent.parent
@@ -22,8 +21,8 @@ sys.path.insert(0, str(project_root))
 from src.branching_flows.autoregressive_model import (
     AutoregressiveNemaModel,
     autoregressive_loss,
-)
-from src.branching_flows.states import BranchingState
+)  # noqa: E402
+from src.branching_flows.states import BranchingState  # noqa: E402
 
 
 class SyntheticTrajectoryDataset(Dataset):

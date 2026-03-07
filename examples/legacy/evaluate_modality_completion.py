@@ -205,17 +205,11 @@ def main():
     # Evaluate
     print("\n" + "=" * 70)
     if args.test_mode == "gene_to_spatial":
-        results = evaluate_gene_to_spatial(model, dataset, args.n_test, device)
+        evaluate_gene_to_spatial(model, dataset, args.n_test, device)
     else:
-        results = evaluate_spatial_to_gene(model, dataset, args.n_test, device)
+        evaluate_spatial_to_gene(model, dataset, args.n_test, device)
 
     # Save results summary
-    summary = {
-        "test_mode": args.test_mode,
-        "mean_error": float(results["mean_error"]),
-        "checkpoint": args.checkpoint,
-    }
-
     print("\n" + "=" * 70)
     print("EVALUATION COMPLETE")
     print("=" * 70)

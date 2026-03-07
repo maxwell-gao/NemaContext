@@ -19,11 +19,48 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
 from src.branching_flows.states import BranchingState  # noqa: E402
+
+
+def sample_log_uniform_sigma(
+    sigma_min: float,
+    sigma_max: float,
+    device: str,
+) -> torch.Tensor:
+    """Sample sigma from log-uniform distribution."""
+    u = torch.rand(1, device=device)
+    log_min = torch.log(torch.tensor(sigma_min, device=device))
+    log_max = torch.log(torch.tensor(sigma_max, device=device))
+    return torch.exp(log_min + u * (log_max - log_min))
+
+
+def add_diffusion_noise(
+    state: BranchingState,
+    sigma: torch.Tensor,
+) -> tuple[BranchingState, torch.Tensor]:
+    """Create noisy state and epsilon target for denoising."""
+    cont = state.states[0]
+    noise = torch.randn_like(cont)
+    sigma_view = sigma.view(1, 1, 1)
+
+    noisy_cont = cont + sigma_view * noise
+    mask = state.padmask.unsqueeze(-1).to(cont.dtype)
+    noisy_cont = noisy_cont * mask + cont * (1.0 - mask)
+
+    noisy_state = BranchingState(
+        states=(noisy_cont, state.states[1]),
+        groupings=state.groupings,
+        del_flags=state.del_flags,
+        ids=state.ids,
+        padmask=state.padmask,
+        flowmask=state.flowmask,
+        branchmask=state.branchmask,
+    )
+    return noisy_state, noise
 
 
 def collate_branching_states(batch: list) -> dict:
@@ -155,6 +192,36 @@ class EmbryoTrajectoryDataset(Dataset):
     def __len__(self):
         return max(0, len(self.trajectory) - 1)
 
+    @staticmethod
+    def _child_names_in_next(parent_name: str, next_names: set[str]) -> list[str]:
+        """Find immediate daughters of a parent cell in the next state."""
+        prefix_len = len(parent_name) + 1
+        return [
+            name
+            for name in next_names
+            if name.startswith(parent_name) and len(name) == prefix_len
+        ]
+
+    def _infer_event_targets(
+        self,
+        current: dict,
+        next_state: dict,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Infer split/delete targets from consecutive cell-name sets."""
+        n_current = current["n_cells"]
+        target_split = torch.zeros(n_current)
+        target_del = torch.zeros(n_current)
+
+        next_names = set(next_state.get("cell_names", []))
+        for idx, cell_name in enumerate(current.get("cell_names", [])):
+            daughters = self._child_names_in_next(cell_name, next_names)
+            if len(daughters) >= 2:
+                target_split[idx] = 1.0
+            elif cell_name not in next_names:
+                target_del[idx] = 1.0
+
+        return target_split, target_del
+
     def __getitem__(self, idx):
         """Get consecutive time points."""
         current = self.trajectory[idx]
@@ -164,24 +231,15 @@ class EmbryoTrajectoryDataset(Dataset):
         current_state = self._state_to_branching(current)
         next_state_obj = self._state_to_branching(next_state)
 
-        # Extract event targets
-        n_current = current["n_cells"]
-        target_split = torch.zeros(n_current)
-        target_del = torch.zeros(n_current)
-
-        # Mark divisions
-        for div_idx in current.get("divisions", []):
-            if div_idx < n_current:
-                target_split[div_idx] = 1.0
-
-        # Mark deaths (if any)
-        for death_idx in current.get("deaths", []):
-            if death_idx < n_current:
-                target_del[death_idx] = 1.0
+        # Infer events from consecutive name sets rather than trusting stored
+        # division indices, which may encode birth events in older datasets.
+        target_split, target_del = self._infer_event_targets(current, next_state)
 
         return {
             "current": current_state,
             "next": next_state_obj,
+            "current_names": current.get("cell_names", []),
+            "next_names": next_state.get("cell_names", []),
             "target_split": target_split,
             "target_del": target_del,
             "time": current["time"],
@@ -195,12 +253,12 @@ class EmbryoTrajectoryDataset(Dataset):
         if "genes" in state:
             genes = torch.tensor(state["genes"], dtype=torch.float32)
         else:
-            genes = torch.randn(n_cells, self.n_hvg) * 0.1
+            genes = torch.zeros(n_cells, self.n_hvg, dtype=torch.float32)
 
         if "positions" in state:
             positions = torch.tensor(state["positions"], dtype=torch.float32)
         else:
-            positions = torch.randn(n_cells, 3) * 0.1
+            positions = torch.zeros(n_cells, 3, dtype=torch.float32)
 
         # Ensure correct shapes
         if genes.shape[0] != n_cells:
@@ -234,12 +292,20 @@ def compute_autoregressive_loss(
     model: AutoregressiveNemaModel,
     batch: dict,
     device: str,
+    sigma_min: float = 0.01,
+    sigma_max: float = 0.2,
+    lambda_denoise: float = 0.2,
+    sigma_cond_drop_prob: float = 0.1,
+    lambda_event_count: float = 0.0,
+    lambda_discrete: float = 0.1,
 ) -> tuple[torch.Tensor, dict]:
-    """Compute full autoregressive loss with events."""
+    """Compute AR next-step + diffusion-style denoising + event losses."""
     currents = batch["current"]
     next_states = batch["next"]
     target_splits = batch["target_split"]
     target_dels = batch["target_del"]
+    current_names_batch = batch["current_names"]
+    next_names_batch = batch["next_names"]
 
     # If single sample, wrap in list
     if isinstance(currents, BranchingState):
@@ -247,65 +313,148 @@ def compute_autoregressive_loss(
         next_states = [next_states]
         target_splits = [target_splits]
         target_dels = [target_dels]
+        current_names_batch = [current_names_batch]
+        next_names_batch = [next_names_batch]
 
     total_loss = torch.tensor(0.0, device=device)
-    all_losses = {"gene": [], "spatial": [], "split": [], "del": []}
+    all_losses = {
+        "gene": [],
+        "spatial": [],
+        "split": [],
+        "del": [],
+        "denoise": [],
+        "count": [],
+        "discrete": [],
+    }
 
-    for current, next_state, target_split, target_del in zip(
-        currents, next_states, target_splits, target_dels
+    for current, next_state, target_split, target_del, current_names, next_names in zip(
+        currents,
+        next_states,
+        target_splits,
+        target_dels,
+        current_names_batch,
+        next_names_batch,
     ):
         current = current.to(device)
         next_state = next_state.to(device)
         target_split = target_split.to(device)
         target_del = target_del.to(device)
 
-        # Forward pass
-        output = model.forward_step(current)
+        # Diffusion-style noising on current state.
+        sigma = sample_log_uniform_sigma(sigma_min, sigma_max, device)
+        noisy_current, eps_target = add_diffusion_noise(current, sigma)
+        sigma_for_model = sigma
+        if torch.rand(1, device=device).item() < sigma_cond_drop_prob:
+            sigma_for_model = torch.zeros_like(sigma)
 
-        # Handle dynamic cell counts (cells may divide between t and t+1)
+        # Forward pass from noisy current, conditioned on sigma.
+        output = model.forward_step(noisy_current, sigma=sigma_for_model)
+
+        current_name_to_idx = {name: idx for idx, name in enumerate(current_names)}
+        next_name_to_idx = {name: idx for idx, name in enumerate(next_names)}
+        matched_names = [name for name in current_names if name in next_name_to_idx]
+
+        if matched_names:
+            current_indices = torch.tensor(
+                [current_name_to_idx[name] for name in matched_names],
+                device=device,
+                dtype=torch.long,
+            )
+            next_indices = torch.tensor(
+                [next_name_to_idx[name] for name in matched_names],
+                device=device,
+                dtype=torch.long,
+            )
+
+            cont_current = current.states[0][0, current_indices, :]
+            cont_next = next_state.states[0][0, next_indices, :]
+            gene_delta_pred = output.gene_delta[0, current_indices, :]
+            true_gene_delta = cont_next[..., :2000] - cont_current[..., :2000]
+            gene_loss = F.mse_loss(gene_delta_pred, true_gene_delta)
+
+            spatial_vel_pred = output.spatial_vel[0, current_indices, :]
+            true_spatial_vel = cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
+            spatial_loss = F.mse_loss(spatial_vel_pred, true_spatial_vel)
+
+            discrete_logits = output.discrete_logits[0, current_indices, :]
+            discrete_target = next_state.states[1][0, next_indices]
+            discrete_loss = F.cross_entropy(discrete_logits, discrete_target)
+
+            noise_pred = output.noise_pred[0, current_indices, :]
+            eps_target_common = eps_target[0, current_indices, :]
+            denoise_loss = F.mse_loss(noise_pred, eps_target_common)
+        else:
+            gene_loss = torch.tensor(0.0, device=device)
+            spatial_loss = torch.tensor(0.0, device=device)
+            discrete_loss = torch.tensor(0.0, device=device)
+            denoise_loss = torch.tensor(0.0, device=device)
+
         n_current = current.states[0].shape[1]
-        n_next = next_state.states[0].shape[1]
-        n_common = min(n_current, n_next)
-
-        # State prediction loss
-        valid_mask = current.padmask.squeeze(0)[:n_common]
-
-        # Gene delta loss (only on cells that exist in both states)
-        gene_delta_pred = output.gene_delta[0, :n_common, :][valid_mask, :]
-        cont_current = current.states[0][0, :n_common, :][valid_mask, :]
-        cont_next = next_state.states[0][0, :n_common, :][valid_mask, :]
-
-        true_gene_delta = cont_next[..., :2000] - cont_current[..., :2000]
-        gene_loss = F.mse_loss(gene_delta_pred, true_gene_delta)
-
-        # Spatial velocity loss
-        spatial_vel_pred = output.spatial_vel[0, :n_common, :][valid_mask, :]
-        true_spatial_vel = cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
-        spatial_loss = F.mse_loss(spatial_vel_pred, true_spatial_vel)
+        valid_mask = current.padmask.squeeze(0)[:n_current]
 
         # Event prediction losses
-        split_logits = output.split_logits[0, :n_common, 0][valid_mask]
-        del_logits = output.del_logits[0, :n_common, 0][valid_mask]
+        split_logits = output.split_logits[0, :n_current, 0][valid_mask]
+        del_logits = output.del_logits[0, :n_current, 0][valid_mask]
 
-        target_split_cropped = target_split[:n_common][valid_mask]
-        target_del_cropped = target_del[:n_common][valid_mask]
+        target_split_cropped = target_split[:n_current][valid_mask]
+        target_del_cropped = target_del[:n_current][valid_mask]
 
-        split_loss = F.binary_cross_entropy_with_logits(
-            split_logits, target_split_cropped
+        split_pos = target_split_cropped.sum().item()
+        split_neg = max(1.0, float(target_split_cropped.numel() - split_pos))
+        split_pos_weight = torch.tensor(
+            [split_neg / max(1.0, float(split_pos))],
+            device=device,
         )
-        del_loss = F.binary_cross_entropy_with_logits(del_logits, target_del_cropped)
+        split_loss = F.binary_cross_entropy_with_logits(
+            split_logits,
+            target_split_cropped,
+            pos_weight=split_pos_weight,
+        )
+
+        del_pos = target_del_cropped.sum().item()
+        del_neg = max(1.0, float(target_del_cropped.numel() - del_pos))
+        del_pos_weight = torch.tensor(
+            [del_neg / max(1.0, float(del_pos))],
+            device=device,
+        )
+        del_loss = F.binary_cross_entropy_with_logits(
+            del_logits,
+            target_del_cropped,
+            pos_weight=del_pos_weight,
+        )
+
+        split_count_loss = F.mse_loss(
+            torch.sigmoid(split_logits).sum(),
+            target_split_cropped.sum(),
+        )
+        del_count_loss = F.mse_loss(
+            torch.sigmoid(del_logits).sum(),
+            target_del_cropped.sum(),
+        )
+        count_loss = split_count_loss + del_count_loss
 
         # Accumulate loss
-        sample_loss = gene_loss + spatial_loss + 0.5 * split_loss + 0.5 * del_loss
+        sample_loss = (
+            gene_loss
+            + spatial_loss
+            + lambda_discrete * discrete_loss
+            + 0.5 * split_loss
+            + 0.5 * del_loss
+            + lambda_event_count * count_loss
+            + lambda_denoise * denoise_loss
+        )
         total_loss = total_loss + sample_loss
 
         all_losses["gene"].append(gene_loss.item())
         all_losses["spatial"].append(spatial_loss.item())
         all_losses["split"].append(split_loss.item())
         all_losses["del"].append(del_loss.item())
+        all_losses["denoise"].append(denoise_loss.item())
+        all_losses["count"].append(count_loss.item())
+        all_losses["discrete"].append(discrete_loss.item())
 
     # Average over batch
-    batch_size = len(currents)
+    batch_size = max(1, len(all_losses["gene"]))
     total_loss = total_loss / batch_size
 
     loss_dict = {
@@ -314,6 +463,9 @@ def compute_autoregressive_loss(
         "spatial": sum(all_losses["spatial"]) / batch_size,
         "split": sum(all_losses["split"]) / batch_size,
         "del": sum(all_losses["del"]) / batch_size,
+        "denoise": sum(all_losses["denoise"]) / batch_size,
+        "count": sum(all_losses["count"]) / batch_size,
+        "discrete": sum(all_losses["discrete"]) / batch_size,
     }
 
     return total_loss, loss_dict
@@ -324,6 +476,12 @@ def train_epoch(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: str,
+    sigma_min: float,
+    sigma_max: float,
+    lambda_denoise: float,
+    sigma_cond_drop_prob: float,
+    lambda_event_count: float,
+    lambda_discrete: float,
 ) -> dict:
     """Train for one epoch."""
     model.train()
@@ -334,13 +492,26 @@ def train_epoch(
         "spatial": 0.0,
         "split": 0.0,
         "del": 0.0,
+        "denoise": 0.0,
+        "count": 0.0,
+        "discrete": 0.0,
     }
     n_batches = 0
 
     for batch in loader:
         optimizer.zero_grad()
 
-        loss, loss_dict = compute_autoregressive_loss(model, batch, device)
+        loss, loss_dict = compute_autoregressive_loss(
+            model,
+            batch,
+            device,
+            sigma_min=sigma_min,
+            sigma_max=sigma_max,
+            lambda_denoise=lambda_denoise,
+            sigma_cond_drop_prob=sigma_cond_drop_prob,
+            lambda_event_count=lambda_event_count,
+            lambda_discrete=lambda_discrete,
+        )
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -358,6 +529,12 @@ def validate(
     model: AutoregressiveNemaModel,
     loader: DataLoader,
     device: str,
+    sigma_min: float,
+    sigma_max: float,
+    lambda_denoise: float,
+    sigma_cond_drop_prob: float,
+    lambda_event_count: float,
+    lambda_discrete: float,
 ) -> dict:
     """Validate model."""
     model.eval()
@@ -368,11 +545,24 @@ def validate(
         "spatial": 0.0,
         "split": 0.0,
         "del": 0.0,
+        "denoise": 0.0,
+        "count": 0.0,
+        "discrete": 0.0,
     }
     n_batches = 0
 
     for batch in loader:
-        loss, loss_dict = compute_autoregressive_loss(model, batch, device)
+        loss, loss_dict = compute_autoregressive_loss(
+            model,
+            batch,
+            device,
+            sigma_min=sigma_min,
+            sigma_max=sigma_max,
+            lambda_denoise=lambda_denoise,
+            sigma_cond_drop_prob=sigma_cond_drop_prob,
+            lambda_event_count=lambda_event_count,
+            lambda_discrete=lambda_discrete,
+        )
 
         for k in total_losses:
             total_losses[k] += loss_dict[k]
@@ -654,8 +844,39 @@ def main():
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--gene_dim", type=int, default=2000)
+    parser.add_argument("--spatial_dim", type=int, default=3)
+    parser.add_argument("--discrete_k", type=int, default=7)
+    parser.add_argument("--d_model", type=int, default=256)
+    parser.add_argument("--n_layers", type=int, default=6)
+    parser.add_argument("--n_heads", type=int, default=8)
+    parser.add_argument("--cross_modal_every", type=int, default=2)
+    parser.add_argument("--max_seq_len", type=int, default=128)
+    parser.add_argument("--dt", type=float, default=0.1)
+    parser.add_argument("--sigma_min", type=float, default=0.01)
+    parser.add_argument("--sigma_max", type=float, default=0.2)
+    parser.add_argument("--lambda_denoise", type=float, default=0.2)
+    parser.add_argument("--lambda_event_count", type=float, default=0.0)
+    parser.add_argument("--lambda_discrete", type=float, default=0.1)
+    parser.add_argument(
+        "--sigma_cond_drop_prob",
+        type=float,
+        default=0.1,
+        help="Probability of dropping sigma conditioning (CFG-style).",
+    )
     parser.add_argument(
         "--save_dir", type=str, default="checkpoints_autoregressive_full"
+    )
+    parser.add_argument(
+        "--init_checkpoint",
+        type=str,
+        default=None,
+        help="Optional checkpoint to warm-start from.",
+    )
+    parser.add_argument(
+        "--deterministic_topk_events",
+        action="store_true",
+        help="Use top-k event selection at deterministic inference time for ablations.",
     )
     parser.add_argument(
         "--test_cross_lineage",
@@ -668,6 +889,15 @@ def main():
     print("WHOLE-EMBRYO AUTOREGRESSIVE TRAINING")
     print("=" * 70)
     print(f"Trajectory file: {args.trajectory_file}")
+    print(
+        f"Diffusion config: sigma=[{args.sigma_min}, {args.sigma_max}], "
+        f"lambda_denoise={args.lambda_denoise}, "
+        f"sigma_drop={args.sigma_cond_drop_prob}"
+    )
+    print(
+        f"Event config: lambda_event_count={args.lambda_event_count}, "
+        f"lambda_discrete={args.lambda_discrete}"
+    )
     print()
 
     # Load dataset
@@ -706,18 +936,26 @@ def main():
     # Create model
     print("Creating model...")
     model = AutoregressiveNemaModel(
-        gene_dim=2000,
-        spatial_dim=3,
-        discrete_K=7,  # 7 founders: P0, AB, MS, E, C, D, P4
-        d_model=256,
-        n_layers=6,
-        n_heads=8,
-        cross_modal_every=2,
-        max_seq_len=128,
-        dt=0.1,
+        gene_dim=args.gene_dim,
+        spatial_dim=args.spatial_dim,
+        discrete_K=args.discrete_k,
+        d_model=args.d_model,
+        n_layers=args.n_layers,
+        n_heads=args.n_heads,
+        cross_modal_every=args.cross_modal_every,
+        max_seq_len=args.max_seq_len,
+        dt=args.dt,
+        deterministic_topk_events=args.deterministic_topk_events,
     ).to(args.device)
 
     print(f"  Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    if args.init_checkpoint:
+        ckpt = torch.load(args.init_checkpoint, map_location=args.device)
+        state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+        load_result = model.load_state_dict(state_dict, strict=False)
+        print(f"  Warm start: {args.init_checkpoint}")
+        print(f"    Missing keys: {len(load_result.missing_keys)}")
+        print(f"    Unexpected keys: {len(load_result.unexpected_keys)}")
     print()
 
     # Optimizer
@@ -734,20 +972,45 @@ def main():
     save_dir.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(1, args.epochs + 1):
-        train_losses = train_epoch(model, train_loader, optimizer, args.device)
-        val_losses = validate(model, val_loader, args.device)
+        train_losses = train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            args.device,
+            sigma_min=args.sigma_min,
+            sigma_max=args.sigma_max,
+            lambda_denoise=args.lambda_denoise,
+            sigma_cond_drop_prob=args.sigma_cond_drop_prob,
+            lambda_event_count=args.lambda_event_count,
+            lambda_discrete=args.lambda_discrete,
+        )
+        val_losses = validate(
+            model,
+            val_loader,
+            args.device,
+            sigma_min=args.sigma_min,
+            sigma_max=args.sigma_max,
+            lambda_denoise=args.lambda_denoise,
+            sigma_cond_drop_prob=args.sigma_cond_drop_prob,
+            lambda_event_count=args.lambda_event_count,
+            lambda_discrete=args.lambda_discrete,
+        )
         scheduler.step()
 
         print(f"Epoch {epoch:3d}:")
         print(
             f"  Train: total={train_losses['total']:.4f}, "
             f"gene={train_losses['gene']:.4f}, "
-            f"split={train_losses['split']:.4f}"
+            f"split={train_losses['split']:.4f}, "
+            f"count={train_losses['count']:.4f}, "
+            f"denoise={train_losses['denoise']:.4f}"
         )
         print(
             f"  Val:   total={val_losses['total']:.4f}, "
             f"gene={val_losses['gene']:.4f}, "
-            f"split={val_losses['split']:.4f}"
+            f"split={val_losses['split']:.4f}, "
+            f"count={val_losses['count']:.4f}, "
+            f"denoise={val_losses['denoise']:.4f}"
         )
 
         if val_losses["total"] < best_val_loss:
