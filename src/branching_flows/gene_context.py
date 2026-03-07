@@ -98,3 +98,72 @@ class GeneContextModel(nn.Module):
             split_logits=split_logits,
             del_logits=del_logits,
         )
+
+
+class SingleCellGeneTimeModel(nn.Module):
+    """Single-cell gene+time baseline without multi-cell context."""
+
+    def __init__(
+        self,
+        gene_dim: int,
+        d_model: int = 256,
+        n_layers: int = 3,
+    ):
+        super().__init__()
+        self.gene_proj = nn.Sequential(
+            nn.Linear(gene_dim + 3, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+        )
+        mlp_layers: list[nn.Module] = []
+        for _ in range(n_layers):
+            mlp_layers.extend(
+                [
+                    nn.Linear(d_model, d_model),
+                    nn.LayerNorm(d_model),
+                    nn.GELU(),
+                ]
+            )
+        self.backbone = nn.Sequential(*mlp_layers)
+        self.gene_head = nn.Linear(d_model, gene_dim)
+        self.split_head = nn.Linear(d_model, 1)
+        self.del_head = nn.Linear(d_model, 1)
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight, gain=0.1)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        future_time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> GeneContextOutput:
+        global_time = time.unsqueeze(1).expand_as(token_times)
+        delta_time = (future_time - time).unsqueeze(1).expand_as(token_times)
+        features = torch.cat(
+            [
+                genes,
+                global_time.unsqueeze(-1),
+                delta_time.unsqueeze(-1),
+                token_times.unsqueeze(-1),
+            ],
+            dim=-1,
+        )
+        x = self.gene_proj(features)
+        x = self.backbone(x)
+
+        gene_delta = self.gene_head(x) * valid_mask.unsqueeze(-1)
+        split_logits = self.split_head(x).squeeze(-1) * valid_mask
+        del_logits = self.del_head(x).squeeze(-1) * valid_mask
+        return GeneContextOutput(
+            gene_delta=gene_delta,
+            split_logits=split_logits,
+            del_logits=del_logits,
+        )
