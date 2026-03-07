@@ -9,6 +9,7 @@ This repo is now organized around one primary objective:
 - `docs/REPO_STRUCTURE.md`: current repository layout and what each area is for.
 - `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`: model objective, data contract, and AR + diffusion-style update design.
 - `docs/ROADMAP.md`: near-term implementation milestones.
+- `docs/GENE_CONTEXT_BASELINE.md`: biological interpretation of the active gene-context baseline and related published work.
 
 ## Historical Work
 
