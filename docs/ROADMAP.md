@@ -26,7 +26,7 @@ What is already in place:
 What has been falsified or downgraded:
 
 - synthetic gene or synthetic spatial patterns are not acceptable as the main path,
-- spatial-only modeling is an engineering baseline, not the biological main model,
+- spatial or spatial-plus-founder modeling is an engineering baseline, not the biological main model,
 - explicit lineage embeddings as model inputs are treated as injected prior,
 - inference-time top-k event rules are diagnostic tools only, not the default solution.
 

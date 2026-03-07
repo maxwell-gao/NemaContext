@@ -23,11 +23,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.branching_flows.crossmodal_model import CrossModalNemaModel  # noqa: E402
-from autoregressive_simulation import (
-    AutoregressiveSimulator,
-    BranchingState,
-    create_initial_state,
-)  # noqa: E402
+from autoregressive_simulation import AutoregressiveSimulator, BranchingState, create_initial_state  # noqa: E402
 
 
 def main():

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate the spatial-first rollout baseline."""
+"""Evaluate the spatial-plus-founder engineering rollout baseline."""
 
 from __future__ import annotations
 
@@ -90,7 +90,9 @@ def evaluate_divisions(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate spatial rollout baseline.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate the spatial-plus-founder engineering rollout baseline."
+    )
     parser.add_argument("--trajectory_file", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--device", default="cpu")

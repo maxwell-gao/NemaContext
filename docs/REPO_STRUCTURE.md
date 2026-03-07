@@ -27,12 +27,18 @@
 ### Active (`examples/whole_organism_ar/`)
 
 - `train_autoregressive_full.py`: main training script.
-- `train_with_division_supervision.py`: division-focused training variant.
-- `autoregressive_simulation.py`: rollout simulation.
+- `evaluate_rollout.py`: rollout and perturbation evaluation for the main AR path.
 - `perturbation_cross_lineage.py`: perturbation evaluation in shared context.
 - `test_cross_lineage_attention.py`: validates cross-lineage interaction effects.
+- `demo_whole_embryo.py`: inspect whole-embryo trajectory structure.
+- `visualize_embryo.py`: visualization and export utilities.
+- `train_spatial_rollout.py`: engineering-only spatial-plus-founder rollout baseline.
+- `evaluate_spatial_rollout.py`: evaluation for the spatial-plus-founder baseline.
 
 ### Legacy (`examples/legacy/`)
 
 Trimodal/crossmodal and earlier data-integration training/evaluation scripts.
 These are not the default path for new development.
+
+- `whole_organism_ar/`: older autoregressive scripts that depend on synthetic trajectories,
+  explicit lineage supervision, or crossmodal checkpoints.

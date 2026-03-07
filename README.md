@@ -38,7 +38,9 @@ uv run python examples/whole_organism_ar/train_autoregressive_full.py \
   --trajectory_file dataset/processed/embryo_trajectory.json \
   --epochs 100
 
-# 3) Evaluate cross-lineage behavior
-uv run python examples/whole_organism_ar/test_cross_lineage_attention.py \
-  --checkpoint checkpoints_autoregressive/best.pt
+# 3) Evaluate rollout behavior
+uv run python examples/whole_organism_ar/evaluate_rollout.py \
+  --trajectory_file dataset/processed/embryo_trajectory.json \
+  --checkpoint checkpoints_autoregressive_full/best.pt \
+  --output result/autoregressive_results/evaluation_rollout.json
 ```

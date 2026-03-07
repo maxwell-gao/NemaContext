@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a spatial-first whole-embryo rollout baseline on real trajectories."""
+"""Train a spatial-plus-founder engineering rollout baseline on real trajectories."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def collate_branching_states(batch: list[dict]) -> dict:
 
 
 class SpatialTrajectoryDataset(Dataset):
-    """Real-trajectory dataset for spatial-only rollout."""
+    """Real-trajectory dataset for the spatial-plus-founder rollout baseline."""
 
     def __init__(self, trajectory_file: str, include_velocity: bool = True):
         with open(trajectory_file) as f:
@@ -284,7 +284,9 @@ def run_epoch(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train spatial rollout baseline.")
+    parser = argparse.ArgumentParser(
+        description="Train the spatial-plus-founder engineering rollout baseline."
+    )
     parser.add_argument("--trajectory_file", required=True)
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch_size", type=int, default=1)

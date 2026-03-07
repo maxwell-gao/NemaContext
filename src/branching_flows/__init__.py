@@ -26,6 +26,9 @@ from .states import (
     uniform_del_insertions,
 )
 from .trees import FlowNode, add_child, merge_nodes
+# Legacy compatibility: older trimodal/lineage-biased experiments still import
+# these helpers from the package root, but they are not part of the current
+# recommended whole-organism API surface.
 from .lineage import (
     compute_lineage_bias,
     batch_lineage_bias,
@@ -40,6 +43,7 @@ from .emergent_loss import (
     diversity_loss,
     weak_anchor_loss,
 )
+# Legacy compatibility for older trimodal training paths.
 from .trimodal_loss import (
     trimodal_context_loss,
     curriculum_trimodal_loss,
@@ -84,19 +88,18 @@ __all__ = [
     # Trees
     "add_child",
     "merge_nodes",
-    # Lineage
-    "compute_lineage_bias",
-    "batch_lineage_bias",
-    "apply_lineage_bias_to_attention",
-    "lineage_distance",
-    "parse_lineage_name",
     # Emergent Loss
     "emergent_context_loss",
     "sinkhorn_divergence",
     "cell_count_loss",
     "diversity_loss",
     "weak_anchor_loss",
-    # Trimodal Loss
+    # Legacy compatibility only
+    "compute_lineage_bias",
+    "batch_lineage_bias",
+    "apply_lineage_bias_to_attention",
+    "lineage_distance",
+    "parse_lineage_name",
     "trimodal_context_loss",
     "curriculum_trimodal_loss",
     "masked_mse_loss",
