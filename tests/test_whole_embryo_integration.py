@@ -2,9 +2,9 @@
 
 Validates that:
 1. Trajectory extraction produces correct whole-embryo format
-2. Dataset correctly loads founder identity as discrete features
-3. Model training works with whole-embryo trajectories
-4. Cross-lineage attention is functional
+2. Founder metadata is preserved in trajectory artifacts
+3. Active dataset path does not inject founder identity into model inputs
+4. Model training works with whole-embryo trajectories
 """
 
 from __future__ import annotations
@@ -136,31 +136,23 @@ def test_dataset_loading(trajectory_file):
     # Check BranchingState structure
     current = sample["current"]
     assert isinstance(current, BranchingState)
-    assert len(current.states) == 2  # (continuous, discrete)
-
-    # Check discrete features (founder ids)
-    discrete = current.states[1]
-    assert discrete.dtype == torch.long
+    assert len(current.states) == 2  # (continuous, optional discrete)
+    assert current.states[1] is None
 
 
-def test_dataset_founder_discrete_features(trajectory_file):
-    """Test that founder identity is correctly encoded as discrete features."""
+def test_founder_metadata_preserved_in_trajectory(trajectory_file):
+    """Founder metadata should remain available in the raw trajectory artifact."""
     dataset = EmbryoTrajectoryDataset(str(trajectory_file))
 
-    # Check multiple samples have varying founder IDs
     all_founder_ids = set()
-    for i in range(min(5, len(dataset))):
-        sample = dataset[i]
-        current = sample["current"]
-        founder_ids = current.states[1][0].tolist()
-        all_founder_ids.update(founder_ids)
+    for state in dataset.trajectory[: min(5, len(dataset.trajectory))]:
+        all_founder_ids.update(state["founder_ids"])
 
-    # Should have multiple different founder IDs
     assert len(all_founder_ids) > 1, "No founder diversity in dataset"
 
 
-def test_model_forward_with_founder_features(trajectory_file):
-    """Test that model can process states with founder features."""
+def test_model_forward_without_founder_features(trajectory_file):
+    """Test that model can process states without founder-id input features."""
     dataset = EmbryoTrajectoryDataset(str(trajectory_file))
     if len(dataset) == 0:
         pytest.skip("Empty dataset")
@@ -187,22 +179,19 @@ def test_model_forward_with_founder_features(trajectory_file):
     assert output.del_logits is not None
 
 
-def test_model_cross_lineage_attention(trajectory_file):
-    """Test that attention mechanism works across lineages."""
+def test_model_multi_cell_attention(trajectory_file):
+    """Test that attention mechanism works on multi-cell whole-embryo states."""
     dataset = EmbryoTrajectoryDataset(str(trajectory_file))
 
-    # Find a sample with multiple founders
-    multi_founder_sample = None
+    multi_cell_sample = None
     for i in range(len(dataset)):
         sample = dataset[i]["current"]
-        founder_ids = sample.states[1][0]
-        unique = torch.unique(founder_ids[sample.padmask[0]])
-        if len(unique) > 1:
-            multi_founder_sample = sample
+        if int(sample.padmask[0].sum().item()) > 1:
+            multi_cell_sample = sample
             break
 
-    if multi_founder_sample is None:
-        pytest.skip("No multi-founder samples found")
+    if multi_cell_sample is None:
+        pytest.skip("No multi-cell samples found")
 
     model = AutoregressiveNemaModel(
         gene_dim=2000,
@@ -215,7 +204,7 @@ def test_model_cross_lineage_attention(trajectory_file):
     )
 
     # Compute attention
-    h = model.encode_state(multi_founder_sample)
+    h = model.encode_state(multi_cell_sample)
     B, L, D = h.shape
 
     # Get attention from first layer

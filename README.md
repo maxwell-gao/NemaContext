@@ -43,4 +43,7 @@ uv run python examples/whole_organism_ar/evaluate_rollout.py \
   --trajectory_file dataset/processed/embryo_trajectory.json \
   --checkpoint checkpoints_autoregressive_full/best.pt \
   --output result/autoregressive_results/evaluation_rollout.json
+
+Founder-specific perturbation, visualization, and demo scripts are retained under
+`examples/legacy/whole_organism_ar/` for reference, not as the default path.
 ```

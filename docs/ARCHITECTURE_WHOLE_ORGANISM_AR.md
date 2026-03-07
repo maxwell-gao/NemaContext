@@ -20,10 +20,17 @@ Each timestep contains all lineages together:
 
 - `n_cells`
 - `cell_names`
-- `founders`, `founder_ids`
 - `positions` in global embryo coordinates
 - `genes`
 - event labels (`divisions`, optional `deaths`)
+
+Optional metadata currently present in some trajectory artifacts:
+
+- `founders`
+- `founder_ids`
+
+These should be treated as bookkeeping metadata, not as a required biological
+input for the active model path.
 
 No per-founder isolated trajectory is used in the primary pipeline.
 
@@ -53,4 +60,4 @@ This gives LLM-like iterative next-state generation with diffusion-inspired deno
 - keep `AutoregressiveNemaModel` as the base class
 - add a noise-conditioning pathway and training objective for denoising residual prediction
 - preserve whole-organism event supervision (split/delete)
-- evaluate cross-lineage influence under perturbation
+- evaluate multi-cell context effects without requiring founder-ID inputs

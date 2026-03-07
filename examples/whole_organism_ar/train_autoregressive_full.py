@@ -2,10 +2,10 @@
 """Full autoregressive training with whole-embryo trajectories.
 
 This is the production-level training script that:
-1. Loads unified whole-embryo trajectories (all lineages coexist)
+1. Loads unified whole-embryo trajectories (all cells coexist in one context)
 2. Trains with proper event supervision
-3. Validates with perturbation experiments
-4. Supports cross-lineage attention learning
+3. Validates with rollout perturbation experiments
+4. Avoids injecting founder identity into the model input state
 """
 
 from __future__ import annotations
@@ -246,7 +246,7 @@ class EmbryoTrajectoryDataset(Dataset):
         }
 
     def _state_to_branching(self, state: dict) -> BranchingState:
-        """Convert trajectory state to BranchingState with founder identity."""
+        """Convert trajectory state to BranchingState without founder input."""
         n_cells = state["n_cells"]
 
         # Get features
@@ -269,16 +269,8 @@ class EmbryoTrajectoryDataset(Dataset):
         # Continuous features: genes + spatial positions
         continuous = torch.cat([genes, positions], dim=-1).unsqueeze(0)
 
-        # Discrete features: founder identity (crucial for cross-lineage learning)
-        if "founder_ids" in state:
-            founder_ids = state["founder_ids"]
-            discrete = torch.tensor(founder_ids, dtype=torch.long).unsqueeze(0)
-        else:
-            # Fallback: all cells same founder
-            discrete = torch.zeros(1, n_cells, dtype=torch.long)
-
         return BranchingState(
-            states=(continuous, discrete),
+            states=(continuous, None),
             groupings=torch.zeros(1, n_cells, dtype=torch.long),
             del_flags=torch.zeros(1, n_cells, dtype=torch.bool),
             ids=torch.arange(1, n_cells + 1, dtype=torch.long).unsqueeze(0),
@@ -297,7 +289,7 @@ def compute_autoregressive_loss(
     lambda_denoise: float = 0.2,
     sigma_cond_drop_prob: float = 0.1,
     lambda_event_count: float = 0.0,
-    lambda_discrete: float = 0.1,
+    lambda_discrete: float = 0.0,
 ) -> tuple[torch.Tensor, dict]:
     """Compute AR next-step + diffusion-style denoising + event losses."""
     currents = batch["current"]
@@ -376,18 +368,20 @@ def compute_autoregressive_loss(
             true_spatial_vel = cont_next[..., 2000:2003] - cont_current[..., 2000:2003]
             spatial_loss = F.mse_loss(spatial_vel_pred, true_spatial_vel)
 
-            discrete_logits = output.discrete_logits[0, current_indices, :]
-            discrete_target = next_state.states[1][0, next_indices]
-            discrete_loss = F.cross_entropy(discrete_logits, discrete_target)
-
             noise_pred = output.noise_pred[0, current_indices, :]
             eps_target_common = eps_target[0, current_indices, :]
             denoise_loss = F.mse_loss(noise_pred, eps_target_common)
         else:
             gene_loss = torch.tensor(0.0, device=device)
             spatial_loss = torch.tensor(0.0, device=device)
-            discrete_loss = torch.tensor(0.0, device=device)
             denoise_loss = torch.tensor(0.0, device=device)
+
+        if matched_names and next_state.states[1] is not None:
+            discrete_logits = output.discrete_logits[0, current_indices, :]
+            discrete_target = next_state.states[1][0, next_indices]
+            discrete_loss = F.cross_entropy(discrete_logits, discrete_target)
+        else:
+            discrete_loss = torch.tensor(0.0, device=device)
 
         n_current = current.states[0].shape[1]
         valid_mask = current.padmask.squeeze(0)[:n_current]
@@ -572,197 +566,6 @@ def validate(
 
 
 @torch.no_grad()
-def test_cross_lineage_attention(
-    model: AutoregressiveNemaModel,
-    dataset: EmbryoTrajectoryDataset,
-    device: str,
-    threshold: float = 0.1,
-) -> dict:
-    """Test if model uses cross-lineage attention.
-
-    Method:
-    1. Normal forward pass with all cells
-    2. Mask non-target founder cells, forward again
-    3. Compare predictions: significant difference = cross-lineage dependency
-
-    Returns:
-        Dictionary with cross-lineage attention metrics
-    """
-    model.eval()
-
-    # Find a time point with multiple founders
-    multi_founder_idx = None
-    for idx in range(len(dataset)):
-        state = dataset.trajectory[idx]
-        founders = set(state.get("founders", []))
-        if len(founders) > 1:
-            multi_founder_idx = idx
-            break
-
-    if multi_founder_idx is None:
-        print("WARNING: No multi-founder time points found")
-        return {"cross_lineage_detected": False, "mean_delta_diff": 0.0}
-
-    # Get sample
-    sample = dataset[multi_founder_idx]
-    current = sample["current"].to(device)
-
-    # Normal prediction
-    output_full = model.forward_step(current)
-
-    # Isolate each founder and measure prediction change
-    founder_map_inv = {0: "P0", 1: "AB", 2: "MS", 3: "E", 4: "C", 5: "D", 6: "P4"}
-
-    delta_diffs = []
-    founder_analysis = {}
-
-    for founder_id in range(7):
-        founder_name = founder_map_inv.get(founder_id, "UNKNOWN")
-
-        # Find cells of this founder
-        founder_mask = (current.states[1][0] == founder_id) & current.padmask[0]
-        n_founder_cells = founder_mask.sum().item()
-
-        if n_founder_cells == 0:
-            continue
-
-        # Create isolated state (only this founder's cells)
-        isolated_indices = torch.where(founder_mask)[0]
-        new_cont = current.states[0][:, isolated_indices, :]
-        new_disc = current.states[1][:, isolated_indices]
-        n_kept = isolated_indices.shape[0]
-
-        isolated_state = BranchingState(
-            states=(new_cont, new_disc),
-            groupings=torch.zeros(1, n_kept, dtype=torch.long, device=device),
-            del_flags=torch.zeros(1, n_kept, dtype=torch.bool, device=device),
-            ids=torch.arange(1, n_kept + 1, dtype=torch.long, device=device).unsqueeze(
-                0
-            ),
-            padmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
-            flowmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
-            branchmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
-        )
-
-        # Isolated prediction
-        output_isolated = model.forward_step(isolated_state)
-
-        # Compare predictions for founder cells
-        full_gene_delta = output_full.gene_delta[0, founder_mask, :]
-        isolated_gene_delta = output_isolated.gene_delta[0, :, :]
-
-        diff = torch.norm(full_gene_delta - isolated_gene_delta, dim=-1).mean().item()
-        delta_diffs.append(diff)
-
-        founder_analysis[founder_name] = {
-            "n_cells": n_founder_cells,
-            "delta_diff": diff,
-            "uses_context": diff > threshold,
-        }
-
-    mean_delta_diff = sum(delta_diffs) / len(delta_diffs) if delta_diffs else 0.0
-
-    return {
-        "cross_lineage_detected": mean_delta_diff > threshold,
-        "mean_delta_diff": mean_delta_diff,
-        "founder_analysis": founder_analysis,
-    }
-
-
-@torch.no_grad()
-def test_perturbation_cross_lineage(
-    model: AutoregressiveNemaModel,
-    initial_state: BranchingState,
-    device: str,
-    target_founder: str = "AB",
-    perturb_time: int = 5,
-) -> dict:
-    """Test perturbation with cross-lineage effects.
-
-    Deletes all cells of target_founder and observes effect on other lineages.
-    """
-    model.eval()
-
-    # Founder name to ID mapping
-    founder_map = {"P0": 0, "AB": 1, "MS": 2, "E": 3, "C": 4, "D": 5, "P4": 6}
-    target_id = founder_map.get(target_founder, 1)
-
-    # Control trajectory
-    control_states = [initial_state]
-    state = initial_state
-
-    for _ in range(20):
-        state, _ = model.step(state, deterministic=True, apply_events=True)
-        control_states.append(state)
-
-    # Perturbed trajectory (delete target founder cells at perturb_time)
-    perturbed_states = [initial_state]
-    state = initial_state
-
-    for t in range(20):
-        if t == perturb_time:
-            # Remove all cells of target founder
-            founder_ids = state.states[1][0]
-            keep_mask = founder_ids != target_id
-
-            new_cont = state.states[0][:, keep_mask, :]
-            new_disc = state.states[1][:, keep_mask]
-            n_kept = keep_mask.sum().item()
-
-            if n_kept > 0:
-                state = BranchingState(
-                    states=(new_cont, new_disc),
-                    groupings=torch.zeros(1, n_kept, dtype=torch.long, device=device),
-                    del_flags=torch.zeros(1, n_kept, dtype=torch.bool, device=device),
-                    ids=torch.arange(
-                        1, n_kept + 1, dtype=torch.long, device=device
-                    ).unsqueeze(0),
-                    padmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
-                    flowmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
-                    branchmask=torch.ones(1, n_kept, dtype=torch.bool, device=device),
-                )
-
-        state, _ = model.step(state, deterministic=True, apply_events=True)
-        perturbed_states.append(state)
-
-    # Analyze cross-lineage effects
-    control_final = control_states[-1]
-    perturbed_final = perturbed_states[-1]
-
-    control_founders = control_final.states[1][0].cpu().numpy()
-    perturbed_founders = perturbed_final.states[1][0].cpu().numpy()
-
-    # Count cells per founder in each condition
-    control_counts = {
-        name: (control_founders == fid).sum() for name, fid in founder_map.items()
-    }
-    perturbed_counts = {
-        name: (perturbed_founders == fid).sum() for name, fid in founder_map.items()
-    }
-
-    # Compare non-target founders (these should show effects if cross-lineage)
-    cross_lineage_effects = {}
-    for founder, fid in founder_map.items():
-        if founder != target_founder:
-            diff = control_counts[founder] - perturbed_counts[founder]
-            cross_lineage_effects[founder] = {
-                "control": int(control_counts[founder]),
-                "perturbed": int(perturbed_counts[founder]),
-                "difference": int(diff),
-            }
-
-    return {
-        "target_founder": target_founder,
-        "control_total_cells": int(control_final.padmask.sum()),
-        "perturbed_total_cells": int(perturbed_final.padmask.sum()),
-        "cross_lineage_effects": cross_lineage_effects,
-        "showed_cross_lineage_effect": any(
-            e["difference"] != 0 for e in cross_lineage_effects.values()
-        ),
-    }
-
-
-@torch.no_grad()
 def test_perturbation(
     model: AutoregressiveNemaModel,
     initial_state: BranchingState,
@@ -800,7 +603,7 @@ def test_perturbation(
             mask = mask & state.padmask[0]
 
             new_cont = state.states[0][:, mask, :]
-            new_disc = state.states[1][:, mask]
+            new_disc = state.states[1][:, mask] if state.states[1] is not None else None
             n_kept = mask.sum().item()
 
             state = BranchingState(
@@ -857,7 +660,12 @@ def main():
     parser.add_argument("--sigma_max", type=float, default=0.2)
     parser.add_argument("--lambda_denoise", type=float, default=0.2)
     parser.add_argument("--lambda_event_count", type=float, default=0.0)
-    parser.add_argument("--lambda_discrete", type=float, default=0.1)
+    parser.add_argument(
+        "--lambda_discrete",
+        type=float,
+        default=0.0,
+        help="Discrete-state loss weight. Kept for compatibility; inactive when no discrete state is provided.",
+    )
     parser.add_argument(
         "--sigma_cond_drop_prob",
         type=float,
@@ -877,11 +685,6 @@ def main():
         "--deterministic_topk_events",
         action="store_true",
         help="Use top-k event selection at deterministic inference time for ablations.",
-    )
-    parser.add_argument(
-        "--test_cross_lineage",
-        action="store_true",
-        help="Run cross-lineage attention test",
     )
     args = parser.parse_args()
 
@@ -1030,26 +833,6 @@ def main():
     print("=" * 70)
     print(f"Training complete. Best val loss: {best_val_loss:.4f}")
 
-    # Cross-lineage attention test
-    if args.test_cross_lineage:
-        print()
-        print("Testing cross-lineage attention...")
-        cross_lineage_result = test_cross_lineage_attention(model, dataset, args.device)
-
-        print(
-            f"  Cross-lineage detected: {cross_lineage_result['cross_lineage_detected']}"
-        )
-        print(f"  Mean delta difference: {cross_lineage_result['mean_delta_diff']:.4f}")
-
-        if "founder_analysis" in cross_lineage_result:
-            print("  Founder-specific analysis:")
-            for founder, analysis in cross_lineage_result["founder_analysis"].items():
-                status = "✓" if analysis["uses_context"] else "✗"
-                print(
-                    f"    {status} {founder}: n={analysis['n_cells']}, "
-                    f"delta_diff={analysis['delta_diff']:.4f}"
-                )
-
     # Final perturbation test
     print()
     print("Testing causal response...")
@@ -1063,28 +846,6 @@ def main():
         print("  ✓ Model showed compensatory behavior")
     else:
         print("  ✗ No compensation detected")
-
-    # Cross-lineage perturbation test
-    print()
-    print("Testing cross-lineage perturbation (AB deletion)...")
-    cross_perturb = test_perturbation_cross_lineage(
-        model, initial, args.device, target_founder="AB"
-    )
-
-    print(f"  Target: {cross_perturb['target_founder']}")
-    print(f"  Control total: {cross_perturb['control_total_cells']}")
-    print(f"  Perturbed total: {cross_perturb['perturbed_total_cells']}")
-
-    if cross_perturb["showed_cross_lineage_effect"]:
-        print("  ✓ Cross-lineage effects detected:")
-        for founder, effect in cross_perturb["cross_lineage_effects"].items():
-            if effect["difference"] != 0:
-                print(
-                    f"    {founder}: {effect['control']} -> {effect['perturbed']} "
-                    f"(Δ{effect['difference']:+d})"
-                )
-    else:
-        print("  No cross-lineage effects detected")
 
     print("=" * 70)
 

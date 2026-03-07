@@ -1,4 +1,4 @@
-"""Spatial-first autoregressive baseline for real WormGUIDES trajectories."""
+"""Spatial autoregressive baseline for real WormGUIDES trajectories."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ class SpatialAutoregressiveModel(nn.Module):
     def __init__(
         self,
         continuous_dim: int = 6,
-        discrete_K: int = 7,
         d_model: int = 128,
         n_heads: int = 4,
         n_layers: int = 4,
@@ -39,7 +38,6 @@ class SpatialAutoregressiveModel(nn.Module):
     ):
         super().__init__()
         self.continuous_dim = continuous_dim
-        self.discrete_K = discrete_K
         self.d_model = d_model
         self.dt = dt
 
@@ -49,7 +47,6 @@ class SpatialAutoregressiveModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
-        self.discrete_embed = nn.Embedding(discrete_K, d_model)
 
         self.blocks = nn.ModuleList(
             [
@@ -94,11 +91,7 @@ class SpatialAutoregressiveModel(nn.Module):
 
     def encode_state(self, state: BranchingState) -> torch.Tensor:
         cont = state.states[0]
-        disc = state.states[1]
-        h = self.continuous_proj(cont) + self.discrete_embed(
-            disc.clamp(0, self.discrete_K - 1)
-        )
-        return h
+        return self.continuous_proj(cont)
 
     def forward_step(self, state: BranchingState) -> SpatialStepOutput:
         B, L = state.states[0].shape[:2]
@@ -145,7 +138,7 @@ class SpatialAutoregressiveModel(nn.Module):
             output = self.forward_step(state)
             new_cont = state.states[0] + output.continuous_delta
             new_state = BranchingState(
-                states=(new_cont, state.states[1].clone()),
+                states=(new_cont, None),
                 groupings=state.groupings,
                 del_flags=state.del_flags,
                 ids=state.ids,

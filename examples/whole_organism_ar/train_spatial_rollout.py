@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a spatial-plus-founder engineering rollout baseline on real trajectories."""
+"""Train a spatial-only engineering rollout baseline on real trajectories."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def collate_branching_states(batch: list[dict]) -> dict:
 
 
 class SpatialTrajectoryDataset(Dataset):
-    """Real-trajectory dataset for the spatial-plus-founder rollout baseline."""
+    """Real-trajectory dataset for the spatial-only rollout baseline."""
 
     def __init__(self, trajectory_file: str, include_velocity: bool = True):
         with open(trajectory_file) as f:
@@ -88,10 +88,9 @@ class SpatialTrajectoryDataset(Dataset):
         self, state: dict, prev_state: dict | None
     ) -> BranchingState:
         continuous = self._build_features(state, prev_state).unsqueeze(0)
-        discrete = torch.tensor(state["founder_ids"], dtype=torch.long).unsqueeze(0)
         n_cells = state["n_cells"]
         return BranchingState(
-            states=(continuous, discrete),
+            states=(continuous, None),
             groupings=torch.zeros(1, n_cells, dtype=torch.long),
             del_flags=torch.zeros(1, n_cells, dtype=torch.bool),
             ids=torch.arange(1, n_cells + 1, dtype=torch.long).unsqueeze(0),
@@ -285,7 +284,7 @@ def run_epoch(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train the spatial-plus-founder engineering rollout baseline."
+        description="Train the spatial-only engineering rollout baseline."
     )
     parser.add_argument("--trajectory_file", required=True)
     parser.add_argument("--epochs", type=int, default=40)

@@ -7,6 +7,8 @@ These scripts were moved here because they depend on one or more of:
 
 - synthetic trajectories,
 - explicit lineage supervision,
+- founder-centric perturbation or masking analyses,
+- founder-centric demos or visualization workflows,
 - trimodal or crossmodal checkpoints,
 - older rollout assumptions that do not match the current roadmap.
 

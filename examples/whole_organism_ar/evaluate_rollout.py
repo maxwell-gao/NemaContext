@@ -4,7 +4,7 @@
 Metrics:
 1) Cell count trajectory error
 2) Division timing/count error
-3) Cross-lineage perturbation sensitivity (founder x time)
+3) Context perturbation sensitivity across rollout time
 4) Predictive uncertainty from diffusion-style noisy inputs
 """
 
@@ -30,10 +30,6 @@ from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # 
 from src.branching_flows.states import BranchingState  # noqa: E402
 
 
-FOUNDER_MAP = {"P0": 0, "AB": 1, "MS": 2, "E": 3, "C": 4, "D": 5, "P4": 6}
-TARGET_FOUNDERS = ["AB", "MS", "E", "C", "D", "P4"]
-
-
 def count_alive_cells(state: BranchingState) -> int:
     return int(state.padmask[0].sum().item())
 
@@ -52,19 +48,21 @@ def build_subset_state(
             keep_mask[valid_indices[0]] = True
             n_kept = 1
             new_cont = state.states[0][:, keep_mask, :]
-            new_disc = state.states[1][:, keep_mask] if len(state.states) > 1 else None
+            new_disc = (
+                state.states[1][:, keep_mask] if state.states[1] is not None else None
+            )
         else:
             # Fully empty state: synthesize a single placeholder cell.
             d = state.states[0].shape[-1]
             new_cont = torch.zeros(1, 1, d, device=device, dtype=state.states[0].dtype)
-            if len(state.states) > 1:
+            if state.states[1] is not None:
                 new_disc = torch.zeros(1, 1, device=device, dtype=state.states[1].dtype)
             else:
                 new_disc = None
             n_kept = 1
     else:
         new_cont = state.states[0][:, keep_mask, :]
-        new_disc = state.states[1][:, keep_mask] if len(state.states) > 1 else None
+        new_disc = state.states[1][:, keep_mask] if state.states[1] is not None else None
 
     if new_disc is None:
         new_states = (new_cont,)
@@ -171,66 +169,53 @@ def evaluate_division_timing(
     }
 
 
-def founder_counts(state: BranchingState) -> dict[str, int]:
-    disc = state.states[1][0]
-    valid = state.padmask[0]
-    out = {k: 0 for k in TARGET_FOUNDERS}
-    for name in TARGET_FOUNDERS:
-        fid = FOUNDER_MAP[name]
-        out[name] = int(((disc == fid) & valid).sum().item())
-    return out
-
-
 @torch.no_grad()
-def evaluate_cross_lineage_perturbation(
+def evaluate_context_perturbation(
     model: AutoregressiveNemaModel,
     dataset: EmbryoTrajectoryDataset,
     device: str,
     max_steps: int,
     perturb_times: list[int],
+    removal_fraction: float = 0.2,
 ) -> dict[str, Any]:
-    """Founder x time perturbation grid and non-target sensitivity score."""
+    """Time x removal perturbation grid and rollout sensitivity score."""
     if len(dataset) == 0:
         return {"error": "empty dataset"}
 
     initial = dataset[0]["current"].to(device)
     baseline = rollout_from_state(model, initial, max_steps, device)
-    baseline_final_counts = founder_counts(baseline[-1])
     baseline_total = max(1, count_alive_cells(baseline[-1]))
 
     grid: dict[str, dict[str, Any]] = {}
     scores = []
 
-    for founder in TARGET_FOUNDERS:
-        fid = FOUNDER_MAP[founder]
-        grid[founder] = {}
-        for t_perturb in perturb_times:
-            state = initial
-            for t in range(max_steps):
-                if t == t_perturb:
-                    keep_mask = state.padmask[0] & (state.states[1][0] != fid)
+    for t_perturb in perturb_times:
+        state = initial
+        for t in range(max_steps):
+            if t == t_perturb:
+                valid_indices = torch.where(state.padmask[0])[0]
+                if valid_indices.numel() > 1:
+                    n_remove = max(1, int(valid_indices.numel() * removal_fraction))
+                    remove_indices = valid_indices[:n_remove]
+                    keep_mask = state.padmask[0].clone()
+                    keep_mask[remove_indices] = False
                     state = build_subset_state(state, keep_mask, device)
-                state, _ = model.step(state, deterministic=True, apply_events=True)
+            state, _ = model.step(state, deterministic=True, apply_events=True)
 
-            pert_counts = founder_counts(state)
-            non_target_diff = 0
-            for name in TARGET_FOUNDERS:
-                if name == founder:
-                    continue
-                non_target_diff += abs(pert_counts[name] - baseline_final_counts[name])
-
-            score = float(non_target_diff / baseline_total)
-            scores.append(score)
-            grid[founder][str(t_perturb)] = {
-                "baseline_final_counts": baseline_final_counts,
-                "perturbed_final_counts": pert_counts,
-                "non_target_sensitivity": score,
-            }
+        perturbed_total = count_alive_cells(state)
+        score = float(abs(perturbed_total - baseline_total) / baseline_total)
+        scores.append(score)
+        grid[str(t_perturb)] = {
+            "baseline_final_cell_count": baseline_total,
+            "perturbed_final_cell_count": perturbed_total,
+            "relative_cell_count_change": score,
+        }
 
     return {
         "max_steps": max_steps,
         "perturb_times": perturb_times,
-        "mean_non_target_sensitivity": float(sum(scores) / len(scores))
+        "removal_fraction": removal_fraction,
+        "mean_relative_cell_count_change": float(sum(scores) / len(scores))
         if scores
         else 0.0,
         "grid": grid,
@@ -319,6 +304,7 @@ def main():
     parser.add_argument("--max_steps", type=int, default=20)
     parser.add_argument("--split_threshold", type=float, default=0.5)
     parser.add_argument("--perturb_times", type=str, default="2,4,6")
+    parser.add_argument("--perturb_fraction", type=float, default=0.2)
     parser.add_argument("--uncertainty_states", type=int, default=5)
     parser.add_argument("--uncertainty_samples", type=int, default=8)
     parser.add_argument("--sigma_min", type=float, default=0.01)
@@ -398,12 +384,13 @@ def main():
         max_steps=args.max_steps,
         split_threshold=args.split_threshold,
     )
-    report["cross_lineage_perturbation"] = evaluate_cross_lineage_perturbation(
+    report["context_perturbation"] = evaluate_context_perturbation(
         model=model,
         dataset=dataset,
         device=args.device,
         max_steps=args.max_steps,
         perturb_times=perturb_times,
+        removal_fraction=args.perturb_fraction,
     )
     report["predictive_uncertainty"] = evaluate_predictive_uncertainty(
         model=model,
@@ -426,8 +413,8 @@ def main():
     print("- Cell count MAE:", report["cell_count_trajectory"].get("mae"))
     print("- Division count MAE:", report["division_timing"].get("count_mae"))
     print(
-        "- Mean non-target sensitivity:",
-        report["cross_lineage_perturbation"].get("mean_non_target_sensitivity"),
+        "- Mean context sensitivity:",
+        report["context_perturbation"].get("mean_relative_cell_count_change"),
     )
     print(
         "- Mean uncertainty (gene/spatial):",
