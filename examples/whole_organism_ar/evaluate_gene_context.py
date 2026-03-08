@@ -60,10 +60,19 @@ def main():
         sampling_strategy=cfg.get("sampling_strategy", "random_window"),
         min_spatial_cells_per_window=cfg.get("min_spatial_cells_per_window", 8),
         spatial_neighbor_pool_size=cfg.get("spatial_neighbor_pool_size"),
+        delete_target_mode=cfg.get("delete_target_mode", "weak"),
+        min_event_positive=cfg.get("min_event_positive", 0),
+        min_anchor_event_positive=cfg.get("min_anchor_event_positive", 0),
+        min_split_positive=cfg.get("min_split_positive", 0),
+        min_del_positive=cfg.get("min_del_positive", 0),
+        min_anchor_split_positive=cfg.get("min_anchor_split_positive", 0),
+        min_anchor_del_positive=cfg.get("min_anchor_del_positive", 0),
         split=args.split,
         val_fraction=cfg.get("val_fraction", 0.2),
         random_seed=cfg["seed"] + 2000,
     )
+    if not dataset.time_pairs:
+        raise ValueError("Evaluation dataset is empty after filtering. Lower the event-enrichment thresholds.")
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -136,6 +145,7 @@ def main():
     results["split"] = args.split
     results["checkpoint"] = args.checkpoint
     results["context_ablation"] = args.context_ablation
+    results["delete_target_mode"] = cfg.get("delete_target_mode", "weak")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

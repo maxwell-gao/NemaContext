@@ -3,17 +3,25 @@
 ## Top-Level
 
 - `src/`: model and data pipeline source code.
-- `examples/whole_organism_ar/`: active scripts for context validation and downstream rollout work.
+- `examples/whole_organism_ar/`: active scripts for the current local-update validation path and later embryo-scale rollout work.
 - `examples/legacy/`: older experiments kept outside the active path.
 - `tests/`: integration tests.
 - `dataset/`: raw and processed data artifacts.
 - `docs/`: current documentation.
 
+Interpretation:
+
+- the final project target is whole-organism developmental prediction,
+- the current active evidence path is a smaller transcriptomic population-update
+  problem,
+- the repo therefore contains both active local-update tooling and embryo-scale
+  rollout infrastructure.
+
 ## Source Code
 
 - `src/branching_flows/`
   - `gene_context.py`: active multi-cell gene-context baseline model.
-  - `autoregressive_model.py`: downstream whole-organism AR model kept for later rollout phases.
+  - `autoregressive_model.py`: whole-organism AR model intended for later embryo-scale rollout phases.
   - `dynamic_cell_manager.py`: split/delete dynamic cell operations used by downstream rollout experiments.
   - `fusion.py`: supporting gene/spatial fusion utility.
   - supporting modules from the current BranchingFlows-derived stack.
@@ -36,7 +44,7 @@
 - `evaluate_gene_context.py`: evaluation and context ablation for the gene-context baseline.
 - `train_gene_single_cell.py`: single-cell control baseline for context comparison.
 - `evaluate_gene_single_cell.py`: evaluation for the single-cell control.
-- `train_autoregressive_full.py`: downstream whole-organism AR training path, not the immediate main experiment.
+- `train_autoregressive_full.py`: downstream whole-organism AR training path for later embryo-scale phases.
 - `evaluate_rollout.py`: rollout and perturbation evaluation for the downstream AR path.
 - `train_spatial_rollout.py`: engineering-only spatial rollout baseline.
 - `evaluate_spatial_rollout.py`: evaluation for the spatial baseline.

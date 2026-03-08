@@ -2,68 +2,101 @@
 
 ## Status
 
-This document now describes a downstream architecture, not the immediate main
-research path.
+This architecture is the intended destination of the project, not a discarded
+branch.
 
-The active scientific path is the transcriptomic `gene-context` baseline:
+The final target remains whole-organism developmental prediction from very
+early embryo state toward the later embryo.
 
-- anchor-centered multi-cell context,
-- short-horizon future gene-state prediction,
-- supervision analysis before long-horizon generation.
+What changed is only the execution order:
 
-The whole-organism autoregressive stack remains important as infrastructure for
-later phases, especially once event supervision is stronger.
+- we do not start by claiming full rollout,
+- we first learn and validate smaller update rules that can later be promoted
+  into this embryo-scale architecture.
+
+So this document should be read as:
+
+- the long-term system contract,
+- partially implemented infrastructure,
+- downstream of the current validation phase,
+- but still the architecture the project is trying to grow back into.
 
 ## What This Architecture Is For
 
 Model development as a repeated embryo-state update:
 
 - state at time `t`: all currently alive cells in one shared embryo context,
-- update: predict the next state from the current state,
-- support dynamic population changes via division/deletion events.
+- update: predict the next embryo state from the current embryo state,
+- support dynamic population changes through division and disappearance events.
 
 Formally:
 
 `X_{t+1} = X_t + f_theta(X_t, c_t)`
 
-where `X_t` is the full embryo state and `c_t` is optional conditioning such as
-time, schedule, or noise level.
+where `X_t` is the embryo-scale state and `c_t` is optional conditioning such
+as developmental time, schedule, or noise level.
 
-## Why It Is Not The Current Main Path
+The key point is that context is not fixed background.
+It changes together with the cells.
 
-The blocker is not architecture. It is supervision quality.
+That is why the final project cannot stop at anchor-only prediction.
 
-Current limitations:
+## Why The Current Active Work Is Smaller
 
-- split/delete targets are still weakly constructed,
-- event positives are sparse in many validation slices,
-- long-horizon rollout would currently amplify supervision error,
-- rollout quality would therefore be difficult to interpret biologically.
+The current `gene-context` baseline exists because full embryo dynamics are not
+yet easy to supervise directly from snapshot transcriptomics.
 
-Because of this, the roadmap now places:
+Current blockers:
 
-1. context validation first,
-2. supervision repair second,
-3. whole-organism rollout only after both are in better shape.
+- `split/delete` targets remain weaker than the gene-state target,
+- multi-step reuse amplifies supervision error,
+- a biologically closed population update rule is not yet fully established,
+- local validation is still easier to interpret than embryo-scale rollout.
 
-## Whole-Organism Context Contract
+Because of this, the present order is:
 
-If this path is activated later, each timestep should contain all lineages
-together:
+1. learn a local one-step population update proxy,
+2. repair event supervision,
+3. expand context radius,
+4. return to this embryo-scale architecture with stronger ingredients.
+
+## Whole-Organism State Contract
+
+If this path is active, each timestep should contain the embryo as one shared
+population state.
+
+Core fields:
 
 - `n_cells`
 - `cell_names`
-- `positions` in global embryo coordinates
 - `genes`
+- optional `positions` in embryo coordinates
 - event labels such as `divisions` and optional `deaths`
 
 Optional metadata may include:
 
 - `founders`
 - `founder_ids`
+- evaluation-only lineage bookkeeping
 
-These remain bookkeeping or evaluation metadata. They are not part of the
-desired biological input contract for the active model path.
+These metadata help bookkeeping and evaluation.
+They are not meant to become shortcut inputs that hard-code developmental
+structure.
+
+## Relationship To The Active Gene-Context Path
+
+The active `gene-context` work should be interpreted as the first validated
+approximation to this architecture.
+
+Mapping:
+
+- anchor-centered window -> small local slice of embryo state,
+- one-step gene update -> local population update proxy,
+- split/delete heads -> crude event proxies,
+- structured local-plus-global context -> compressed embryo-context prototype.
+
+So the active path is not conceptually separate from whole-organism AR.
+It is the smallest version of it that can currently be validated on real data.
 
 ## Current Core Modules
 
@@ -75,31 +108,24 @@ desired biological input contract for the active model path.
   - whole-embryo trajectory extraction for engineering diagnostics
 
 Archived synthetic and per-founder extraction paths live in
-`src/data/legacy/trajectory_extractor.py` and are not part of the active
-scientific route.
+`src/data/legacy/trajectory_extractor.py` and are not part of the current main
+scientific evidence path.
 
-## Relationship To The Active Gene-Context Path
+## Re-entry Criteria
 
-The intended order is:
+This architecture becomes the active main path again when:
 
-1. learn a strong context model on transcriptomic windows,
-2. validate that context is genuinely used,
-3. strengthen split/delete supervision,
-4. port the resulting predictor into embryo-level dynamic rollout.
+- the one-step local population update rule is strong enough,
+- event supervision is no longer dominated by label construction artifacts,
+- context can be expanded beyond anchor-local windows,
+- multi-step reuse can be evaluated quantitatively,
+- embryo-scale rollout becomes scientifically interpretable rather than only
+  visually plausible.
 
-So this architecture should currently be read as:
+## Interpretation Rule
 
-- important,
-- retained,
-- still under development,
-- but downstream of the context-validation work.
+If a result only shows that a focal anchor can be predicted one step ahead, it
+is evidence for a component of this architecture.
 
-## Future Re-entry Criteria
-
-This architecture becomes the main path again only if:
-
-- context experiments keep showing stable benefit,
-- event supervision becomes informative on held-out data,
-- multi-step rollout can be evaluated without relying on heuristic event rules,
-- rollout metrics become scientifically interpretable rather than only visually
-  plausible.
+It is not yet evidence that whole-organism developmental prediction has been
+solved.

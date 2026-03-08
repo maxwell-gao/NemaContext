@@ -1,15 +1,16 @@
 # NemaContext Documentation
 
-This repo is now organized around one primary objective:
+This repo is organized around one primary objective:
 
-**Validate developmental context learning on real transcriptomic data before pushing whole-embryo generative rollout.**
+**Predict whole-organism development from early embryo state, while using real-data context validation as the first executable stage toward that goal.**
 
 ## Canonical Docs
 
 - `docs/REPO_STRUCTURE.md`: current repository layout and what each area is for.
-- `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`: downstream autoregressive rollout architecture and why it is no longer the immediate main path.
-- `docs/ROADMAP.md`: near-term implementation milestones.
-- `docs/GENE_CONTEXT_BASELINE.md`: biological interpretation of the active gene-context baseline and related published work.
+- `docs/ROADMAP.md`: merged long-term goal and near-term execution order.
+- `docs/GENE_CONTEXT_BASELINE.md`: biological interpretation of the active one-step local population-update baseline.
+- `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`: whole-embryo architecture as the intended destination of the current line of work.
+- `docs/REPO_STRUCTURE.md`: current repository layout and what each area is for.
 
 ## Historical Work
 
@@ -24,5 +25,5 @@ If you want the current project logic in the right order, read:
 
 1. `docs/ROADMAP.md`
 2. `docs/GENE_CONTEXT_BASELINE.md`
-3. `docs/REPO_STRUCTURE.md`
-4. `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
+3. `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
+4. `docs/REPO_STRUCTURE.md`

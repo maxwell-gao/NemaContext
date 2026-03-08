@@ -1,196 +1,254 @@
-# Roadmap: Developmental Context Before Generative Rollout
+# Roadmap: From Zygote To Whole-Embryo Development
 
 ## Goal
 
-Build a developmental model that learns embryo context from real data and only
-later promotes that context model into a variable-length generator.
+The final goal of this project is not a local context benchmark.
 
-The ordering matters:
+It is:
 
-1. first prove the model uses multi-cell context,
-2. then make split/delete supervision credible,
-3. only then build whole-embryo generative dynamics on top.
+> predict the development of a whole organism from the zygote onward,
+> with context growing from one cell to the full embryo, eventually on the
+> order of 1k cells.
 
-This is a tighter version of the original roadmap. The main correction is that
-`Branching Flows` is not the current training core. It is the future generative
-shell for a context model that first has to be validated on real transcriptomic
-supervision.
+That long-term goal stays fixed.
+
+What changes across phases is only the scale of the state we can model and
+validate.
+
+So this roadmap combines two truths:
+
+1. the final target is whole-embryo developmental prediction,
+2. the current executable work must still proceed through smaller,
+   scientifically checkable subproblems.
+
+## Project Logic
+
+The project should be read as a scale-expansion program.
+
+- start from real transcriptomic snapshot windows,
+- learn a local population update rule,
+- expand the context radius from anchor-local to embryo-scale,
+- move from one-step prediction to repeated population updates,
+- only then claim whole-embryo developmental rollout.
+
+In that framing:
+
+- the active `gene-context` work is not the end goal,
+- it is the first validated approximation to an embryo-scale update model,
+- whole-organism autoregressive and Branching Flows modules remain the intended
+  re-entry point once the update rule is credible.
 
 ## Current Position
 
 What is already established:
 
 - real transcriptome windows can be sampled from `nema_extended_large2025.h5ad`,
-- the active baseline predicts short-horizon gene-state change from multi-cell
-  transcriptomic context,
-- anchor-centered structured context now exists,
-- the model uses context rather than only anchor-local signal,
-- adding global background context gives a small but real gain on validation
-  loss,
-- autoregressive rollout code and BranchingFlows-derived dynamic machinery
-  remain available as downstream infrastructure.
+- structured anchor-centered context exists,
+- the model can use multi-cell context rather than only anchor-local signal,
+- a one-step transcriptomic update task can be trained end-to-end on real data,
+- whole-organism autoregressive infrastructure and variable-cell-count code are
+  already present in the repository.
 
 What remains weak:
 
-- split/delete supervision is still sparse and weakly constructed,
-- event precision/recall are not yet informative in many validation slices,
-- whole-embryo rollout would currently rest on labels that are not strong
-  enough,
-- Branching Flows-style generation is therefore ahead of the supervision.
+- current work still validates local or window-scale updates, not embryo-scale
+  developmental prediction,
+- `split/delete` supervision is still weaker than the gene-state target,
+- multi-step dynamics are not yet biologically closed under changing context,
+- the active benchmark can still absorb too much attention relative to the
+  final whole-embryo objective.
 
-## Phase 1: Context Validation
+## Phase 1: Local Population Update
 
-Objective: prove that multi-cell context is genuinely used and improves
-prediction beyond single-cell conditioning.
+Objective: learn the smallest useful developmental update rule from real data.
 
-This is the active main path.
+This is the current active phase.
+
+The question is no longer:
+
+> can we predict one cell far into the future?
+
+It is:
+
+> given a local developmental population at time `t`, can we improve the
+> prediction of the next short-horizon update at `t + dt`?
 
 Tasks:
 
 - keep transcriptome as the primary developmental state,
-- use anchor-centered context windows as the default input format,
-- compare local-only and local-plus-global context construction,
-- compare single-cell and multi-cell baselines under matched data construction,
-- run context ablations such as `full` vs `anchor_only`,
-- run perturbation tests such as token dropout, neighborhood shuffling, and
-  context corruption.
+- use structured context windows as the default interface,
+- compare single-cell and multi-cell predictors under matched data
+  construction,
+- verify that `full` context beats `anchor_only`,
+- identify which contexts help `split`, which help `gene`, and which do not
+  help at all,
+- treat `delete` as a weak auxiliary target unless proven otherwise.
 
 Definition of done:
 
-- multi-cell context consistently outperforms single-cell controls,
-- `full` context outperforms `anchor_only` across repeated runs,
-- larger or more structured context improves validation loss in a stable way,
-- the model's gains can be attributed to context access rather than only to a
-  larger backbone.
-
-Status:
-
-- `src/data/gene_context_dataset.py` supports structured anchor-centered
-  context,
-- `src/branching_flows/gene_context.py` uses plain bidirectional attention with
-  lightweight context-role and distance labels,
-- current experiments show that `full` context beats `anchor_only`,
-- current experiments also show a small gain from adding global background
-  tokens.
+- context usage is stable and measurable,
+- multi-cell gains are reproducible on at least some biologically meaningful
+  subsets,
+- the model can be interpreted as learning a one-step local population update,
+  not just a larger regression backbone.
 
 ## Phase 2: Supervision Repair
 
-Objective: make event supervision strong enough that dynamic modeling is worth
-trusting.
+Objective: make event supervision credible enough for dynamic population
+updates.
 
-This phase is higher priority than rollout or full generative training.
+Why this matters:
 
-Tasks:
-
-- measure true split/delete positive coverage under the current windowing
-  scheme,
-- separate unmatched cells from genuine disappearance as much as the data allow,
-- improve future matching so that event targets are less dominated by weak
-  fallback matches,
-- construct evaluation subsets enriched for meaningful split/delete events,
-- report event metrics on subsets where positive labels are actually present.
-
-Definition of done:
-
-- split/delete labels have enough support to produce meaningful held-out event
-  metrics,
-- event losses correlate with actual detection quality rather than only class
-  imbalance,
-- event supervision is no longer the bottleneck for dynamic modeling.
-
-Why this phase exists:
-
-- current context experiments are scientifically useful,
-- current event labels are not yet strong enough to justify ambitious rollout
-  claims,
-- without this repair, generative dynamics would be technically runnable but
-  scientifically under-grounded.
-
-## Phase 3: Context-to-Dynamics Transition
-
-Objective: turn the validated context predictor into a stable short-horizon
-  dynamic model.
+- the final system must update both state and cell count,
+- weak event targets will break rollout long before architecture becomes the
+  bottleneck.
 
 Tasks:
 
-- keep the context encoder fixed in spirit: bidirectional attention over
-  structured multi-cell windows,
-- predict short-horizon future state under repeated application,
-- add dynamic event handling only after event supervision is credible,
-- evaluate multi-step degradation, cell-count drift, and event-balance drift,
-- avoid heuristic inference rules as the primary way to make rollout appear
-  stable.
+- audit `split/delete` coverage across developmental windows,
+- separate weak unmatched labels from stronger disappearance evidence,
+- keep `strict` delete as the default while better targets are developed,
+- isolate `split-rich` and other informative subsets,
+- make event losses interpretable on held-out windows with actual positives.
 
 Definition of done:
 
-- repeated short-horizon rollout is measurably more stable than naive
-  independent-cell prediction,
-- event balance remains plausible over multiple steps,
-- embryo-level context does not collapse immediately under autoregressive use.
+- event supervision is no longer dominated by label construction artifacts,
+- held-out event metrics carry biological information,
+- dynamic modeling can be discussed without hiding behind proxy labels.
 
-## Phase 4: Branching Flows Integration
+## Phase 3: Context Expansion
 
-Objective: use Branching Flows as the variable-length generative framework
-after the context model and event supervision are both validated.
+Objective: move from anchor-local context to larger population context.
+
+This is the bridge from the active baseline to the final embryo model.
+
+Tasks:
+
+- expand from anchor-centered prediction toward predicting updates for more of
+  the local window at once,
+- increase context size systematically,
+- test whether local-plus-global context acts like a useful compressed embryo
+  state,
+- identify where performance saturates as context radius grows,
+- decide when the active representation is ready to become an embryo-scale
+  state representation.
+
+Definition of done:
+
+- larger context windows improve or stabilize prediction in a meaningful way,
+- the model can operate on larger populations without collapsing into
+  uninformative averaging,
+- context can be interpreted as a scalable state representation, not just a
+  local helper signal.
+
+## Phase 4: Population Dynamics
+
+Objective: turn the validated one-step predictor into a repeated population
+update model.
+
+This is the first phase that should be treated as real developmental dynamics.
+
+Tasks:
+
+- move from anchor-query prediction to group update prediction,
+- update cell states and event propensities jointly,
+- evaluate short multi-step rollout under changing context,
+- measure drift in gene-state distribution, cell-count balance, and event
+  balance,
+- reject rollout settings that only look plausible visually.
+
+Definition of done:
+
+- repeated short-horizon updates remain stable for more than one step,
+- context does not immediately become stale under autoregressive reuse,
+- rollout metrics are scientifically interpretable rather than only qualitative.
+
+## Phase 5: Whole-Embryo Rollout
+
+Objective: scale the population update rule to embryo-level developmental
+prediction.
+
+At this phase, the model should be asked to represent the embryo as one shared
+state, not as isolated anchor tasks.
+
+Tasks:
+
+- define the embryo-scale state contract,
+- run full-embryo one-step updates,
+- support variable population size through division and disappearance events,
+- evaluate whether global developmental structure is preserved over time,
+- begin testing early-stage to later-stage developmental prediction.
+
+Definition of done:
+
+- the model can update embryo-scale states without immediate collapse,
+- whole-embryo rollout preserves plausible developmental structure,
+- context has effectively expanded from one cell to the embryo as a whole.
+
+## Phase 6: Branching Flows Integration
+
+Objective: use Branching Flows as the formal variable-cell-count generative
+framework once embryo-scale dynamics are ready.
 
 Role of Branching Flows in this roadmap:
 
-- not the current primary learner,
-- yes as the long-horizon generative mechanism,
-- yes as the formal language for split/delete/base-process coupling,
-- no as the first thing to optimize before supervision is ready.
+- not the first learner,
+- yes as the eventual generative language for state + split + delete coupling,
+- yes once the learned update rule is already biologically grounded,
+- no as a substitute for missing supervision.
 
 Tasks:
 
 - define a biologically defensible `Z` construction for developmental data,
-- connect the base process to the learned transcriptomic context predictor,
-- move split/delete from weak auxiliary heads toward true generative events,
-- compare plain autoregressive rollout to Branching Flows-style rollout only
-  after both are trained on credible supervision.
+- connect the learned transcriptomic update rule to the Branching Flows base
+  process,
+- move event heads toward true generative events,
+- compare plain autoregressive embryo rollout against Branching Flows rollout.
 
 Definition of done:
 
-- Branching Flows integration improves variable-cell-count generation or
-  long-horizon stability,
-- gains hold on real-data evaluation rather than synthetic demonstrations,
-- the method is still consistent with `Discover, Don't Inject`.
+- Branching Flows improves long-horizon stability or variable-cell-count
+  generation,
+- gains hold on real embryo evaluation rather than synthetic demos,
+- the resulting model still follows `Discover, Don't Inject`.
 
-## Phase 5: Spatial Reintegration
+## Phase 7: Spatial Reintegration
 
-Objective: reintroduce spatial information as auxiliary context once the
-transcriptomic context path is stable.
+Objective: reintroduce spatial information as embryo-scale auxiliary context.
 
 Tasks:
 
-- use space as optional context, readout, or evaluation axis,
+- use space as auxiliary context, readout, or evaluation axis,
 - test whether transcriptomic latents recover spatial organization,
-- compare local transcriptomic context alone versus transcriptomic context plus
-  spatial support,
-- avoid making spatial coordinates the main developmental state.
+- compare transcriptome-only embryo context against transcriptome-plus-space
+  context,
+- keep transcriptome as the main developmental state rather than making space
+  the primary target.
 
 Definition of done:
 
 - spatial information improves prediction, calibration, or interpretability,
-- transcriptomic context remains the main driver,
-- no explicit anatomical prior is required.
+- transcriptomic context remains central,
+- embryo-scale developmental prediction becomes more biologically grounded.
 
 ## Immediate Next Steps
 
-1. Promote `spatial_anchor` structured context to the default experimental
-   interface.
-2. Run a clean context-usage matrix:
-   `context_size` sweep, `global_context_size` sweep, `full` vs `anchor_only`,
-   and single-cell vs multi-cell controls.
-3. Quantify split/delete positive coverage and identify where event supervision
-   is failing.
-4. Build event-enriched validation subsets before claiming dynamic progress.
-5. Delay any major Branching Flows training push until Phase 2 is in better
-   shape.
+1. Keep `strict` delete as the default training target mode.
+2. Keep the active task framed as learning a one-step local population update,
+   not single-cell long-range prediction.
+3. Use `split-rich` and context-ablation comparisons as the highest-value tests
+   of whether context is carrying real developmental information.
+4. Expand from anchor-only supervision toward larger group-update supervision
+   once the local update rule is stable.
+5. Re-enter whole-organism rollout only when the update rule and event targets
+   are both strong enough to survive repeated application.
 
 ## Non-Goals
 
-- no active claims based only on visually plausible rollout,
-- no promotion of Branching Flows to the main path before supervision is ready,
-- no injected lineage embeddings as model input,
-- no architectural shortcuts that encode the developmental tree directly,
-- no regression to synthetic data as the main evidence source.
+- no active claim that the current anchor benchmark is the final biological
+  task,
+- no treating weak `delete` labels as clean death supervision,
+- no promotion of visually plausible rollout without quantitative support,
+- no injected lineage embeddings as a shortcut to developmental structure,
+- no forgetting that the end target is embryo-scale developmental prediction.

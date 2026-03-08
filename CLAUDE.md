@@ -135,13 +135,19 @@ uv run python examples/evaluate_modality_completion.py \
 
 ### Active Path (`src/branching_flows/`)
 
-The current main research path is the transcriptomic `gene-context` baseline:
+The project goal is whole-organism developmental prediction from early embryo
+state toward the full embryo.
+
+The current main executable path is the transcriptomic `gene-context` baseline,
+which should be understood as the first validated local population-update
+approximation to that embryo-scale goal:
 
 - structured anchor-centered multi-cell context windows,
 - short-horizon gene-state transition prediction,
 - auxiliary split/delete heads used cautiously because event supervision is
   still weak,
-- context validation first, generative rollout later.
+- context validation and supervision repair first,
+- later promotion into larger population updates and embryo-scale rollout.
 
 Key active classes:
 
@@ -153,8 +159,8 @@ Key active classes:
 
 ### BranchingFlows Framework (`src/branching_flows/`)
 
-The BranchingFlows-derived stack remains in the repository as downstream
-infrastructure for later generative phases:
+The BranchingFlows-derived stack remains in the repository as later
+infrastructure for variable-cell-count developmental dynamics:
 
 - **Core abstraction**: `BranchingState` - batched state container with masks for padding (`padmask`), flow evolution (`flowmask`), and branching/deletion permissions (`branchmask`)
 - **Flow process**: `CoalescentFlow` wraps base processes (OUFlow, DiscreteInterpolatingFlow) with split/deletion handling

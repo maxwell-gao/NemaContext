@@ -14,7 +14,11 @@ from torch.utils.data import DataLoader
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from examples.whole_organism_ar.train_gene_context import run_epoch  # noqa: E402
+from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
+    EVENT_SUBSET_THRESHOLDS,
+    resolve_event_filters,
+    run_epoch,
+)
 from src.branching_flows.gene_context import SingleCellGeneTimeModel  # noqa: E402
 from src.data.gene_context_dataset import (  # noqa: E402
     GeneContextDataset,
@@ -46,6 +50,33 @@ def parse_args():
     )
     p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
     p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
+    p.add_argument(
+        "--event_subset",
+        choices=sorted(EVENT_SUBSET_THRESHOLDS),
+        default="none",
+    )
+    p.add_argument("--min_event_positive", type=int, default=0)
+    p.add_argument("--min_anchor_event_positive", type=int, default=0)
+    p.add_argument("--min_split_positive", type=int, default=0)
+    p.add_argument("--min_del_positive", type=int, default=0)
+    p.add_argument("--min_anchor_split_positive", type=int, default=0)
+    p.add_argument("--min_anchor_del_positive", type=int, default=0)
+    p.add_argument(
+        "--delete_target_mode",
+        choices=["weak", "strict"],
+        default="strict",
+    )
+    p.add_argument(
+        "--val_event_subset",
+        choices=sorted(EVENT_SUBSET_THRESHOLDS),
+        default="none",
+    )
+    p.add_argument("--val_min_event_positive", type=int, default=None)
+    p.add_argument("--val_min_anchor_event_positive", type=int, default=None)
+    p.add_argument("--val_min_split_positive", type=int, default=None)
+    p.add_argument("--val_min_del_positive", type=int, default=None)
+    p.add_argument("--val_min_anchor_split_positive", type=int, default=None)
+    p.add_argument("--val_min_anchor_del_positive", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -62,6 +93,8 @@ def parse_args():
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
+    train_filters = resolve_event_filters(args)
+    val_filters = resolve_event_filters(args, prefix="val_")
 
     train_ds = GeneContextDataset(
         h5ad_path=args.h5ad_path,
@@ -75,6 +108,8 @@ def main():
         sampling_strategy=args.sampling_strategy,
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
+        delete_target_mode=args.delete_target_mode,
+        **train_filters,
         split="train",
         val_fraction=args.val_fraction,
         random_seed=args.seed,
@@ -91,10 +126,19 @@ def main():
         sampling_strategy=args.sampling_strategy,
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
+        delete_target_mode=args.delete_target_mode,
+        **val_filters,
         split="val",
         val_fraction=args.val_fraction,
         random_seed=args.seed + 1000,
     )
+
+    if not train_ds.time_pairs:
+        raise ValueError("Training dataset is empty after filtering. Lower the event-enrichment thresholds.")
+    if not val_ds.time_pairs:
+        raise ValueError(
+            "Validation dataset is empty after filtering. Lower the event-enrichment thresholds or val_fraction."
+        )
 
     train_loader = DataLoader(
         train_ds,

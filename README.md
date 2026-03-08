@@ -2,14 +2,15 @@
 
 NemaContext is focused on one goal:
 
-**Learn developmental context from real transcriptomic data before promoting the model to whole-embryo generative rollout.**
+**Predict whole-organism development from the earliest embryo state, using real transcriptomic context learning as the first validated step toward embryo-scale rollout.**
 
 ## Current Direction
 
-- Active training task: **anchor-centered multi-cell gene-context prediction** on real transcriptome windows.
-- Immediate question: **does structured multi-cell context improve short-horizon developmental prediction?**
-- Near-term priority: **repair split/delete supervision before pushing long-horizon generation**.
-- Later direction: **use Branching Flows-style variable-length generation only after context and event supervision are validated**.
+- Final target: **whole-embryo developmental prediction from early embryo state toward the full worm embryo**.
+- Active training task: **anchor-centered multi-cell gene-context prediction** as the first validated local population-update problem.
+- Immediate question: **does structured multi-cell context improve short-horizon developmental updates?**
+- Near-term priority: **strengthen event supervision and expand from local context toward larger population context**.
+- Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
 
 ## Repository Layout
 
@@ -56,6 +57,6 @@ Synthetic and per-founder trajectory generation is archived under
 `src/data/legacy/trajectory_extractor.py`.
 ```
 
-Whole-organism autoregressive rollout remains in the repository as downstream
-infrastructure, but it is not the primary scientific path until event
-supervision becomes stronger.
+Whole-organism autoregressive rollout remains in the repository as the intended
+destination of the current line of work, but the active evidence path still
+starts with smaller real-data update problems before embryo-scale claims.

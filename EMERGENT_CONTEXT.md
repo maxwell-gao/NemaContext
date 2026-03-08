@@ -3,15 +3,19 @@
 ## Status
 
 This document describes a legacy or exploratory direction, not the current main
-research path.
+evidence path.
 
-The current roadmap prioritizes:
+The final project goal is still whole-organism developmental prediction from
+early embryo state.
 
-1. transcriptomic context validation,
-2. supervision repair for split/delete targets,
-3. only then more ambitious generative dynamics.
+What changed is the execution order:
 
-Read this file as historical or optional reference material.
+1. first validate local population-update learning on real transcriptomic data,
+2. then strengthen event supervision,
+3. then return to larger-scale developmental dynamics and generative rollout.
+
+Read this file as historical or optional reference material for later phases,
+not as the current training objective.
 
 This document describes the implementation of the Emergent Context architecture for NemaContext.
 

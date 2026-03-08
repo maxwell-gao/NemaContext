@@ -17,30 +17,41 @@ Relevant code:
 
 ## What Biological Problem This Baseline Is Trying To Solve
 
-The active baseline is not a spatial simulator and not a lineage-conditioned
-classifier.
+The final project goal is whole-organism developmental prediction from the
+zygote onward.
 
-It is also not the same thing as the later `Branching Flows` generative goal.
-In the current roadmap, this baseline comes first. It is the stage where we
-validate that developmental context can be learned from real transcriptomic
-windows before trying to build a variable-length generator on top.
+This baseline is not that full problem.
 
-It is a developmental transition model over real single-cell transcriptomic
-snapshots:
+It is the smallest real-data subproblem that is currently tractable:
 
-- input: a group of cells observed in the same developmental time window,
-- target: the near-future transcriptional change of each cell,
-- auxiliary targets: whether a cell is likely to divide or disappear by the
-  next time window.
+- take a local developmental population observed at time `t`,
+- predict a short-horizon update at `t + dt`,
+- test whether nearby and broader transcriptomic context improve that update.
 
-The biological question is:
+So this baseline should be read as:
 
-> Does multi-cell transcriptomic context improve prediction of short-horizon
-> developmental state change, beyond what is available from a single cell and
-> time alone?
+- not a spatial simulator,
+- not a lineage-conditioned classifier,
+- not a solved rollout model,
+- but the first validated approximation to a later population-dynamics model.
 
-This is the correct question for the current data regime because the available
-scRNA-seq data are destructive snapshots, not true tracked single-cell movies.
+The operative biological question is therefore:
+
+> Does multi-cell transcriptomic context improve short-horizon developmental
+> update prediction beyond what is available from a single cell and time alone?
+
+This is the correct first question for the current data regime because the
+available scRNA-seq data are destructive snapshots, not tracked single-cell
+movies.
+
+It also avoids a biological mistake:
+
+- predicting one cell many steps into the future while freezing context is not
+  self-consistent,
+- because the surrounding developmental population is also changing.
+
+So the current baseline is best interpreted as a one-step local population
+update model, not a long-range single-cell trajectory predictor.
 
 ## Biological Meaning of the Inputs
 
@@ -104,6 +115,14 @@ Biologically, this means the model is asked:
 This is the current best approximation to "context" without injecting a
 lineage tree as model input.
 
+It is also only the first scale of context.
+
+In the long-term roadmap, this context is meant to expand:
+
+- from anchor-local neighborhood,
+- to larger local populations,
+- to embryo-scale shared context.
+
 ### What Is Not Input
 
 The active baseline does **not** input:
@@ -130,6 +149,11 @@ Biologically, this is a local developmental transition vector:
 - not yet a full cell-fate mechanism,
 - but a useful proxy for near-future developmental motion in expression space.
 
+At the current stage it should be interpreted as:
+
+- one step of developmental update,
+- not a full long-horizon cell-fate forecast in isolation.
+
 ### `split_logits`
 
 This is a predicted propensity for division in the next time window.
@@ -154,7 +178,7 @@ It is closer to:
 
 than to a clean apoptosis label.
 
-This is a known limitation of the current weak target construction.
+This is a known limitation of the current target construction.
 
 ## Why This Baseline Is Biologically More Meaningful Than the Spatial Baseline
 
@@ -170,6 +194,13 @@ This gene-context baseline is more biologically meaningful because:
 
 This makes the model closer to developmental systems biology and farther from a
 point-cloud kinematics model.
+
+It also makes it the correct first stage for a later whole-embryo model:
+
+- transcriptome remains the main developmental state,
+- context is learned rather than injected,
+- the model can later be promoted from local update prediction to larger
+  population update prediction.
 
 ## Closest Published Work
 
@@ -246,6 +277,12 @@ The active baseline combines assumptions that are uncommon in combination:
 That combination is closer to a whole-embryo developmental context model than
 standard single-cell trajectory inference, while still remaining grounded in
 available snapshot data.
+
+The important boundary is:
+
+- this baseline is evidence for one component of a whole-embryo developmental
+  model,
+- it is not yet evidence that embryo-scale rollout has been solved.
 
 ## First Internal Comparison: Multi-Cell Context vs Single-Cell Control
 
