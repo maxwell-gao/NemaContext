@@ -763,6 +763,54 @@ Interpretation:
 - but these are still project-specific research readouts rather than
   community-standard biological endpoints.
 
+## 15. Multi-Patch Length Extrapolation Worked, But Exposed A Conceptual Limit
+
+What changed:
+
+- the project moved from single-patch prediction to multi-patch state
+  coverage,
+- the model was trained on `1` or `2` patches and evaluated on larger patch
+  counts,
+- this provided the first direct length-extrapolation test in terms of state
+  coverage rather than token count alone.
+
+What this established:
+
+- extrapolation from fewer to more patches works in a limited but real sense,
+- degradation is gradual rather than catastrophic,
+- additional patches mostly improve structural readouts rather than simple
+  mean-state summaries.
+
+The conceptual result was equally important:
+
+- manually sampled patches are useful training views,
+- but they should not be promoted into the biological ontology of the final
+  model.
+
+## 16. Direct Patch-Level Attention/Selection Was Tested And Rejected
+
+What changed:
+
+- a learned patch-scoring and attention-weighted pooling layer was added to
+  the multi-patch model,
+- the goal was to let the model learn which patches mattered most.
+
+What happened:
+
+- the modified model did not improve the strongest multi-patch benchmark,
+- most aggregate and structural metrics became worse or noisier,
+- this reinforced the interpretation that patches are not stable semantic
+  units in the way tokens or graph nodes usually are in successful
+  attention-based models.
+
+Interpretation:
+
+- patch-level attention is not the right next abstraction,
+- the project should now move toward shared-encoder multi-view state
+  representation learning,
+- different patch covers of the same embryo window should be treated as
+  different observations of one underlying local state.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

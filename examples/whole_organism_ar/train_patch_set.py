@@ -21,10 +21,16 @@ from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
 )
 from src.branching_flows.emergent_loss import sinkhorn_divergence  # noqa: E402
 from src.branching_flows.gene_context import (  # noqa: E402
+    MultiPatchSetModel,
     MultiCellPatchSetModel,
     SingleCellPatchSetModel,
 )
-from src.data.gene_context_dataset import PatchSetDataset, collate_patch_set  # noqa: E402
+from src.data.gene_context_dataset import (  # noqa: E402
+    MultiPatchSetDataset,
+    PatchSetDataset,
+    collate_multi_patch_set,
+    collate_patch_set,
+)
 
 
 def _patch_composition_metrics(
@@ -111,6 +117,7 @@ def _patch_composition_metrics(
 
 
 def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: float, mean_weight: float, spatial_input_mode: str):
+    is_multi_patch = batch["current_genes"].dim() == 4
     relative_key = (
         batch.get("current_relative_position")
         if spatial_input_mode == "relative_position"
@@ -133,38 +140,72 @@ def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: f
         else None
     )
     with torch.no_grad():
-        target_latent, _ = model.encode_patch(
-            genes=batch["future_genes"],
-            time=batch["future_time"],
-            future_time=batch["future_time"],
-            token_times=batch["future_token_times"],
-            valid_mask=batch["future_valid_mask"],
-            anchor_mask=batch["future_anchor_mask"],
-            context_role=batch.get("future_context_role"),
-            relative_position=future_relative,
-        )
+        if is_multi_patch:
+            target_latent, _, _, _ = model.encode_state(
+                genes=batch["future_genes"],
+                time=batch["future_time"],
+                future_time=batch["future_time"],
+                token_times=batch["future_token_times"],
+                valid_mask=batch["future_valid_mask"],
+                anchor_mask=batch["future_anchor_mask"],
+                context_role=batch.get("future_context_role"),
+                relative_position=future_relative,
+            )
+        else:
+            target_latent, _ = model.encode_patch(
+                genes=batch["future_genes"],
+                time=batch["future_time"],
+                future_time=batch["future_time"],
+                token_times=batch["future_token_times"],
+                valid_mask=batch["future_valid_mask"],
+                anchor_mask=batch["future_anchor_mask"],
+                context_role=batch.get("future_context_role"),
+                relative_position=future_relative,
+            )
+
+    pred_future_genes = output.pred_future_genes
+    future_genes = batch["future_genes"]
+    future_patch_size = batch["future_patch_size"]
+    future_mean_gene = batch["future_mean_gene"]
+    current_split_fraction = batch["current_split_fraction"]
+    future_split_fraction = batch["future_split_fraction"]
+    future_valid_mask = batch["future_valid_mask"]
+    pred_patch_size = output.pred_patch_size
+    pred_mean_gene = output.pred_mean_gene
+    patch_latent = output.state_latent if is_multi_patch else output.patch_latent
+
+    if is_multi_patch:
+        bsz, n_patches, future_len, gene_dim = pred_future_genes.shape
+        pred_future_genes = pred_future_genes.view(bsz * n_patches, future_len, gene_dim)
+        future_genes = future_genes.view(bsz * n_patches, future_genes.shape[2], future_genes.shape[3])
+        future_patch_size = future_patch_size.view(-1)
+        future_mean_gene = future_mean_gene.view(bsz * n_patches, future_mean_gene.shape[2])
+        current_split_fraction = current_split_fraction.view(-1)
+        future_split_fraction = future_split_fraction.view(-1)
+        future_valid_mask = future_valid_mask.view(bsz * n_patches, future_valid_mask.shape[2])
+        pred_patch_size = pred_patch_size.view(-1)
+        pred_mean_gene = pred_mean_gene.view(bsz * n_patches, pred_mean_gene.shape[2])
 
     ot_loss = sinkhorn_divergence(
-        output.pred_future_genes,
-        batch["future_genes"],
+        pred_future_genes,
+        future_genes,
         blur=0.1,
         p=2,
     )
-    size_loss = F.mse_loss(output.pred_patch_size, batch["future_patch_size"])
-    mean_loss = F.mse_loss(output.pred_mean_gene, batch["future_mean_gene"])
-    latent_loss = (1.0 - F.cosine_similarity(output.patch_latent, target_latent.detach(), dim=-1)).mean()
+    size_loss = F.mse_loss(pred_patch_size, future_patch_size)
+    mean_loss = F.mse_loss(pred_mean_gene, future_mean_gene)
+    latent_loss = (1.0 - F.cosine_similarity(patch_latent, target_latent.detach(), dim=-1)).mean()
     total = ot_loss + latent_weight * latent_loss + size_weight * size_loss + mean_weight * mean_loss
 
-    future_patch_size = batch["future_patch_size"]
     mean_future_patch_size = future_patch_size.mean()
-    size_abs_error = (output.pred_patch_size - future_patch_size).abs().mean()
+    size_abs_error = (pred_patch_size - future_patch_size).abs().mean()
     size_rel_error = (
-        (output.pred_patch_size - future_patch_size).abs() / future_patch_size.clamp_min(1.0)
+        (pred_patch_size - future_patch_size).abs() / future_patch_size.clamp_min(1.0)
     ).mean()
     mean_gene_rmse = torch.sqrt(mean_loss.clamp_min(0.0))
     mean_gene_cosine = F.cosine_similarity(
-        output.pred_mean_gene,
-        batch["future_mean_gene"],
+        pred_mean_gene,
+        future_mean_gene,
         dim=-1,
     ).mean()
     ot_per_token = ot_loss / mean_future_patch_size.clamp_min(1.0)
@@ -176,9 +217,9 @@ def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: f
         + mean_weight * mean_gene_rmse
     )
     composition_metrics = _patch_composition_metrics(
-        output.pred_future_genes.detach(),
-        batch["future_genes"],
-        batch["future_valid_mask"],
+        pred_future_genes.detach(),
+        future_genes,
+        future_valid_mask,
     )
 
     return total, {
@@ -195,10 +236,10 @@ def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: f
         "mean_gene_rmse": mean_gene_rmse.item(),
         "mean_gene_cosine": mean_gene_cosine.item(),
         "future_patch_size": mean_future_patch_size.item(),
-        "current_split_fraction": batch["current_split_fraction"].mean().item(),
-        "future_split_fraction": batch["future_split_fraction"].mean().item(),
+        "current_split_fraction": current_split_fraction.mean().item(),
+        "future_split_fraction": future_split_fraction.mean().item(),
         "split_fraction_shift": (
-            batch["future_split_fraction"] - batch["current_split_fraction"]
+            future_split_fraction - current_split_fraction
         ).mean().item(),
         **composition_metrics,
     }
@@ -252,6 +293,8 @@ def parse_args():
     )
     p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
     p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
+    p.add_argument("--patches_per_state", type=int, default=1)
+    p.add_argument("--multi_patch_model", action="store_true")
     p.add_argument(
         "--event_subset",
         choices=sorted(EVENT_SUBSET_THRESHOLDS),
@@ -307,7 +350,13 @@ def main():
     train_filters = resolve_event_filters(args)
     val_filters = resolve_event_filters(args, prefix="val_")
 
-    train_ds = PatchSetDataset(
+    use_multi_patch = args.multi_patch_model or args.patches_per_state > 1
+    dataset_cls = MultiPatchSetDataset if use_multi_patch else PatchSetDataset
+    collate_fn = collate_multi_patch_set if use_multi_patch else collate_patch_set
+
+    extra_dataset_kwargs = {"patches_per_state": args.patches_per_state} if use_multi_patch else {}
+
+    train_ds = dataset_cls(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
@@ -324,8 +373,9 @@ def main():
         split="train",
         val_fraction=args.val_fraction,
         random_seed=args.seed,
+        **extra_dataset_kwargs,
     )
-    val_ds = PatchSetDataset(
+    val_ds = dataset_cls(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
@@ -342,16 +392,28 @@ def main():
         split="val",
         val_fraction=args.val_fraction,
         random_seed=args.seed + 1000,
+        **extra_dataset_kwargs,
     )
     if not train_ds.time_pairs:
         raise ValueError("Training dataset is empty after filtering.")
     if not val_ds.time_pairs:
         raise ValueError("Validation dataset is empty after filtering.")
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_patch_set)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_patch_set)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
-    if args.model_type == "single_cell":
+    if use_multi_patch:
+        model = MultiPatchSetModel(
+            gene_dim=train_ds.gene_dim,
+            context_size=args.context_size,
+            model_type=args.model_type,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            head_dim=args.head_dim,
+            use_pairwise_spatial_bias=args.pairwise_spatial_bias,
+        ).to(args.device)
+    elif args.model_type == "single_cell":
         model = SingleCellPatchSetModel(
             gene_dim=train_ds.gene_dim,
             context_size=args.context_size,

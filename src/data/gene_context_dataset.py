@@ -904,3 +904,116 @@ def collate_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.T
         output["future_split_fraction"][i] = item["future_split_fraction"]
 
     return output
+
+
+class MultiPatchSetDataset(PatchSetDataset):
+    """Multi-patch variant for patch-count extrapolation experiments."""
+
+    def __init__(
+        self,
+        *args,
+        patches_per_state: int = 1,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        if patches_per_state < 1:
+            raise ValueError("patches_per_state must be >= 1")
+        self.patches_per_state = patches_per_state
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        pair = self.time_pairs[idx % len(self.time_pairs)]
+        rng = np.random.default_rng(self.random_seed + idx)
+        patch_items = []
+        for _ in range(self.patches_per_state):
+            current_indices, current_roles, current_relpos = self._select_patch_from_indices(
+                pair.current_indices,
+                rng,
+            )
+            future_indices, future_roles, future_relpos = self._select_patch_from_indices(
+                pair.future_indices,
+                rng,
+            )
+
+            current_view = self._build_patch_view(
+                current_indices, current_roles, current_relpos, pair.current_center
+            )
+            future_view = self._build_patch_view(
+                future_indices, future_roles, future_relpos, pair.future_center
+            )
+
+            future_genes = future_view["genes"]
+            future_valid = future_view["valid_mask"]
+            future_mean_gene = future_genes[future_valid].mean(dim=0)
+            future_patch_size = torch.tensor(float(future_valid.sum().item()), dtype=torch.float32)
+            current_split_fraction = torch.tensor(
+                self._compute_split_fraction(self.lineages[current_indices]),
+                dtype=torch.float32,
+            )
+            future_split_fraction = torch.tensor(
+                self._compute_split_fraction(self.lineages[future_indices]),
+                dtype=torch.float32,
+            )
+            patch_items.append(
+                {
+                    "current_genes": current_view["genes"],
+                    "current_context_role": current_view["context_role"],
+                    "current_relative_position": current_view["relative_position"],
+                    "current_token_times": current_view["token_times"],
+                    "current_valid_mask": current_view["valid_mask"],
+                    "current_anchor_mask": current_view["anchor_mask"],
+                    "current_time": current_view["time"],
+                    "future_genes": future_view["genes"],
+                    "future_context_role": future_view["context_role"],
+                    "future_relative_position": future_view["relative_position"],
+                    "future_token_times": future_view["token_times"],
+                    "future_valid_mask": future_view["valid_mask"],
+                    "future_anchor_mask": future_view["anchor_mask"],
+                    "future_time": future_view["time"],
+                    "future_mean_gene": future_mean_gene,
+                    "future_patch_size": future_patch_size,
+                    "current_split_fraction": current_split_fraction,
+                    "future_split_fraction": future_split_fraction,
+                }
+            )
+
+        output: dict[str, torch.Tensor] = {}
+        for key in patch_items[0]:
+            output[key] = torch.stack([item[key] for item in patch_items], dim=0)
+        return output
+
+
+def collate_multi_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+    patches_per_state = batch[0]["current_genes"].shape[0]
+    flat_batch: list[dict[str, torch.Tensor]] = []
+    for item in batch:
+        for patch_idx in range(patches_per_state):
+            flat_batch.append({key: value[patch_idx] for key, value in item.items()})
+
+    collated = collate_patch_set(flat_batch)
+    batch_size = len(batch)
+    current_len = collated["current_genes"].shape[1]
+    future_len = collated["future_genes"].shape[1]
+    gene_dim = collated["current_genes"].shape[2]
+
+    output = {
+        "current_genes": collated["current_genes"].view(batch_size, patches_per_state, current_len, gene_dim),
+        "current_context_role": collated["current_context_role"].view(batch_size, patches_per_state, current_len),
+        "current_relative_position": collated["current_relative_position"].view(batch_size, patches_per_state, current_len, 5),
+        "current_token_times": collated["current_token_times"].view(batch_size, patches_per_state, current_len),
+        "current_valid_mask": collated["current_valid_mask"].view(batch_size, patches_per_state, current_len),
+        "current_anchor_mask": collated["current_anchor_mask"].view(batch_size, patches_per_state, current_len),
+        "current_time": collated["current_time"].view(batch_size, patches_per_state),
+        "future_genes": collated["future_genes"].view(batch_size, patches_per_state, future_len, gene_dim),
+        "future_context_role": collated["future_context_role"].view(batch_size, patches_per_state, future_len),
+        "future_relative_position": collated["future_relative_position"].view(batch_size, patches_per_state, future_len, 5),
+        "future_token_times": collated["future_token_times"].view(batch_size, patches_per_state, future_len),
+        "future_valid_mask": collated["future_valid_mask"].view(batch_size, patches_per_state, future_len),
+        "future_anchor_mask": collated["future_anchor_mask"].view(batch_size, patches_per_state, future_len),
+        "future_time": collated["future_time"].view(batch_size, patches_per_state),
+        "future_mean_gene": collated["future_mean_gene"].view(batch_size, patches_per_state, gene_dim),
+        "future_patch_size": collated["future_patch_size"].view(batch_size, patches_per_state),
+        "current_split_fraction": collated["current_split_fraction"].view(batch_size, patches_per_state),
+        "future_split_fraction": collated["future_split_fraction"].view(batch_size, patches_per_state),
+        "patches_per_state": torch.full((batch_size,), patches_per_state, dtype=torch.long),
+    }
+    return output

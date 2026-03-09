@@ -7,9 +7,9 @@ NemaContext is focused on one goal:
 ## Current Direction
 
 - Final target: **whole-embryo developmental prediction from early embryo state toward the full worm embryo**.
-- Active training task: **patch-to-patch set-level developmental prediction** as the first local-population state objective that favors multi-cell modeling.
-- Immediate question: **does larger developmental context improve prediction of the next local population state?**
-- Near-term priority: **scale patch context, improve biological readouts, and move from single patch toward multi-patch embryo state coverage**.
+- Active training task: **patch-to-patch set-level developmental prediction** as the current local-population pretext task.
+- Immediate question: **can shared encoders learn stable developmental state representations from multiple local views of the same embryo window?**
+- Near-term priority: **treat patches as training views, not biological units, and move from patch prediction toward multi-view state representation learning**.
 - Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
 
 ## Repository Layout

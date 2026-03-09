@@ -97,7 +97,11 @@ Mapping:
 - split/delete heads -> crude event proxies retained mainly for diagnosis,
 - structured local-plus-global context -> compressed embryo-context prototype,
 - patch-set scaling -> first direct test of whether larger context improves
-  local population-state prediction.
+  local population-state prediction,
+- multi-patch coverage -> useful as multiple local views of one regional
+  state, not as a final ontology of patch entities,
+- next transition -> shared-encoder multi-view state learning rather than
+  stronger patch hierarchy.
 
 So the active path is not conceptually separate from whole-organism AR.
 It is the smallest version of it that can currently be validated on real data.

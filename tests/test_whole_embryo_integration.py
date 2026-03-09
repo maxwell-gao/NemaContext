@@ -23,14 +23,17 @@ sys.path.insert(0, str(project_root))
 from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
 from src.branching_flows.gene_context import (  # noqa: E402
     GeneContextModel,
+    MultiPatchSetModel,
     MultiCellPatchSetModel,
     SingleCellGeneTimeModel,
 )
 from src.branching_flows.states import BranchingState  # noqa: E402
 from src.data.gene_context_dataset import (  # noqa: E402
     GeneContextDataset,
+    MultiPatchSetDataset,
     PatchSetDataset,
     collate_gene_context,
+    collate_multi_patch_set,
     collate_patch_set,
 )
 from src.data.trajectory_extractor import WholeEmbryoTrajectoryExtractor  # noqa: E402
@@ -535,6 +538,65 @@ def test_patch_set_dataset_and_model_forward():
     assert expected_metric_keys.issubset(metrics)
     for value in metrics.values():
         assert isinstance(value, float)
+
+
+def test_multi_patch_set_dataset_and_model_forward():
+    """Multi-patch dataset should support patch-count extrapolation model inputs."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = MultiPatchSetDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        patches_per_state=2,
+        random_seed=0,
+    )
+    if len(dataset) == 0:
+        pytest.skip("No multi-patch samples available")
+
+    batch = collate_multi_patch_set([dataset[0], dataset[min(1, len(dataset) - 1)]])
+    model = MultiPatchSetModel(
+        gene_dim=32,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    model.eval()
+
+    with torch.no_grad():
+        output = model(
+            genes=batch["current_genes"],
+            time=batch["current_time"],
+            future_time=batch["future_time"],
+            token_times=batch["current_token_times"],
+            valid_mask=batch["current_valid_mask"],
+            anchor_mask=batch["current_anchor_mask"],
+            context_role=batch["current_context_role"],
+            relative_position=batch["current_relative_position"],
+        )
+
+    assert output.pred_future_genes.shape == (2, 2, 8, 32)
+    assert output.pred_patch_size.shape == (2, 2)
+    assert output.pred_mean_gene.shape == (2, 2, 32)
+    assert output.patch_latent.shape == (2, 2, 64)
+    assert output.state_latent.shape == (2, 64)
+    assert output.patch_attention_logits.shape == (2, 2)
+    assert output.patch_attention_weights.shape == (2, 2)
+    assert torch.allclose(
+        output.patch_attention_weights.sum(dim=1),
+        torch.ones(2),
+        atol=1e-5,
+    )
 
 
 if __name__ == "__main__":

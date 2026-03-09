@@ -379,6 +379,34 @@ The newer patch-set baseline established:
 
 This is the clearest current bridge between the local benchmark and the final
 goal of embryo-scale developmental prediction.
+
+## Current Boundary On Patch Modeling
+
+The project should no longer treat manually sampled patches as if they were
+the true biological units of the embryo.
+
+The current best interpretation is:
+
+- a patch is a local training view,
+- patch-set prediction is a useful pretext task,
+- but a patch is not the ontology that the final developmental model should
+  represent.
+
+This matters because a direct patch-attention stage was tested and did not
+improve the multi-patch benchmark. That result matches the deeper conceptual
+issue:
+
+- patch boundaries are imposed by the training pipeline,
+- patch count is chosen by the experimenter,
+- different patch covers of the same embryo window are different observations
+  of one underlying state, not different biological entities.
+
+So the next stage should not be "better patch hierarchy." It should be:
+
+- shared encoders across multiple local views,
+- view-consistent state representations,
+- current-to-future latent prediction,
+- patch-set reconstruction kept only as an auxiliary local constraint.
 > embryo-scale biological structure.
 
 ## Closest Published Work
@@ -673,6 +701,16 @@ So the right reading is:
 - patch-set prediction is now the active modeling task,
 - composition readouts improve biological interpretability,
 - but they do not yet replace the need for later embryo-scale evaluation.
+
+## Current Transition
+
+The active transition is now:
+
+- keep patch-set as the strongest validated local pretext task,
+- stop treating patch-level attention/selection as the main architectural path,
+- train a shared encoder on multiple views of the same embryo window,
+- make the main objective representation consistency and future-state
+  predictability rather than patch identity itself.
 
 ## References
 

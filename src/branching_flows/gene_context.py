@@ -25,6 +25,17 @@ class PatchSetOutput:
     patch_latent: torch.Tensor
 
 
+@dataclass
+class MultiPatchSetOutput:
+    pred_future_genes: torch.Tensor
+    pred_patch_size: torch.Tensor
+    pred_mean_gene: torch.Tensor
+    patch_latent: torch.Tensor
+    state_latent: torch.Tensor
+    patch_attention_logits: torch.Tensor
+    patch_attention_weights: torch.Tensor
+
+
 class GeneContextModel(nn.Module):
     """Time-conditioned multi-cell transformer over gene states."""
 
@@ -503,4 +514,139 @@ class SingleCellPatchSetModel(nn.Module):
             pred_patch_size=pred_patch_size,
             pred_mean_gene=pred_mean_gene,
             patch_latent=patch_latent,
+        )
+
+
+class MultiPatchSetModel(nn.Module):
+    """Patch-count extrapolation model over multiple patches per state."""
+
+    def __init__(
+        self,
+        gene_dim: int,
+        context_size: int,
+        model_type: str = "multi_cell",
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        head_dim: int = 32,
+        use_pairwise_spatial_bias: bool = True,
+    ):
+        super().__init__()
+        if model_type == "single_cell":
+            self.patch_model = SingleCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_layers=n_layers,
+            )
+        else:
+            self.patch_model = MultiCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                head_dim=head_dim,
+                use_pairwise_spatial_bias=use_pairwise_spatial_bias,
+            )
+        self.model_type = model_type
+        self.patch_blocks = nn.ModuleList(
+            [TransformerBlockAutoregressive(d_model, n_heads=max(1, min(n_heads, 4)), head_dim=head_dim) for _ in range(2)]
+        )
+        self.patch_score = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+        )
+        self.state_proj = nn.Sequential(
+            nn.Linear(2 * d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.patch_film = nn.Linear(d_model, 2 * d_model)
+
+    def encode_state(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        future_time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size, n_patches, patch_len, gene_dim = genes.shape
+        flat_kwargs = {
+            "genes": genes.view(batch_size * n_patches, patch_len, gene_dim),
+            "time": time.view(batch_size * n_patches),
+            "future_time": future_time.view(batch_size * n_patches),
+            "token_times": token_times.view(batch_size * n_patches, patch_len),
+            "valid_mask": valid_mask.view(batch_size * n_patches, patch_len),
+            "anchor_mask": anchor_mask.view(batch_size * n_patches, patch_len),
+            "context_role": None if context_role is None else context_role.view(batch_size * n_patches, patch_len),
+            "relative_position": None if relative_position is None else relative_position.view(batch_size * n_patches, patch_len, relative_position.shape[-1]),
+        }
+        patch_latent, _ = self.patch_model.encode_patch(**flat_kwargs)
+        patch_latent = patch_latent.view(batch_size, n_patches, -1)
+        patch_valid = valid_mask.any(dim=-1)
+        x = patch_latent
+        for block in self.patch_blocks:
+            x = block(x, patch_valid)
+        patch_attention_logits = self.patch_score(x).squeeze(-1)
+        patch_attention_logits = patch_attention_logits.masked_fill(~patch_valid, float("-inf"))
+        patch_attention_weights = torch.softmax(patch_attention_logits, dim=1)
+        patch_attention_weights = patch_attention_weights.masked_fill(~patch_valid, 0.0)
+        patch_attention_weights = patch_attention_weights / patch_attention_weights.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        pooled = (x * patch_attention_weights.unsqueeze(-1)).sum(dim=1)
+        anchor_patch = x[:, 0]
+        state_latent = self.state_proj(torch.cat([anchor_patch, pooled], dim=-1))
+        return state_latent, x, patch_attention_logits, patch_attention_weights
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        future_time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> MultiPatchSetOutput:
+        state_latent, patch_latent, patch_attention_logits, patch_attention_weights = self.encode_state(
+            genes=genes,
+            time=time,
+            future_time=future_time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+        scale, shift = self.patch_film(state_latent).chunk(2, dim=-1)
+        attention_gain = 1.0 + patch_attention_weights.unsqueeze(-1)
+        conditioned = (patch_latent * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)) * attention_gain
+        flat = conditioned.view(conditioned.shape[0] * conditioned.shape[1], conditioned.shape[2])
+        pred_future_genes = self.patch_model.future_token_head(flat).view(
+            genes.shape[0],
+            genes.shape[1],
+            self.patch_model.context_size,
+            self.patch_model.encoder.gene_dim,
+        )
+        pred_patch_size = self.patch_model.patch_size_head(flat).view(genes.shape[0], genes.shape[1])
+        pred_mean_gene = self.patch_model.mean_gene_head(flat).view(
+            genes.shape[0],
+            genes.shape[1],
+            self.patch_model.encoder.gene_dim,
+        )
+        return MultiPatchSetOutput(
+            pred_future_genes=pred_future_genes,
+            pred_patch_size=pred_patch_size,
+            pred_mean_gene=pred_mean_gene,
+            patch_latent=conditioned,
+            state_latent=state_latent,
+            patch_attention_logits=patch_attention_logits,
+            patch_attention_weights=patch_attention_weights,
         )

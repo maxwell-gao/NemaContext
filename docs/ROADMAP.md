@@ -141,6 +141,18 @@ Tasks:
 - decide when the active representation is ready to become an embryo-scale
   state representation.
 
+Current update:
+
+- single-patch set prediction is established as the strongest local pretext
+  task,
+- multi-patch extrapolation works, but extra patches should be understood as
+  multiple views of one underlying state rather than as stable biological
+  entities,
+- direct patch-level attention/selection was tested and did not improve the
+  active benchmark,
+- the next transition is therefore shared-encoder multi-view state learning,
+  not stronger patch hierarchy.
+
 Definition of done:
 
 - larger context windows improve or stabilize prediction in a meaningful way,
@@ -153,14 +165,17 @@ Definition of done:
 
 ## Phase 4: Population Dynamics
 
-Objective: turn the validated one-step predictor into a repeated population
+Objective: turn the validated local-state encoder into a repeated population
 update model.
 
 This is the first phase that should be treated as real developmental dynamics.
 
 Tasks:
 
-- move from anchor-query prediction to group update prediction,
+- move from patch views to state representations that remain stable across
+  different local observations of the same embryo window,
+- learn current-to-future state prediction in latent space before full
+  rollout,
 - update cell states and event propensities jointly,
 - evaluate short multi-step rollout under changing context,
 - measure drift in gene-state distribution, cell-count balance, and event
@@ -249,9 +264,11 @@ Definition of done:
    raw total loss alone.
 4. Scale patch context before scaling architecture complexity.
 5. Sweep `global_context_size` and then `dt` at the best patch scale.
-6. Begin designing multi-patch embryo-state coverage once single-patch scaling
-   saturates.
-7. Re-enter whole-organism rollout only when the set-level update rule and
+6. Treat multi-patch coverage as multiple views of one regional state rather
+   than as a new ontology of patch entities.
+7. Build shared-encoder multi-view state learning on top of the validated
+   patch-set pretext task.
+8. Re-enter whole-organism rollout only when the set-level update rule and
    event targets are both strong enough to survive repeated application.
 
 ## Non-Goals
