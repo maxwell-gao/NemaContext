@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a multi-cell gene-context baseline on real transcriptome data."""
+"""Train a patch-to-patch set prediction baseline."""
 
 from __future__ import annotations
 
@@ -15,80 +15,74 @@ from torch.utils.data import DataLoader
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.gene_context import GeneContextModel  # noqa: E402
-from src.data.gene_context_dataset import (  # noqa: E402
-    GeneContextDataset,
-    collate_gene_context,
+from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
+    EVENT_SUBSET_THRESHOLDS,
+    resolve_event_filters,
 )
+from src.branching_flows.emergent_loss import sinkhorn_divergence  # noqa: E402
+from src.branching_flows.gene_context import (  # noqa: E402
+    MultiCellPatchSetModel,
+    SingleCellPatchSetModel,
+)
+from src.data.gene_context_dataset import PatchSetDataset, collate_patch_set  # noqa: E402
 
 
-EVENT_SUBSET_THRESHOLDS: dict[str, dict[str, int]] = {
-    "none": {},
-    "event_rich": {"min_event_positive": 200},
-    "split_rich": {"min_split_positive": 200},
-    "delete_rich": {"min_del_positive": 100},
-    "anchor_event_rich": {"min_anchor_event_positive": 10},
-    "anchor_split_rich": {"min_anchor_split_positive": 10},
-    "anchor_delete_rich": {"min_anchor_del_positive": 8},
-}
-
-
-def compute_metrics(output, batch, split_weight: float, del_weight: float):
-    supervision_mask = batch.get("supervision_mask", batch.get("anchor_mask", batch["valid_mask"]))
-    supervision_mask = supervision_mask & batch["valid_mask"]
-    match_mask = batch["match_mask"] & supervision_mask
-    if match_mask.any():
-        current = batch["genes"][match_mask]
-        target = batch["target_genes"][match_mask]
-        pred = current + output.gene_delta[match_mask]
-        gene_loss = F.mse_loss(pred, target)
-    else:
-        gene_loss = torch.tensor(0.0, device=batch["genes"].device)
-
-    split_mask = supervision_mask
-    split_targets = batch["split_target"][split_mask]
-    del_targets = batch["del_target"][split_mask]
-    split_logits = output.split_logits[split_mask]
-    del_logits = output.del_logits[split_mask]
-
-    split_pos = float(split_targets.sum().item())
-    split_neg = max(1.0, float(split_targets.numel() - split_pos))
-    split_pos_weight = torch.tensor(
-        [split_neg / max(1.0, split_pos)],
-        device=split_logits.device,
+def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: float, mean_weight: float, spatial_input_mode: str):
+    relative_key = (
+        batch.get("current_relative_position")
+        if spatial_input_mode == "relative_position"
+        else None
     )
-    split_loss = F.binary_cross_entropy_with_logits(
-        split_logits,
-        split_targets,
-        pos_weight=split_pos_weight,
+    output = model(
+        genes=batch["current_genes"],
+        time=batch["current_time"],
+        future_time=batch["future_time"],
+        token_times=batch["current_token_times"],
+        valid_mask=batch["current_valid_mask"],
+        anchor_mask=batch["current_anchor_mask"],
+        context_role=batch.get("current_context_role"),
+        relative_position=relative_key,
     )
-    del_loss = F.binary_cross_entropy_with_logits(del_logits, del_targets)
 
-    total = gene_loss + split_weight * split_loss + del_weight * del_loss
+    future_relative = (
+        batch.get("future_relative_position")
+        if spatial_input_mode == "relative_position"
+        else None
+    )
+    with torch.no_grad():
+        target_latent, _ = model.encode_patch(
+            genes=batch["future_genes"],
+            time=batch["future_time"],
+            future_time=batch["future_time"],
+            token_times=batch["future_token_times"],
+            valid_mask=batch["future_valid_mask"],
+            anchor_mask=batch["future_anchor_mask"],
+            context_role=batch.get("future_context_role"),
+            relative_position=future_relative,
+        )
+
+    ot_loss = sinkhorn_divergence(
+        output.pred_future_genes,
+        batch["future_genes"],
+        blur=0.1,
+        p=2,
+    )
+    size_loss = F.mse_loss(output.pred_patch_size, batch["future_patch_size"])
+    mean_loss = F.mse_loss(output.pred_mean_gene, batch["future_mean_gene"])
+    latent_loss = (1.0 - F.cosine_similarity(output.patch_latent, target_latent.detach(), dim=-1)).mean()
+    total = ot_loss + latent_weight * latent_loss + size_weight * size_loss + mean_weight * mean_loss
+
     return total, {
         "total": total.item(),
-        "gene": gene_loss.item(),
-        "split": split_loss.item(),
-        "del": del_loss.item(),
-        "match_rate": (
-            (match_mask.float().sum() / supervision_mask.float().sum()).item()
-            if supervision_mask.any()
-            else 0.0
-        ),
-        "split_rate": split_targets.mean().item() if split_targets.numel() else 0.0,
-        "del_rate": del_targets.mean().item() if del_targets.numel() else 0.0,
+        "ot": ot_loss.item(),
+        "latent": latent_loss.item(),
+        "size": size_loss.item(),
+        "mean_gene": mean_loss.item(),
+        "future_patch_size": batch["future_patch_size"].mean().item(),
     }
 
 
-def run_epoch(
-    model,
-    loader,
-    optimizer,
-    device,
-    split_weight: float,
-    del_weight: float,
-    spatial_input_mode: str = "relative_position",
-):
+def run_epoch(model, loader, optimizer, device, latent_weight: float, size_weight: float, mean_weight: float, spatial_input_mode: str):
     train = optimizer is not None
     model.train(train)
     totals: dict[str, float] = {}
@@ -96,20 +90,14 @@ def run_epoch(
 
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
-        output = model(
-            genes=batch["genes"],
-            time=batch["time"],
-            future_time=batch["future_time"],
-            token_times=batch["token_times"],
-            valid_mask=batch["valid_mask"],
-            context_role=batch.get("context_role"),
-            relative_position=(
-                batch.get("relative_position")
-                if spatial_input_mode == "relative_position"
-                else None
-            ),
+        loss, metrics = compute_patch_set_metrics(
+            model,
+            batch,
+            latent_weight,
+            size_weight,
+            mean_weight,
+            spatial_input_mode,
         )
-        loss, metrics = compute_metrics(output, batch, split_weight, del_weight)
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -122,28 +110,10 @@ def run_epoch(
     return {key: value / max(1, n_batches) for key, value in totals.items()}
 
 
-def resolve_event_filters(args, prefix: str = "") -> dict[str, int]:
-    subset_name = getattr(args, f"{prefix}event_subset")
-    filters = {
-        "min_event_positive": getattr(args, f"{prefix}min_event_positive"),
-        "min_anchor_event_positive": getattr(args, f"{prefix}min_anchor_event_positive"),
-        "min_split_positive": getattr(args, f"{prefix}min_split_positive"),
-        "min_del_positive": getattr(args, f"{prefix}min_del_positive"),
-        "min_anchor_split_positive": getattr(args, f"{prefix}min_anchor_split_positive"),
-        "min_anchor_del_positive": getattr(args, f"{prefix}min_anchor_del_positive"),
-    }
-    for key, value in EVENT_SUBSET_THRESHOLDS[subset_name].items():
-        if filters[key] in (None, 0):
-            filters[key] = value
-    return {k: int(v or 0) for k, v in filters.items()}
-
-
 def parse_args():
-    p = argparse.ArgumentParser(description="Train the active multi-cell gene-context baseline.")
-    p.add_argument(
-        "--h5ad_path",
-        default="dataset/processed/nema_extended_large2025.h5ad",
-    )
+    p = argparse.ArgumentParser(description="Train the patch-to-patch set prediction baseline.")
+    p.add_argument("--model_type", choices=["multi_cell", "single_cell"], default="multi_cell")
+    p.add_argument("--h5ad_path", default="dataset/processed/nema_extended_large2025.h5ad")
     p.add_argument("--n_hvg", type=int, default=256)
     p.add_argument("--context_size", type=int, default=64)
     p.add_argument("--global_context_size", type=int, default=None)
@@ -160,12 +130,6 @@ def parse_args():
     )
     p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
     p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
-    p.add_argument(
-        "--supervision_mode",
-        choices=["anchor_only", "local_group", "matched_local_patch", "all_valid"],
-        default="anchor_only",
-    )
-    p.add_argument("--local_group_size", type=int, default=None)
     p.add_argument(
         "--event_subset",
         choices=sorted(EVENT_SUBSET_THRESHOLDS),
@@ -201,14 +165,15 @@ def parse_args():
     p.add_argument("--n_layers", type=int, default=4)
     p.add_argument("--head_dim", type=int, default=32)
     p.add_argument("--pairwise_spatial_bias", action="store_true")
-    p.add_argument("--split_weight", type=float, default=1.0)
-    p.add_argument("--del_weight", type=float, default=1.0)
+    p.add_argument("--latent_weight", type=float, default=0.2)
+    p.add_argument("--size_weight", type=float, default=0.2)
+    p.add_argument("--mean_weight", type=float, default=0.5)
     p.add_argument(
         "--spatial_input_mode",
         choices=["none", "relative_position"],
         default="relative_position",
     )
-    p.add_argument("--checkpoint_dir", default="checkpoints_gene_context")
+    p.add_argument("--checkpoint_dir", default="checkpoints_patch_set")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
@@ -220,7 +185,7 @@ def main():
     train_filters = resolve_event_filters(args)
     val_filters = resolve_event_filters(args, prefix="val_")
 
-    train_ds = GeneContextDataset(
+    train_ds = PatchSetDataset(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
@@ -233,14 +198,12 @@ def main():
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode=args.delete_target_mode,
-        supervision_mode=args.supervision_mode,
-        local_group_size=args.local_group_size,
         **train_filters,
         split="train",
         val_fraction=args.val_fraction,
         random_seed=args.seed,
     )
-    val_ds = GeneContextDataset(
+    val_ds = PatchSetDataset(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
@@ -253,42 +216,36 @@ def main():
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode=args.delete_target_mode,
-        supervision_mode=args.supervision_mode,
-        local_group_size=args.local_group_size,
         **val_filters,
         split="val",
         val_fraction=args.val_fraction,
         random_seed=args.seed + 1000,
     )
-
     if not train_ds.time_pairs:
-        raise ValueError("Training dataset is empty after filtering. Lower the event-enrichment thresholds.")
+        raise ValueError("Training dataset is empty after filtering.")
     if not val_ds.time_pairs:
-        raise ValueError(
-            "Validation dataset is empty after filtering. Lower the event-enrichment thresholds or val_fraction."
-        )
+        raise ValueError("Validation dataset is empty after filtering.")
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=collate_gene_context,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate_gene_context,
-    )
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_patch_set)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_patch_set)
 
-    model = GeneContextModel(
-        gene_dim=train_ds.gene_dim,
-        d_model=args.d_model,
-        n_heads=args.n_heads,
-        n_layers=args.n_layers,
-        head_dim=args.head_dim,
-        use_pairwise_spatial_bias=args.pairwise_spatial_bias,
-    ).to(args.device)
+    if args.model_type == "single_cell":
+        model = SingleCellPatchSetModel(
+            gene_dim=train_ds.gene_dim,
+            context_size=args.context_size,
+            d_model=args.d_model,
+            n_layers=args.n_layers,
+        ).to(args.device)
+    else:
+        model = MultiCellPatchSetModel(
+            gene_dim=train_ds.gene_dim,
+            context_size=args.context_size,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            head_dim=args.head_dim,
+            use_pairwise_spatial_bias=args.pairwise_spatial_bias,
+        ).to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     checkpoint_dir = Path(args.checkpoint_dir)
@@ -298,35 +255,15 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(
-            model,
-            train_loader,
-            optimizer,
-            args.device,
-            args.split_weight,
-            args.del_weight,
-            args.spatial_input_mode,
+            model, train_loader, optimizer, args.device, args.latent_weight, args.size_weight, args.mean_weight, args.spatial_input_mode
         )
         val_metrics = run_epoch(
-            model,
-            val_loader,
-            None,
-            args.device,
-            args.split_weight,
-            args.del_weight,
-            args.spatial_input_mode,
+            model, val_loader, None, args.device, args.latent_weight, args.size_weight, args.mean_weight, args.spatial_input_mode
         )
-        history.append(
-            {
-                "epoch": epoch,
-                "train": train_metrics,
-                "val": val_metrics,
-            }
-        )
+        history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(
-            f"epoch={epoch} "
-            f"train_total={train_metrics['total']:.4f} "
-            f"val_total={val_metrics['total']:.4f} "
-            f"val_gene={val_metrics['gene']:.4f}"
+            f"epoch={epoch} train_total={train_metrics['total']:.4f} "
+            f"val_total={val_metrics['total']:.4f} val_ot={val_metrics['ot']:.4f}"
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
@@ -336,6 +273,7 @@ def main():
                     "config": vars(args),
                     "gene_dim": train_ds.gene_dim,
                     "best_val": best_val,
+                    "model_type": args.model_type,
                 },
                 checkpoint_dir / "best.pt",
             )
@@ -346,6 +284,7 @@ def main():
             "config": vars(args),
             "gene_dim": train_ds.gene_dim,
             "best_val": best_val,
+            "model_type": args.model_type,
         },
         checkpoint_dir / "final.pt",
     )

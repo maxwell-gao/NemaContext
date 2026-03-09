@@ -258,6 +258,180 @@ Files:
 
 Aggregate:
 
+- multi-cell full: `3.2508`
+- multi-cell anchor-only: `3.2630`
+- single-cell: `3.1834`
+
+Interpretation:
+
+- strict delete helped clean up the delete target,
+- but it did not make token-matching become a clearly multi-cell-favoring
+  task,
+- the project still needed a less hand-matched objective.
+
+## 8. Relative Spatial Encoding And Pairwise Bias Improved The Clean Baseline
+
+Files:
+
+- `eval_anchor_split_relpos_multi.json`
+- `eval_anchor_split_nospatial_multi.json`
+- `eval_anchor_split_relpos_single.json`
+- `eval_anchor_split_nospatial_single.json`
+- `eval_anchor_split_relpos_pairbias_full.json`
+- `eval_anchor_split_relpos_pairbias_anchor_only.json`
+- `error_compare_anchor_split_relpos_full_vs_anchor_only.json`
+- `error_compare_anchor_split_relpos_pairbias_full_vs_anchor_only.json`
+
+Relative position versus no spatial input:
+
+- multi-cell relpos: `2.0558`
+- multi-cell no-space: `2.0825`
+- single-cell relpos: `1.8503`
+- single-cell no-space: `1.9456`
+
+Pairwise bias on top of relative position:
+
+- relpos full: `2.0558`
+- pairwise-bias full: `2.0369`
+- relpos anchor-only: `2.0733`
+- pairwise-bias anchor-only: `2.0577`
+
+Context-use decomposition:
+
+- relpos `full - anchor_only`: `-0.0175`
+- pairwise-bias `full - anchor_only`: `-0.0208`
+
+Interpretation:
+
+- continuous relative geometry was a better spatial signal than no-space or
+  coarse distance buckets,
+- pairwise spatial bias gave a further small but consistent gain,
+- spatial encoding was therefore retained for the next stage,
+- but token-level matching still did not make multi-cell clearly win overall.
+
+## 9. Naive Local-Group Supervision Failed, But Matched Local Patch Was Better
+
+Files:
+
+- `eval_anchor_split_pairbias_local_group_v2_full.json`
+- `eval_anchor_split_pairbias_local_group_v2_anchor_only.json`
+- `eval_anchor_split_pairbias_matched_patch_v2_full.json`
+- `eval_anchor_split_pairbias_matched_patch_v2_anchor_only.json`
+- `eval_anchor_split_matched_patch_v2_single.json`
+- `error_compare_anchor_split_pairbias_local_group_v2_full_vs_anchor_only.json`
+- `error_compare_anchor_split_pairbias_matched_patch_v2_full_vs_anchor_only.json`
+- `error_compare_anchor_split_matched_patch_v2_multi_vs_single.json`
+
+Local-group:
+
+- full: `2.6613`
+- anchor-only: `2.7430`
+- mean context gain: `-0.0858`
+- `match_rate = 0.8`
+- `split_rate = 0.0`
+
+Matched local patch:
+
+- multi-cell full: `3.0887`
+- multi-cell anchor-only: `3.1292`
+- mean context gain: `-0.1070`
+- `match_rate = 1.0`
+- `split_rate = 0.1`
+
+Single-cell matched local patch:
+
+- single-cell full: `2.9640`
+- `multi - single = +0.2844`
+
+Interpretation:
+
+- naive local-group supervision diluted the task,
+- matched local patch was a cleaner patch-level target than local-group,
+- but hard token matching still left single-cell ahead,
+- this was the point where patch-level work clearly needed a set-level target.
+
+## 10. Patch-To-Patch Set Prediction Was The First Objective To Favor Multi-Cell
+
+Files:
+
+- `eval_patch_set_anchor_split_relpos_pairbias_multi_full.json`
+- `eval_patch_set_anchor_split_relpos_pairbias_multi_anchor_only.json`
+- `eval_patch_set_anchor_split_relpos_single_full.json`
+
+Formal `context_size = 64` comparison:
+
+- multi-cell full: `114.38`
+- multi-cell anchor-only: `117.82`
+- single-cell full: `116.92`
+
+Key deltas:
+
+- `multi - single total = -2.54`
+- `multi - single ot = -0.14`
+- `multi - single latent = -0.040`
+- `multi - single size = -120.03`
+- `multi full - anchor_only = -3.44`
+
+Interpretation:
+
+- once the task became patch-to-patch set prediction, multi-cell finally
+  outperformed the matched single-cell control,
+- the context ablation gap also became larger than in the earlier
+  token-matching experiments,
+- this was the first strong sign that the project had moved onto a more
+  biologically aligned objective.
+
+## 11. Scaling Patch Size Strengthened The Multi-Cell Advantage
+
+Files:
+
+- `eval_patch_set_anchor_split_ctx128_relpos_pairbias_multi_full.json`
+- `eval_patch_set_anchor_split_ctx128_relpos_single_full.json`
+- `eval_patch_set_anchor_split_ctx256_relpos_pairbias_multi_full.json`
+- `eval_patch_set_anchor_split_ctx256_relpos_single_full.json`
+
+Patch-set scaling sweep:
+
+- `context_size = 64`
+  - multi: `114.38`
+  - single: `116.92`
+  - delta: `-2.54`
+- `context_size = 128`
+  - multi: `370.78`
+  - single: `373.46`
+  - delta: `-2.68`
+- `context_size = 256`
+  - multi: `1336.25`
+  - single: `1349.95`
+  - delta: `-13.70`
+
+OT deltas:
+
+- `64`: `-0.14`
+- `128`: `-0.38`
+- `256`: `-0.77`
+
+Interpretation:
+
+- the absolute losses grow with patch size because the patch-size regression
+  term scales with the target cardinality,
+- but within each fixed scale, the multi-cell model remains better,
+- the advantage becomes markedly larger by `context_size = 256`,
+- this is the clearest current evidence that larger developmental context is
+  becoming more useful under a set-level objective.
+
+## Current Readout
+
+The current project status is therefore:
+
+- token-level matched prediction was useful for diagnosing supervision issues,
+  but it did not unlock clear multi-cell gains,
+- set-level patch prediction is the first objective that consistently favors
+  multi-cell modeling,
+- scaling patch size strengthens that advantage,
+- the most immediate technical issue is now loss rescaling across patch sizes,
+  not whether larger context matters at all.
+
 - strict multi-cell full: `3.2508`
 - strict multi-cell anchor-only: `3.2630`
 - strict single-cell: `3.1834`
@@ -329,6 +503,159 @@ Interpretation:
 - the slight multi-cell advantage still showed up mainly in the `split` term,
   not in the total score.
 
+## 9. Naive Local-Group Supervision Did Not Yet Produce A Good Population Task
+
+Files:
+
+- `eval_anchor_split_local_group_multi_full.json`
+- `eval_anchor_split_local_group_multi_anchor_only.json`
+- `eval_anchor_split_local_group_single.json`
+- `error_compare_anchor_split_local_group_multi_vs_single.json`
+- `error_compare_anchor_split_anchor_only_vs_local_group_multi.json`
+
+Aggregate:
+
+- local-group multi full: `3.3798`
+- local-group multi anchor-only eval: `3.5049`
+- local-group single: `3.1734`
+
+Decomposition:
+
+- `mean_delta_total = +0.3612`
+- `mean_delta_gene = +0.0114`
+- `mean_delta_split = +0.1483`
+- `mean_delta_del = +0.2015`
+
+Comparison to the older anchor-only multi-cell setup:
+
+- `mean_delta_total = -0.1163`
+- `mean_delta_split = -0.0463`
+- `mean_delta_del = -0.0700`
+
+Interpretation:
+
+- simply supervising `anchor + a few neighbors` did not become a useful local
+  population-update task,
+- supervision quality dropped sharply,
+- most of the damage appeared in the event heads.
+
+What this established:
+
+- a future patch-level task should not supervise arbitrary nearby cells,
+- the next group-prediction task should supervise matched local cells rather
+  than every local token.
+
+## 10. Relative Spatial Encoding Improved The Clean Split-Rich Baseline
+
+Files:
+
+- `eval_anchor_split_relpos_multi.json`
+- `eval_anchor_split_nospatial_multi.json`
+- `eval_anchor_split_relpos_single.json`
+- `eval_anchor_split_nospatial_single.json`
+
+Configuration:
+
+- `anchor_split_rich`
+- `strict delete`
+- `anchor_only` supervision
+- same model size and data construction,
+- only `spatial_input_mode` changed:
+  - `none`
+  - `relative_position = (dx, dy, dz, r, has_spatial)`
+
+Aggregate:
+
+- multi-cell with relative position: `2.0558`
+- multi-cell with no spatial input: `2.0825`
+- single-cell with relative position: `1.8503`
+- single-cell with no spatial input: `1.9456`
+
+Interpretation:
+
+- continuous relative spatial encoding was clearly better than dropping spatial
+  information,
+- most of the gain did not come from the gene term,
+- space behaved more like a geometric prior for event prediction than like a
+  direct transcriptomic-state improvement.
+
+What this established:
+
+- spatial information should remain in the active path,
+- anchor-distance buckets were not the right long-term representation,
+- continuous relative geometry was a better default.
+
+## 11. Pairwise Spatial Bias Added A Further Multi-Cell Gain
+
+Files:
+
+- `eval_anchor_split_relpos_pairbias_full.json`
+- `eval_anchor_split_relpos_pairbias_anchor_only.json`
+- `eval_anchor_split_relpos_multi.json`
+- `eval_anchor_split_relpos_anchor_only.json`
+
+Configuration:
+
+- same `anchor_split_rich + strict delete + relative_position` setup,
+- multi-cell only,
+- added learned pairwise spatial bias in attention scores.
+
+Aggregate:
+
+- relative-position full: `2.0558`
+- relative-position + pairwise bias full: `2.0369`
+- relative-position anchor-only: `2.0733`
+- relative-position + pairwise bias anchor-only: `2.0577`
+
+Interpretation:
+
+- pairwise spatial bias gave a small but real improvement beyond token-level
+  relative coordinates,
+- the gain was modest, but directionally consistent,
+- this fit the idea that local patch geometry matters through relationships
+  between cells, not only per-token features.
+
+What this established:
+
+- pairwise geometry is worth keeping in the multi-cell path,
+- the active spatial stack should now be thought of as:
+  - token-level relative coordinates,
+  - optional pairwise spatial bias in attention.
+
+## 12. Pairwise Spatial Bias Slightly Increased Measured Context Use
+
+Files:
+
+- `error_compare_anchor_split_relpos_full_vs_anchor_only.json`
+- `error_compare_anchor_split_relpos_pairbias_full_vs_anchor_only.json`
+
+Window-level comparison:
+
+- relative-position:
+  - `mean_delta_total = -0.0175`
+  - `mean_delta_split = -0.0084`
+  - `mean_delta_del = -0.0091`
+- relative-position + pairwise bias:
+  - `mean_delta_total = -0.0208`
+  - `mean_delta_split = -0.0099`
+  - `mean_delta_del = -0.0110`
+
+Here negative means `full` outperformed `anchor_only`.
+
+Interpretation:
+
+- pairwise bias did not only lower aggregate loss,
+- it also slightly increased the measurable benefit of full context over
+  anchor-only context,
+- the effect remained concentrated in event terms rather than the gene term.
+
+What this established:
+
+- pairwise spatial bias is a reasonable default for the next patch-level
+  population experiments,
+- the project now has a stronger spatially informed local-update baseline to
+  build on.
+
 ## Current Project-Level Reading
 
 These experiments collectively support the following view:
@@ -342,7 +669,11 @@ These experiments collectively support the following view:
 5. `split` is the more promising event type for demonstrating biologically
    meaningful context benefit.
 6. `strict delete` should remain the default.
-7. None of these results yet justify claims about embryo-scale rollout from the
+7. Spatial information is useful, and continuous relative geometry is a better
+   default than coarse distance buckets.
+8. Pairwise spatial bias gives a small but consistent additional gain and
+   slightly strengthens measured context use.
+9. None of these results yet justify claims about embryo-scale rollout from the
    zygote.
 
 ## What This History Does Not Claim

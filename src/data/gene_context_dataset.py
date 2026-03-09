@@ -58,6 +58,8 @@ class GeneContextDataset(Dataset):
         min_anchor_split_positive: int = 0,
         min_anchor_del_positive: int = 0,
         delete_target_mode: str = "weak",
+        supervision_mode: str = "anchor_only",
+        local_group_size: int | None = None,
     ):
         self.h5ad_path = Path(h5ad_path)
         self.context_size = context_size
@@ -87,6 +89,17 @@ class GeneContextDataset(Dataset):
                 f"Unsupported delete_target_mode: {delete_target_mode}"
             )
         self.delete_target_mode = delete_target_mode
+        if supervision_mode not in {
+            "anchor_only",
+            "local_group",
+            "matched_local_patch",
+            "all_valid",
+        }:
+            raise ValueError(
+                f"Unsupported supervision_mode: {supervision_mode}"
+            )
+        self.supervision_mode = supervision_mode
+        self.local_group_size = local_group_size
         self._window_cache: dict[float, np.ndarray] = {}
 
         adata = ad.read_h5ad(self.h5ad_path, backed="r")
@@ -438,24 +451,20 @@ class GeneContextDataset(Dataset):
         )
         return summary
 
-    def _select_current_indices(
+    def _select_indices_from_window(
         self,
-        pair: _TimePair,
+        window_indices: np.ndarray,
         rng: np.random.Generator,
     ) -> np.ndarray:
         if self.sampling_strategy == "random_window":
-            take = min(self.context_size, len(pair.current_indices))
-            return np.sort(rng.choice(pair.current_indices, size=take, replace=False))
+            take = min(self.context_size, len(window_indices))
+            return np.sort(rng.choice(window_indices, size=take, replace=False))
 
         if self.sampling_strategy in {"spatial_neighbors", "spatial_anchor"}:
-            spatial_candidates = pair.current_indices[
-                self.valid_spatial[pair.current_indices]
-            ]
+            spatial_candidates = window_indices[self.valid_spatial[window_indices]]
             if len(spatial_candidates) == 0:
-                take = min(self.context_size, len(pair.current_indices))
-                return np.sort(
-                    rng.choice(pair.current_indices, size=take, replace=False)
-                )
+                take = min(self.context_size, len(window_indices))
+                return np.sort(rng.choice(window_indices, size=take, replace=False))
 
             anchor = int(rng.choice(spatial_candidates))
             anchor_coord = self.spatial_coords[anchor]
@@ -472,12 +481,37 @@ class GeneContextDataset(Dataset):
 
         raise ValueError(f"Unsupported sampling_strategy: {self.sampling_strategy}")
 
-    def _select_anchor_context(
+    def _select_current_indices(
         self,
         pair: _TimePair,
         rng: np.random.Generator,
+    ) -> np.ndarray:
+        return self._select_indices_from_window(pair.current_indices, rng)
+
+    def _compute_relative_position(
+        self,
+        selected: np.ndarray,
+        anchor: int,
+    ) -> np.ndarray:
+        relative_position = np.zeros((len(selected), 5), dtype=np.float32)
+        anchor_coord = self.spatial_coords[anchor]
+        selected_valid = self.valid_spatial[selected]
+        if np.any(selected_valid):
+            deltas = self.spatial_coords[selected[selected_valid]] - anchor_coord
+            radii = np.linalg.norm(deltas, axis=1, keepdims=True)
+            relative_position[selected_valid, :3] = deltas.astype(np.float32)
+            relative_position[selected_valid, 3:4] = radii.astype(np.float32)
+            relative_position[selected_valid, 4] = 1.0
+        relative_position[0, :4] = 0.0
+        relative_position[0, 4] = 1.0
+        return relative_position
+
+    def _select_anchor_context_from_indices(
+        self,
+        window_indices: np.ndarray,
+        rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        spatial_candidates = pair.current_indices[self.valid_spatial[pair.current_indices]]
+        spatial_candidates = window_indices[self.valid_spatial[window_indices]]
         if len(spatial_candidates) == 0:
             raise ValueError("spatial_anchor requires spatially matched cells")
 
@@ -500,7 +534,7 @@ class GeneContextDataset(Dataset):
         local_selected = sorted_local[:local_take]
 
         used = np.concatenate([[anchor], local_selected]).astype(np.int64)
-        remaining = np.setdiff1d(pair.current_indices, used, assume_unique=False)
+        remaining = np.setdiff1d(window_indices, used, assume_unique=False)
 
         global_take = min(self.global_context_size, len(remaining))
         if global_take > 0:
@@ -518,7 +552,7 @@ class GeneContextDataset(Dataset):
         )
 
         if len(selected) < self.context_size:
-            filler_pool = np.setdiff1d(pair.current_indices, selected, assume_unique=False)
+            filler_pool = np.setdiff1d(window_indices, selected, assume_unique=False)
             fill_take = min(self.context_size - len(selected), len(filler_pool))
             if fill_take > 0:
                 filler = rng.choice(filler_pool, size=fill_take, replace=False)
@@ -530,17 +564,16 @@ class GeneContextDataset(Dataset):
         context_role[0] = 1
         context_role[1 : 1 + len(local_selected)] = 2
 
-        selected_coords = self.spatial_coords[selected]
-        selected_distances = np.linalg.norm(selected_coords - anchor_coord, axis=1)
-        finite_distances = selected_distances[np.isfinite(selected_distances)]
-        max_distance = float(finite_distances.max()) if finite_distances.size else 1.0
-        max_distance = max(max_distance, 1e-6)
-        normalized_distance = np.clip(selected_distances / max_distance, 0.0, 1.0)
-        normalized_distance = np.nan_to_num(normalized_distance, nan=1.0, posinf=1.0, neginf=0.0)
-        distance_bucket = np.minimum((normalized_distance * 15.0).astype(np.int64), 15)
-        distance_bucket[0] = 0
+        relative_position = self._compute_relative_position(selected, anchor)
 
-        return selected, context_role, distance_bucket
+        return selected, context_role, relative_position
+
+    def _select_anchor_context(
+        self,
+        pair: _TimePair,
+        rng: np.random.Generator,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return self._select_anchor_context_from_indices(pair.current_indices, rng)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         pair = self.time_pairs[idx % len(self.time_pairs)]
@@ -548,13 +581,15 @@ class GeneContextDataset(Dataset):
         rng = np.random.default_rng(sample_seed)
 
         if self.sampling_strategy == "spatial_anchor":
-            current_indices, context_role, anchor_distance_bucket = self._select_anchor_context(
+            current_indices, context_role, relative_position = self._select_anchor_context(
                 pair, rng
             )
         else:
             current_indices = self._select_current_indices(pair, rng)
             context_role = np.full(len(current_indices), 3, dtype=np.int64)
-            anchor_distance_bucket = np.zeros(len(current_indices), dtype=np.int64)
+            relative_position = np.zeros((len(current_indices), 5), dtype=np.float32)
+            valid_spatial = self.valid_spatial[current_indices]
+            relative_position[valid_spatial, 4] = 1.0
         current_take = len(current_indices)
 
         current_genes = self.genes[current_indices]
@@ -562,7 +597,10 @@ class GeneContextDataset(Dataset):
         targets = self._compute_targets(
             pair,
             current_indices,
-            anchor_only=self.sampling_strategy == "spatial_anchor",
+            anchor_only=(
+                self.sampling_strategy == "spatial_anchor"
+                and self.supervision_mode == "anchor_only"
+            ),
         )
         target_genes = targets["target_genes"]
         match_mask = targets["match_mask"]
@@ -572,10 +610,38 @@ class GeneContextDataset(Dataset):
         strict_del_target = targets["strict_del_target"]
         match_type = targets["match_type"]
         anchor_mask = np.zeros(current_take, dtype=bool)
+        supervision_mask = np.zeros(current_take, dtype=bool)
         if self.sampling_strategy == "spatial_anchor":
             anchor_mask[0] = True
+            if self.supervision_mode == "anchor_only":
+                supervision_mask[0] = True
+            elif self.supervision_mode == "local_group":
+                supervision_mask[0] = True
+                local_positions = np.flatnonzero(context_role == 2)
+                local_take = len(local_positions)
+                if self.local_group_size is not None:
+                    local_take = min(local_take, self.local_group_size)
+                if local_take > 0:
+                    supervision_mask[local_positions[:local_take]] = True
+            elif self.supervision_mode == "matched_local_patch":
+                supervision_mask[0] = True
+                local_positions = np.flatnonzero(context_role == 2)
+                matched_local_positions = local_positions[
+                    match_type[local_positions] != self.MATCH_UNMATCHED
+                ]
+                matched_local_positions = matched_local_positions[
+                    match_type[matched_local_positions] != self.MATCH_UNSUPERVISED
+                ]
+                local_take = len(matched_local_positions)
+                if self.local_group_size is not None:
+                    local_take = min(local_take, self.local_group_size)
+                if local_take > 0:
+                    supervision_mask[matched_local_positions[:local_take]] = True
+            else:
+                supervision_mask[:] = True
         else:
             anchor_mask[:] = True
+            supervision_mask[:] = True
 
         return {
             "genes": torch.from_numpy(current_genes),
@@ -587,8 +653,9 @@ class GeneContextDataset(Dataset):
             "strict_del_target": torch.from_numpy(strict_del_target),
             "match_type": torch.from_numpy(match_type),
             "anchor_mask": torch.from_numpy(anchor_mask),
+            "supervision_mask": torch.from_numpy(supervision_mask),
             "context_role": torch.from_numpy(context_role),
-            "anchor_distance_bucket": torch.from_numpy(anchor_distance_bucket),
+            "relative_position": torch.from_numpy(relative_position),
             "time": torch.tensor(
                 (pair.current_center - self.time_min) / max(1e-6, self.time_max - self.time_min),
                 dtype=torch.float32,
@@ -619,8 +686,9 @@ def collate_gene_context(batch: list[dict[str, torch.Tensor]]) -> dict[str, torc
         dtype=torch.long,
     )
     anchor_mask = torch.zeros(len(batch), max_len, dtype=torch.bool)
+    supervision_mask = torch.zeros(len(batch), max_len, dtype=torch.bool)
     context_role = torch.zeros(len(batch), max_len, dtype=torch.long)
-    anchor_distance_bucket = torch.zeros(len(batch), max_len, dtype=torch.long)
+    relative_position = torch.zeros(len(batch), max_len, 5)
     token_times = torch.zeros(len(batch), max_len)
     valid_mask = torch.zeros(len(batch), max_len, dtype=torch.bool)
     time = torch.zeros(len(batch))
@@ -637,8 +705,9 @@ def collate_gene_context(batch: list[dict[str, torch.Tensor]]) -> dict[str, torc
         strict_del_target[i, :n] = item["strict_del_target"]
         match_type[i, :n] = item["match_type"]
         anchor_mask[i, :n] = item["anchor_mask"]
+        supervision_mask[i, :n] = item["supervision_mask"]
         context_role[i, :n] = item["context_role"]
-        anchor_distance_bucket[i, :n] = item["anchor_distance_bucket"]
+        relative_position[i, :n] = item["relative_position"]
         token_times[i, :n] = item["token_times"]
         valid_mask[i, :n] = item["valid_mask"]
         time[i] = item["time"]
@@ -654,10 +723,149 @@ def collate_gene_context(batch: list[dict[str, torch.Tensor]]) -> dict[str, torc
         "strict_del_target": strict_del_target,
         "match_type": match_type,
         "anchor_mask": anchor_mask,
+        "supervision_mask": supervision_mask,
         "context_role": context_role,
-        "anchor_distance_bucket": anchor_distance_bucket,
+        "relative_position": relative_position,
         "token_times": token_times,
         "valid_mask": valid_mask,
         "time": time,
         "future_time": future_time,
     }
+
+
+class PatchSetDataset(GeneContextDataset):
+    """Patch-to-patch dataset with independent future patch sampling."""
+
+    def _select_patch_from_indices(
+        self,
+        window_indices: np.ndarray,
+        rng: np.random.Generator,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if self.sampling_strategy == "spatial_anchor":
+            return self._select_anchor_context_from_indices(window_indices, rng)
+
+        selected = self._select_indices_from_window(window_indices, rng)
+        context_role = np.full(len(selected), 3, dtype=np.int64)
+        relative_position = np.zeros((len(selected), 5), dtype=np.float32)
+        valid_spatial = self.valid_spatial[selected]
+        relative_position[valid_spatial, 4] = 1.0
+        anchor_mask = np.zeros(len(selected), dtype=bool)
+        if len(selected) > 0:
+            anchor_mask[0] = True
+        return selected, context_role, relative_position
+
+    def _build_patch_view(
+        self,
+        indices: np.ndarray,
+        context_role: np.ndarray,
+        relative_position: np.ndarray,
+        center: float,
+    ) -> dict[str, torch.Tensor]:
+        genes = self.genes[indices]
+        token_times = self.normalized_times[indices]
+        anchor_mask = np.zeros(len(indices), dtype=bool)
+        if len(indices) > 0:
+            anchor_mask[0] = True
+        return {
+            "genes": torch.from_numpy(genes),
+            "context_role": torch.from_numpy(context_role),
+            "relative_position": torch.from_numpy(relative_position),
+            "token_times": torch.from_numpy(token_times),
+            "valid_mask": torch.ones(len(indices), dtype=torch.bool),
+            "anchor_mask": torch.from_numpy(anchor_mask),
+            "time": torch.tensor(
+                (center - self.time_min) / max(1e-6, self.time_max - self.time_min),
+                dtype=torch.float32,
+            ),
+        }
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        pair = self.time_pairs[idx % len(self.time_pairs)]
+        rng = np.random.default_rng(self.random_seed + idx)
+
+        current_indices, current_roles, current_relpos = self._select_patch_from_indices(
+            pair.current_indices,
+            rng,
+        )
+        future_indices, future_roles, future_relpos = self._select_patch_from_indices(
+            pair.future_indices,
+            rng,
+        )
+
+        current_view = self._build_patch_view(
+            current_indices, current_roles, current_relpos, pair.current_center
+        )
+        future_view = self._build_patch_view(
+            future_indices, future_roles, future_relpos, pair.future_center
+        )
+
+        future_genes = future_view["genes"]
+        future_valid = future_view["valid_mask"]
+        future_mean_gene = future_genes[future_valid].mean(dim=0)
+        future_patch_size = torch.tensor(float(future_valid.sum().item()), dtype=torch.float32)
+
+        return {
+            "current_genes": current_view["genes"],
+            "current_context_role": current_view["context_role"],
+            "current_relative_position": current_view["relative_position"],
+            "current_token_times": current_view["token_times"],
+            "current_valid_mask": current_view["valid_mask"],
+            "current_anchor_mask": current_view["anchor_mask"],
+            "current_time": current_view["time"],
+            "future_genes": future_view["genes"],
+            "future_context_role": future_view["context_role"],
+            "future_relative_position": future_view["relative_position"],
+            "future_token_times": future_view["token_times"],
+            "future_valid_mask": future_view["valid_mask"],
+            "future_anchor_mask": future_view["anchor_mask"],
+            "future_time": future_view["time"],
+            "future_mean_gene": future_mean_gene,
+            "future_patch_size": future_patch_size,
+        }
+
+
+def collate_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+    current_max_len = max(item["current_genes"].shape[0] for item in batch)
+    future_max_len = max(item["future_genes"].shape[0] for item in batch)
+    gene_dim = batch[0]["current_genes"].shape[1]
+
+    output = {
+        "current_genes": torch.zeros(len(batch), current_max_len, gene_dim),
+        "current_context_role": torch.zeros(len(batch), current_max_len, dtype=torch.long),
+        "current_relative_position": torch.zeros(len(batch), current_max_len, 5),
+        "current_token_times": torch.zeros(len(batch), current_max_len),
+        "current_valid_mask": torch.zeros(len(batch), current_max_len, dtype=torch.bool),
+        "current_anchor_mask": torch.zeros(len(batch), current_max_len, dtype=torch.bool),
+        "current_time": torch.zeros(len(batch)),
+        "future_genes": torch.zeros(len(batch), future_max_len, gene_dim),
+        "future_context_role": torch.zeros(len(batch), future_max_len, dtype=torch.long),
+        "future_relative_position": torch.zeros(len(batch), future_max_len, 5),
+        "future_token_times": torch.zeros(len(batch), future_max_len),
+        "future_valid_mask": torch.zeros(len(batch), future_max_len, dtype=torch.bool),
+        "future_anchor_mask": torch.zeros(len(batch), future_max_len, dtype=torch.bool),
+        "future_time": torch.zeros(len(batch)),
+        "future_mean_gene": torch.zeros(len(batch), gene_dim),
+        "future_patch_size": torch.zeros(len(batch)),
+    }
+
+    for i, item in enumerate(batch):
+        current_len = item["current_genes"].shape[0]
+        future_len = item["future_genes"].shape[0]
+        output["current_genes"][i, :current_len] = item["current_genes"]
+        output["current_context_role"][i, :current_len] = item["current_context_role"]
+        output["current_relative_position"][i, :current_len] = item["current_relative_position"]
+        output["current_token_times"][i, :current_len] = item["current_token_times"]
+        output["current_valid_mask"][i, :current_len] = item["current_valid_mask"]
+        output["current_anchor_mask"][i, :current_len] = item["current_anchor_mask"]
+        output["current_time"][i] = item["current_time"]
+        output["future_genes"][i, :future_len] = item["future_genes"]
+        output["future_context_role"][i, :future_len] = item["future_context_role"]
+        output["future_relative_position"][i, :future_len] = item["future_relative_position"]
+        output["future_token_times"][i, :future_len] = item["future_token_times"]
+        output["future_valid_mask"][i, :future_len] = item["future_valid_mask"]
+        output["future_anchor_mask"][i, :future_len] = item["future_anchor_mask"]
+        output["future_time"][i] = item["future_time"]
+        output["future_mean_gene"][i] = item["future_mean_gene"]
+        output["future_patch_size"][i] = item["future_patch_size"]
+
+    return output

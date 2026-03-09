@@ -25,6 +25,16 @@ def parse_args():
     )
     p.add_argument("--split", choices=["train", "val", "all"], default="val")
     p.add_argument("--device", default="cpu")
+    p.add_argument(
+        "--left_context_ablation",
+        choices=["full", "anchor_only"],
+        default="full",
+    )
+    p.add_argument(
+        "--right_context_ablation",
+        choices=["full", "anchor_only"],
+        default="full",
+    )
     p.add_argument("--output_json", default="result/gene_context/error_compare.json")
     p.add_argument("--output_csv", default="result/gene_context/error_compare.csv")
     return p.parse_args()
@@ -48,6 +58,7 @@ def load_model(checkpoint_path: str, device: str):
             n_heads=cfg["n_heads"],
             n_layers=cfg["n_layers"],
             head_dim=cfg["head_dim"],
+            use_pairwise_spatial_bias=cfg.get("pairwise_spatial_bias", False),
         ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -68,6 +79,8 @@ def build_dataset(cfg: dict, h5ad_path: str, split: str):
         min_spatial_cells_per_window=cfg.get("min_spatial_cells_per_window", 8),
         spatial_neighbor_pool_size=cfg.get("spatial_neighbor_pool_size"),
         delete_target_mode=cfg.get("delete_target_mode", "weak"),
+        supervision_mode=cfg.get("supervision_mode", "anchor_only"),
+        local_group_size=cfg.get("local_group_size"),
         min_event_positive=cfg.get("min_event_positive", 0),
         min_anchor_event_positive=cfg.get("min_anchor_event_positive", 0),
         min_split_positive=cfg.get("min_split_positive", 0),
@@ -80,14 +93,30 @@ def build_dataset(cfg: dict, h5ad_path: str, split: str):
     )
 
 
-def run_model(model, model_type: str, batch: dict[str, torch.Tensor], cfg: dict):
+def run_model(
+    model,
+    model_type: str,
+    batch: dict[str, torch.Tensor],
+    cfg: dict,
+    context_ablation: str,
+):
+    model_valid_mask = batch["valid_mask"]
+    if context_ablation == "anchor_only":
+        model_valid_mask = (
+            batch.get("anchor_mask", batch["valid_mask"]) & batch["valid_mask"]
+        )
     if model_type == "single_cell":
         output = model(
             genes=batch["genes"],
             time=batch["time"],
             future_time=batch["future_time"],
             token_times=batch["token_times"],
-            valid_mask=batch["valid_mask"],
+            valid_mask=model_valid_mask,
+            relative_position=(
+                batch.get("relative_position")
+                if cfg.get("spatial_input_mode", "relative_position") == "relative_position"
+                else None
+            ),
         )
     else:
         output = model(
@@ -95,9 +124,13 @@ def run_model(model, model_type: str, batch: dict[str, torch.Tensor], cfg: dict)
             time=batch["time"],
             future_time=batch["future_time"],
             token_times=batch["token_times"],
-            valid_mask=batch["valid_mask"],
+            valid_mask=model_valid_mask,
             context_role=batch.get("context_role"),
-            anchor_distance_bucket=batch.get("anchor_distance_bucket"),
+            relative_position=(
+                batch.get("relative_position")
+                if cfg.get("spatial_input_mode", "relative_position") == "relative_position"
+                else None
+            ),
         )
     _, metrics = compute_metrics(output, batch, cfg["split_weight"], cfg["del_weight"])
     return metrics
@@ -133,8 +166,20 @@ def main():
                 for k, v in collate_gene_context([right_item]).items()
             }
 
-            left_metrics = run_model(left_model, left_type, left_batch, left_ckpt["config"])
-            right_metrics = run_model(right_model, right_type, right_batch, right_ckpt["config"])
+            left_metrics = run_model(
+                left_model,
+                left_type,
+                left_batch,
+                left_ckpt["config"],
+                args.left_context_ablation,
+            )
+            right_metrics = run_model(
+                right_model,
+                right_type,
+                right_batch,
+                right_ckpt["config"],
+                args.right_context_ablation,
+            )
             pair_summary = left_ds.summarize_time_pair(idx % len(left_ds.time_pairs))
 
             record = {
@@ -146,6 +191,8 @@ def main():
                 "del_positive_count": pair_summary["del_positive_count"],
                 "left_name": Path(args.left_checkpoint).stem,
                 "right_name": Path(args.right_checkpoint).stem,
+                "left_context_ablation": args.left_context_ablation,
+                "right_context_ablation": args.right_context_ablation,
                 "left_total": left_metrics["total"],
                 "left_gene": left_metrics["gene"],
                 "left_split": left_metrics["split"],

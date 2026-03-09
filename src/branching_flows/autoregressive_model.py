@@ -391,7 +391,12 @@ class TransformerBlockAutoregressive(nn.Module):
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor,
+        attn_bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Forward pass.
 
         Args:
@@ -415,6 +420,8 @@ class TransformerBlockAutoregressive(nn.Module):
         v = v.transpose(1, 2)
 
         scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim**0.5)
+        if attn_bias is not None:
+            scores = scores + attn_bias
 
         # Apply mask [B, L] -> [B, 1, 1, L] for broadcasting
         if mask is not None:

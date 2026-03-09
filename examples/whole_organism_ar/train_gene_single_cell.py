@@ -51,6 +51,12 @@ def parse_args():
     p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
     p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
     p.add_argument(
+        "--supervision_mode",
+        choices=["anchor_only", "local_group", "matched_local_patch", "all_valid"],
+        default="anchor_only",
+    )
+    p.add_argument("--local_group_size", type=int, default=None)
+    p.add_argument(
         "--event_subset",
         choices=sorted(EVENT_SUBSET_THRESHOLDS),
         default="none",
@@ -84,6 +90,11 @@ def parse_args():
     p.add_argument("--n_layers", type=int, default=3)
     p.add_argument("--split_weight", type=float, default=1.0)
     p.add_argument("--del_weight", type=float, default=1.0)
+    p.add_argument(
+        "--spatial_input_mode",
+        choices=["none", "relative_position"],
+        default="relative_position",
+    )
     p.add_argument("--checkpoint_dir", default="checkpoints_gene_single_cell")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -109,6 +120,8 @@ def main():
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode=args.delete_target_mode,
+        supervision_mode=args.supervision_mode,
+        local_group_size=args.local_group_size,
         **train_filters,
         split="train",
         val_fraction=args.val_fraction,
@@ -127,6 +140,8 @@ def main():
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode=args.delete_target_mode,
+        supervision_mode=args.supervision_mode,
+        local_group_size=args.local_group_size,
         **val_filters,
         split="val",
         val_fraction=args.val_fraction,
@@ -173,6 +188,7 @@ def main():
             args.device,
             args.split_weight,
             args.del_weight,
+            args.spatial_input_mode,
         )
         val_metrics = run_epoch(
             model,
@@ -181,6 +197,7 @@ def main():
             args.device,
             args.split_weight,
             args.del_weight,
+            args.spatial_input_mode,
         )
         history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(

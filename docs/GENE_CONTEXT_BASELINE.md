@@ -123,6 +123,33 @@ In the long-term roadmap, this context is meant to expand:
 - to larger local populations,
 - to embryo-scale shared context.
 
+### `relative spatial geometry`
+
+The active baseline now also uses continuous relative spatial features rather
+than only coarse anchor-distance buckets.
+
+Each token can receive:
+
+- `dx, dy, dz` relative to the anchor,
+- `r = ||d||`,
+- `has_spatial`.
+
+In the multi-cell path, this can be used at two levels:
+
+- token level through a learned relative-position projection,
+- pairwise level through an attention bias derived from pairwise relative
+  geometry.
+
+Biologically, this is a better approximation than a pure distance bucket
+because it preserves:
+
+- direction,
+- magnitude,
+- which cells actually have usable spatial coordinates.
+
+This is still anchor-relative rather than embryo-global, so it should be read
+as a local geometric reference frame, not yet a full embryo coordinate system.
+
 ### What Is Not Input
 
 The active baseline does **not** input:
@@ -131,10 +158,15 @@ The active baseline does **not** input:
 - lineage embeddings,
 - lineage tree distance,
 - lineage-biased attention,
-- spatial coordinates as the main driver.
+- embryo-global spatial coordinates as the main driver.
 
 This matters because the active direction is to learn context from data rather
 than from injected lineage structure.
+
+The current spatial input should therefore be understood as:
+
+- a local geometric conditioning signal,
+- not a hand-built global spatial scaffold.
 
 ## Biological Meaning of the Outputs
 
@@ -201,6 +233,153 @@ It also makes it the correct first stage for a later whole-embryo model:
 - context is learned rather than injected,
 - the model can later be promoted from local update prediction to larger
   population update prediction.
+
+## Current Spatial-Encoding Reading
+
+The recent spatial ablations support a specific interpretation.
+
+What now seems true:
+
+- dropping spatial input hurts both multi-cell and single-cell models,
+- continuous relative geometry is better than omitting space,
+- pairwise spatial bias gives a further small gain for the multi-cell model,
+- that pairwise term also slightly increases the measured `full > anchor_only`
+  context benefit.
+
+What does **not** yet seem true:
+
+- spatial input is not yet a decisive reason that multi-cell beats single-cell,
+- most current gains still show up in event-related terms rather than in the
+  gene-regression term,
+- spatial encoding is still helping a local update benchmark, not an
+  embryo-scale rollout model.
+
+So the best current interpretation is:
+
+> spatial geometry is now a useful local inductive bias for context-aware
+> developmental update prediction, but not yet the defining source of
+> multi-cell advantage.
+
+## Why The Project Is Now Moving Beyond Token Matching
+
+The strongest recent result is not another token-level event comparison.
+
+It is that a patch-to-patch set-level objective finally changed the direction
+of the comparison:
+
+- token-level matched objectives repeatedly showed that the multi-cell model
+  uses context,
+- but they did not reliably make the multi-cell model beat the matched
+  single-cell control,
+- patch-to-patch set prediction was the first objective where multi-cell
+  became clearly better.
+
+On the clean `context_size = 64` patch-set comparison:
+
+- multi-cell full: `114.38`
+- single-cell full: `116.92`
+- multi-cell anchor-only: `117.82`
+
+So, under the new objective:
+
+- `multi < single`,
+- `full < anchor_only`,
+- and both statements hold at the same time.
+
+Biologically, this matters because the question is no longer:
+
+> which future token should this current token map to?
+
+It becomes:
+
+> what local developmental population state comes next?
+
+That is much closer to the final project goal of whole-organism developmental
+prediction.
+
+## Biological Reading Of The Patch-Set Objective
+
+The new patch-set objective should be understood as a transition from
+cell-centric supervision to local-population supervision.
+
+Input:
+
+- a current local patch at time `t`,
+- structured as anchor plus local neighborhood plus optional background,
+- with transcriptome, time, relative geometry, and pairwise spatial bias.
+
+Target:
+
+- a future local patch sampled from the paired future window,
+- treated as a set rather than as a collection of hard token matches.
+
+Loss:
+
+- OT-style set reconstruction,
+- future patch latent alignment,
+- future patch size prediction,
+- future mean-gene prediction.
+
+Biologically, this is better aligned with developmental reality because:
+
+- local populations evolve together,
+- not every current cell has a clean one-to-one future partner,
+- snapshot data are better suited to predicting future local state structure
+  than to enforcing exact token identity.
+
+So this objective is the first one in the project that begins to ask:
+
+> given a developmental microenvironment now, what microenvironment comes
+> next?
+
+That is still local, but it is no longer merely a focal-cell query.
+
+## Scaling Result: Larger Patch Context Now Helps More
+
+The patch-set scaling sweep strengthened this interpretation.
+
+For `context_size = 64 / 128 / 256`, with fixed relative-position input and
+pairwise spatial bias in the multi-cell path:
+
+- `64`: multi `114.38`, single `116.92`, delta `-2.54`
+- `128`: multi `370.78`, single `373.46`, delta `-2.68`
+- `256`: multi `1336.25`, single `1349.95`, delta `-13.70`
+
+The absolute scale of the loss grows because the patch-size regression term
+grows with target cardinality, so those totals should not be compared across
+different patch sizes directly.
+
+But within each fixed scale, the comparison is meaningful:
+
+- the multi-cell model stays ahead,
+- the OT term also improves,
+- and the margin becomes substantially larger by `context_size = 256`.
+
+This is currently the strongest evidence that larger developmental context is
+becoming genuinely useful once the task is framed as set-level patch
+prediction.
+
+## Current Interpretation
+
+The active `gene-context` line should therefore now be read in two layers.
+
+The older token-level baseline established:
+
+- context is used,
+- split is more informative than delete,
+- delete needed repair,
+- relative geometry and pairwise bias are useful local inductive biases.
+
+The newer patch-set baseline established:
+
+- a set-level patch objective is more biologically aligned than token
+  matching,
+- multi-cell can now beat the matched single-cell control,
+- and that advantage strengthens as patch context expands.
+
+This is the clearest current bridge between the local benchmark and the final
+goal of embryo-scale developmental prediction.
+> embryo-scale biological structure.
 
 ## Closest Published Work
 

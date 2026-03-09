@@ -45,7 +45,12 @@ What is already established:
 - real transcriptome windows can be sampled from `nema_extended_large2025.h5ad`,
 - structured anchor-centered context exists,
 - the model can use multi-cell context rather than only anchor-local signal,
+- continuous relative spatial encoding helps the clean split-rich baseline,
+- pairwise spatial bias slightly increases measured context use,
 - a one-step transcriptomic update task can be trained end-to-end on real data,
+- a patch-to-patch set-level objective now outperforms the matched
+  single-cell control,
+- increasing patch context size strengthens that multi-cell advantage,
 - whole-organism autoregressive infrastructure and variable-cell-count code are
   already present in the repository.
 
@@ -119,14 +124,16 @@ Definition of done:
 
 ## Phase 3: Context Expansion
 
-Objective: move from anchor-local context to larger population context.
+Objective: move from anchor-local context to larger population context and
+replace token matching with set-level local-state prediction.
 
 This is the bridge from the active baseline to the final embryo model.
 
 Tasks:
 
-- expand from anchor-centered prediction toward predicting updates for more of
-  the local window at once,
+- expand from anchor-centered prediction toward patch-to-patch prediction,
+- keep token matching as a diagnostic tool rather than the main objective,
+- use set-level patch targets where future local state is predicted as a set,
 - increase context size systematically,
 - test whether local-plus-global context acts like a useful compressed embryo
   state,
@@ -137,6 +144,8 @@ Tasks:
 Definition of done:
 
 - larger context windows improve or stabilize prediction in a meaningful way,
+- set-level patch prediction becomes a stable default benchmark,
+- multi-cell advantage grows rather than collapses as context size increases,
 - the model can operate on larger populations without collapsing into
   uninformative averaging,
 - context can be interpreted as a scalable state representation, not just a
@@ -239,10 +248,11 @@ Definition of done:
    not single-cell long-range prediction.
 3. Use `split-rich` and context-ablation comparisons as the highest-value tests
    of whether context is carrying real developmental information.
-4. Expand from anchor-only supervision toward larger group-update supervision
-   once the local update rule is stable.
-5. Re-enter whole-organism rollout only when the update rule and event targets
-   are both strong enough to survive repeated application.
+4. Treat patch-to-patch set prediction as the main bridge from local updates to
+   embryo-scale state modeling.
+5. Scale patch context before scaling architecture complexity.
+6. Re-enter whole-organism rollout only when the set-level update rule and
+   event targets are both strong enough to survive repeated application.
 
 ## Non-Goals
 

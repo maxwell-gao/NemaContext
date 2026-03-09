@@ -56,6 +56,8 @@ def main():
         min_spatial_cells_per_window=cfg.get("min_spatial_cells_per_window", 8),
         spatial_neighbor_pool_size=cfg.get("spatial_neighbor_pool_size"),
         delete_target_mode=cfg.get("delete_target_mode", "weak"),
+        supervision_mode=cfg.get("supervision_mode", "anchor_only"),
+        local_group_size=cfg.get("local_group_size"),
         min_event_positive=cfg.get("min_event_positive", 0),
         min_anchor_event_positive=cfg.get("min_anchor_event_positive", 0),
         min_split_positive=cfg.get("min_split_positive", 0),
@@ -97,6 +99,11 @@ def main():
                 future_time=batch["future_time"],
                 token_times=batch["token_times"],
                 valid_mask=batch["valid_mask"],
+                relative_position=(
+                    batch.get("relative_position")
+                    if cfg.get("spatial_input_mode", "relative_position") == "relative_position"
+                    else None
+                ),
             )
             _, metrics = compute_metrics(output, batch, cfg["split_weight"], cfg["del_weight"])
             for key, value in metrics.items():
@@ -104,7 +111,8 @@ def main():
             n_batches += 1
 
             supervision_mask = (
-                batch.get("anchor_mask", batch["valid_mask"]) & batch["valid_mask"]
+                batch.get("supervision_mask", batch.get("anchor_mask", batch["valid_mask"]))
+                & batch["valid_mask"]
             )
             split_pred = torch.sigmoid(output.split_logits[supervision_mask]) >= 0.5
             split_true = batch["split_target"][supervision_mask] >= 0.5
@@ -126,6 +134,8 @@ def main():
     results["split"] = args.split
     results["checkpoint"] = args.checkpoint
     results["delete_target_mode"] = cfg.get("delete_target_mode", "weak")
+    results["supervision_mode"] = cfg.get("supervision_mode", "anchor_only")
+    results["spatial_input_mode"] = cfg.get("spatial_input_mode", "relative_position")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
