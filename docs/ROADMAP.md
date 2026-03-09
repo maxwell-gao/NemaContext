@@ -244,14 +244,14 @@ Definition of done:
 ## Immediate Next Steps
 
 1. Keep `strict` delete as the default training target mode.
-2. Keep the active task framed as learning a one-step local population update,
-   not single-cell long-range prediction.
-3. Use `split-rich` and context-ablation comparisons as the highest-value tests
-   of whether context is carrying real developmental information.
-4. Treat patch-to-patch set prediction as the main bridge from local updates to
-   embryo-scale state modeling.
-5. Scale patch context before scaling architecture complexity.
-6. Re-enter whole-organism rollout only when the set-level update rule and
+2. Treat patch-to-patch set prediction as the default active benchmark.
+3. Use normalized set metrics plus biological composition readouts rather than
+   raw total loss alone.
+4. Scale patch context before scaling architecture complexity.
+5. Sweep `global_context_size` and then `dt` at the best patch scale.
+6. Begin designing multi-patch embryo-state coverage once single-patch scaling
+   saturates.
+7. Re-enter whole-organism rollout only when the set-level update rule and
    event targets are both strong enough to survive repeated application.
 
 ## Non-Goals

@@ -56,8 +56,9 @@ Current blockers:
 Because of this, the present order is:
 
 1. learn a local one-step population update proxy,
-2. repair event supervision,
-3. expand context radius,
+2. move from token matching to patch-to-patch set prediction,
+3. repair event supervision where still useful as auxiliary diagnosis,
+4. expand context radius,
 4. return to this embryo-scale architecture with stronger ingredients.
 
 ## Whole-Organism State Contract
@@ -92,11 +93,24 @@ Mapping:
 
 - anchor-centered window -> small local slice of embryo state,
 - one-step gene update -> local population update proxy,
-- split/delete heads -> crude event proxies,
-- structured local-plus-global context -> compressed embryo-context prototype.
+- patch-to-patch set prediction -> local population-state update proxy,
+- split/delete heads -> crude event proxies retained mainly for diagnosis,
+- structured local-plus-global context -> compressed embryo-context prototype,
+- patch-set scaling -> first direct test of whether larger context improves
+  local population-state prediction.
 
 So the active path is not conceptually separate from whole-organism AR.
 It is the smallest version of it that can currently be validated on real data.
+
+The most important recent shift is that the main evidence path is no longer
+best summarized as "predict one anchor cell from context".
+
+It is now better summarized as:
+
+- encode a local developmental patch at time `t`,
+- predict the next local developmental patch at `t + dt`,
+- compare single-cell and multi-cell patch encoders,
+- scale the patch until larger context begins to matter.
 
 ## Current Core Modules
 

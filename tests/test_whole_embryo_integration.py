@@ -35,6 +35,7 @@ from src.data.gene_context_dataset import (  # noqa: E402
 )
 from src.data.trajectory_extractor import WholeEmbryoTrajectoryExtractor  # noqa: E402
 from examples.whole_organism_ar.train_autoregressive_full import EmbryoTrajectoryDataset  # noqa: E402
+from examples.whole_organism_ar.train_patch_set import compute_patch_set_metrics  # noqa: E402
 
 
 @pytest.fixture
@@ -495,6 +496,45 @@ def test_patch_set_dataset_and_model_forward():
     assert output.pred_patch_size.shape == (2,)
     assert output.pred_mean_gene.shape == (2, 32)
     assert output.patch_latent.shape == (2, 64)
+
+    total, metrics = compute_patch_set_metrics(
+        model,
+        batch,
+        latent_weight=0.2,
+        size_weight=0.02,
+        mean_weight=0.5,
+        spatial_input_mode="relative_position",
+    )
+    assert torch.isfinite(total)
+    expected_metric_keys = {
+        "total",
+        "total_wo_size",
+        "normalized_total",
+        "ot",
+        "ot_per_token",
+        "latent",
+        "size",
+        "size_abs_error",
+        "size_rel_error",
+        "mean_gene",
+        "mean_gene_rmse",
+        "mean_gene_cosine",
+        "future_patch_size",
+        "current_split_fraction",
+        "future_split_fraction",
+        "split_fraction_shift",
+        "pred_diversity",
+        "future_diversity",
+        "diversity_abs_error",
+        "pred_entropy",
+        "future_entropy",
+        "entropy_abs_error",
+        "pca_mean_dist",
+        "pca_var_dist",
+    }
+    assert expected_metric_keys.issubset(metrics)
+    for value in metrics.values():
+        assert isinstance(value, float)
 
 
 if __name__ == "__main__":

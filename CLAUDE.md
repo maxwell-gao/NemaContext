@@ -139,14 +139,18 @@ The project goal is whole-organism developmental prediction from early embryo
 state toward the full embryo.
 
 The current main executable path is the transcriptomic `gene-context` baseline,
-which should be understood as the first validated local population-update
+which now includes a newer patch-to-patch set-level path. The current active
+readout should be understood as the first validated local population-update
 approximation to that embryo-scale goal:
 
-- structured anchor-centered multi-cell context windows,
-- short-horizon gene-state transition prediction,
+- structured local developmental patches built from real transcriptomic
+  windows,
+- patch-to-patch set prediction as the main active task,
+- short-horizon gene-state transition prediction retained as a historical and
+  diagnostic baseline,
 - auxiliary split/delete heads used cautiously because event supervision is
   still weak,
-- context validation and supervision repair first,
+- context validation, patch scaling, and readout repair first,
 - later promotion into larger population updates and embryo-scale rollout.
 
 Key active classes:
@@ -156,6 +160,8 @@ Key active classes:
 - `SingleCellGeneTimeModel` - control baseline without multi-cell context
 - `GeneContextDataset` - transcriptome time-window dataset with anchor, local,
   and global background context construction
+- `MultiCellPatchSetModel` / `SingleCellPatchSetModel` - set-level local
+  population-state predictors built on the same encoder stack
 
 ### BranchingFlows Framework (`src/branching_flows/`)
 

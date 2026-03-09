@@ -7,9 +7,9 @@ NemaContext is focused on one goal:
 ## Current Direction
 
 - Final target: **whole-embryo developmental prediction from early embryo state toward the full worm embryo**.
-- Active training task: **anchor-centered multi-cell gene-context prediction** as the first validated local population-update problem.
-- Immediate question: **does structured multi-cell context improve short-horizon developmental updates?**
-- Near-term priority: **strengthen event supervision and expand from local context toward larger population context**.
+- Active training task: **patch-to-patch set-level developmental prediction** as the first local-population state objective that favors multi-cell modeling.
+- Immediate question: **does larger developmental context improve prediction of the next local population state?**
+- Near-term priority: **scale patch context, improve biological readouts, and move from single patch toward multi-patch embryo state coverage**.
 - Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
 
 ## Repository Layout
@@ -31,31 +31,41 @@ See:
 ## Quick Start
 
 ```bash
-# 1) Train the active multi-cell gene-context baseline
+# 1) Train the active multi-cell patch-set baseline
+uv run python examples/whole_organism_ar/train_patch_set.py \
+  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
+  --model_type multi_cell \
+  --sampling_strategy spatial_anchor \
+  --context_size 256 \
+  --global_context_size 16 \
+  --spatial_input_mode relative_position \
+  --pairwise_spatial_bias \
+  --epochs 10
+
+# 2) Evaluate the active patch-set baseline
+uv run python examples/whole_organism_ar/evaluate_patch_set.py \
+  --checkpoint checkpoints_patch_set/best.pt \
+  --output result/gene_context/evaluation_patch_set.json
+
+# 3) Compare with anchor-only ablation
+uv run python examples/whole_organism_ar/evaluate_patch_set.py \
+  --checkpoint checkpoints_patch_set/best.pt \
+  --context_ablation anchor_only \
+  --output result/gene_context/evaluation_patch_set_anchor_only.json
+
+# 4) Historical token-level baseline remains available for diagnosis
 uv run python examples/whole_organism_ar/train_gene_context.py \
   --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
   --sampling_strategy spatial_anchor \
   --context_size 64 \
   --global_context_size 16 \
   --epochs 10
-
-# 2) Evaluate whether context is actually used
-uv run python examples/whole_organism_ar/evaluate_gene_context.py \
-  --checkpoint checkpoints_gene_context/best.pt \
-  --context_ablation full \
-  --output result/gene_context/evaluation.json
-
-# 3) Compare with anchor-only evaluation
-uv run python examples/whole_organism_ar/evaluate_gene_context.py \
-  --checkpoint checkpoints_gene_context/best.pt \
-  --context_ablation anchor_only \
-  --output result/gene_context/evaluation_anchor_only.json
+```
 
 Founder-specific perturbation, visualization, and demo scripts are retained under
 `examples/legacy/whole_organism_ar/`, not in the active path.
 Synthetic and per-founder trajectory generation is archived under
 `src/data/legacy/trajectory_extractor.py`.
-```
 
 Whole-organism autoregressive rollout remains in the repository as the intended
 destination of the current line of work, but the active evidence path still

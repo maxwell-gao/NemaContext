@@ -27,6 +27,89 @@ from src.branching_flows.gene_context import (  # noqa: E402
 from src.data.gene_context_dataset import PatchSetDataset, collate_patch_set  # noqa: E402
 
 
+def _patch_composition_metrics(
+    pred_genes: torch.Tensor,
+    target_genes: torch.Tensor,
+    target_valid_mask: torch.Tensor,
+) -> dict[str, float]:
+    pred_diversities: list[torch.Tensor] = []
+    target_diversities: list[torch.Tensor] = []
+    pred_entropies: list[torch.Tensor] = []
+    target_entropies: list[torch.Tensor] = []
+    pca_mean_dists: list[torch.Tensor] = []
+    pca_var_dists: list[torch.Tensor] = []
+
+    for i in range(target_genes.shape[0]):
+        valid = target_valid_mask[i]
+        pred = pred_genes[i]
+        target = target_genes[i, valid]
+        if target.shape[0] == 0:
+            continue
+
+        pred = pred[: target.shape[0]]
+        target_mean = target.mean(dim=0, keepdim=True)
+        centered_target = target - target_mean
+        centered_pred = pred - target_mean
+
+        denom = max(target.shape[0] - 1, 1)
+        target_cov = centered_target.transpose(0, 1) @ centered_target / denom
+        pred_cov = centered_pred.transpose(0, 1) @ centered_pred / denom
+
+        target_diversity = torch.diagonal(target_cov).mean()
+        pred_diversity = torch.diagonal(pred_cov).mean()
+        target_diversities.append(target_diversity)
+        pred_diversities.append(pred_diversity)
+
+        target_evals, target_evecs = torch.linalg.eigh(target_cov)
+        pred_evals = torch.linalg.eigvalsh(pred_cov)
+        target_evals = target_evals.clamp_min(0.0)
+        pred_evals = pred_evals.clamp_min(0.0)
+
+        def _spectral_entropy(evals: torch.Tensor) -> torch.Tensor:
+            probs = evals / evals.sum().clamp_min(1e-8)
+            nonzero = probs > 0
+            probs = probs[nonzero]
+            if probs.numel() == 0:
+                return torch.tensor(0.0, device=evals.device)
+            entropy = -(probs * probs.log()).sum()
+            return entropy / torch.log(torch.tensor(float(probs.numel()), device=evals.device)).clamp_min(1e-8)
+
+        target_entropies.append(_spectral_entropy(target_evals))
+        pred_entropies.append(_spectral_entropy(pred_evals))
+
+        top_k = min(8, target_evecs.shape[1])
+        pcs = target_evecs[:, -top_k:]
+        target_proj = centered_target @ pcs
+        pred_proj = centered_pred @ pcs
+        pca_mean_dists.append(F.mse_loss(pred_proj.mean(dim=0), target_proj.mean(dim=0)))
+        pca_var_dists.append(
+            F.mse_loss(
+                pred_proj.var(dim=0, unbiased=False),
+                target_proj.var(dim=0, unbiased=False),
+            )
+        )
+
+    def _avg(values: list[torch.Tensor]) -> float:
+        if not values:
+            return 0.0
+        return torch.stack(values).mean().item()
+
+    return {
+        "pred_diversity": _avg(pred_diversities),
+        "future_diversity": _avg(target_diversities),
+        "diversity_abs_error": _avg(
+            [torch.abs(a - b) for a, b in zip(pred_diversities, target_diversities, strict=False)]
+        ),
+        "pred_entropy": _avg(pred_entropies),
+        "future_entropy": _avg(target_entropies),
+        "entropy_abs_error": _avg(
+            [torch.abs(a - b) for a, b in zip(pred_entropies, target_entropies, strict=False)]
+        ),
+        "pca_mean_dist": _avg(pca_mean_dists),
+        "pca_var_dist": _avg(pca_var_dists),
+    }
+
+
 def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: float, mean_weight: float, spatial_input_mode: str):
     relative_key = (
         batch.get("current_relative_position")
@@ -72,13 +155,52 @@ def compute_patch_set_metrics(model, batch, latent_weight: float, size_weight: f
     latent_loss = (1.0 - F.cosine_similarity(output.patch_latent, target_latent.detach(), dim=-1)).mean()
     total = ot_loss + latent_weight * latent_loss + size_weight * size_loss + mean_weight * mean_loss
 
+    future_patch_size = batch["future_patch_size"]
+    mean_future_patch_size = future_patch_size.mean()
+    size_abs_error = (output.pred_patch_size - future_patch_size).abs().mean()
+    size_rel_error = (
+        (output.pred_patch_size - future_patch_size).abs() / future_patch_size.clamp_min(1.0)
+    ).mean()
+    mean_gene_rmse = torch.sqrt(mean_loss.clamp_min(0.0))
+    mean_gene_cosine = F.cosine_similarity(
+        output.pred_mean_gene,
+        batch["future_mean_gene"],
+        dim=-1,
+    ).mean()
+    ot_per_token = ot_loss / mean_future_patch_size.clamp_min(1.0)
+    total_without_size = ot_loss + latent_weight * latent_loss + mean_weight * mean_loss
+    normalized_total = (
+        ot_per_token
+        + latent_weight * latent_loss
+        + size_weight * size_rel_error
+        + mean_weight * mean_gene_rmse
+    )
+    composition_metrics = _patch_composition_metrics(
+        output.pred_future_genes.detach(),
+        batch["future_genes"],
+        batch["future_valid_mask"],
+    )
+
     return total, {
         "total": total.item(),
+        "total_wo_size": total_without_size.item(),
+        "normalized_total": normalized_total.item(),
         "ot": ot_loss.item(),
+        "ot_per_token": ot_per_token.item(),
         "latent": latent_loss.item(),
         "size": size_loss.item(),
+        "size_abs_error": size_abs_error.item(),
+        "size_rel_error": size_rel_error.item(),
         "mean_gene": mean_loss.item(),
-        "future_patch_size": batch["future_patch_size"].mean().item(),
+        "mean_gene_rmse": mean_gene_rmse.item(),
+        "mean_gene_cosine": mean_gene_cosine.item(),
+        "future_patch_size": mean_future_patch_size.item(),
+        "current_split_fraction": batch["current_split_fraction"].mean().item(),
+        "future_split_fraction": batch["future_split_fraction"].mean().item(),
+        "split_fraction_shift": (
+            batch["future_split_fraction"] - batch["current_split_fraction"]
+        ).mean().item(),
+        **composition_metrics,
     }
 
 

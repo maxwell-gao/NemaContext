@@ -11,13 +11,15 @@ If you are starting new work, use `examples/whole_organism_ar/`.
 Current interpretation:
 
 - the final target is whole-organism developmental prediction,
-- the active executable benchmark is still the local transcriptomic
-  `gene-context` update task,
+- the active executable benchmark is now the local transcriptomic
+  `patch-set` update task,
 - downstream rollout scripts remain important, but they are not yet the main
   evidence source.
 
 Recommended current entry points:
 
+- `train_patch_set.py`
+- `evaluate_patch_set.py`
 - `train_gene_context.py`
 - `evaluate_gene_context.py`
 - `train_gene_single_cell.py`

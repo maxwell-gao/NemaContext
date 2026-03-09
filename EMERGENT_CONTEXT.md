@@ -10,9 +10,10 @@ early embryo state.
 
 What changed is the execution order:
 
-1. first validate local population-update learning on real transcriptomic data,
-2. then strengthen event supervision,
-3. then return to larger-scale developmental dynamics and generative rollout.
+1. first validate local population-state learning on real transcriptomic data,
+2. then move from token matching toward patch-to-patch set prediction,
+3. then strengthen event supervision where still useful,
+4. then return to larger-scale developmental dynamics and generative rollout.
 
 Read this file as historical or optional reference material for later phases,
 not as the current training objective.

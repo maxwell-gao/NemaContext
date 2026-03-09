@@ -676,6 +676,93 @@ These experiments collectively support the following view:
 9. None of these results yet justify claims about embryo-scale rollout from the
    zygote.
 
+## 13. Patch-Set Prediction Became The Default Active Objective
+
+Files:
+
+- `eval_patch_set_anchor_split_relpos_pairbias_multi_full.json`
+- `eval_patch_set_anchor_split_relpos_pairbias_multi_anchor_only.json`
+- `eval_patch_set_anchor_split_relpos_single_full.json`
+- `eval_patch_set_anchor_split_ctx128_relpos_pairbias_multi_full.json`
+- `eval_patch_set_anchor_split_ctx128_relpos_single_full.json`
+- `eval_patch_set_anchor_split_ctx256_relpos_pairbias_multi_full.json`
+- `eval_patch_set_anchor_split_ctx256_relpos_single_full.json`
+
+What changed:
+
+- token-level matched supervision stopped being the main active objective,
+- patch-to-patch set prediction became the default active benchmark,
+- the project started comparing local population states rather than focal-cell
+  token matches.
+
+Main result:
+
+- `context_size = 64`
+  - multi-cell: `114.38`
+  - single-cell: `116.92`
+- `context_size = 128`
+  - multi-cell: `370.78`
+  - single-cell: `373.46`
+- `context_size = 256`
+  - multi-cell: `1336.25`
+  - single-cell: `1349.95`
+
+Interpretation:
+
+- patch-set prediction was the first objective on which multi-cell became
+  clearly better than the matched single-cell control,
+- the advantage increased as patch size grew,
+- this made patch-set prediction the first objective that really aligned with
+  the roadmap's "expand context toward embryo-scale state" logic.
+
+## 14. Readout Was Refactored From Raw Loss To Interpretable Patch Metrics
+
+Files:
+
+- `patch_set_scale_readout_summary.json`
+- the patch-set evaluation JSONs listed above, now with expanded fields
+
+What changed:
+
+- raw `total` loss was no longer treated as sufficient across patch scales,
+- evaluation added normalized metrics:
+  - `normalized_total`
+  - `total_wo_size`
+  - `ot_per_token`
+- evaluation added composition readouts:
+  - `mean_gene_rmse`
+  - `mean_gene_cosine`
+  - `pca_mean_dist`
+  - `pca_var_dist`
+- evaluation added diversity readouts:
+  - `diversity_abs_error`
+  - `entropy_abs_error`
+- evaluation added patch-level split summary:
+  - `current_split_fraction`
+  - `future_split_fraction`
+  - `split_fraction_shift`
+
+What this established:
+
+- patch-size regression had been dominating absolute totals too strongly for
+  cross-scale interpretation,
+- within-scale comparisons remained valid, but needed more interpretable
+  breakdowns,
+- multi-cell currently looks strongest on:
+  - future set alignment,
+  - latent alignment,
+  - diversity recovery,
+  - entropy recovery,
+  - PCA variance recovery,
+- while single-cell can remain competitive on some mean-centered summaries.
+
+Interpretation:
+
+- the project now has a more biologically interpretable readout layer for
+  future local population state prediction,
+- but these are still project-specific research readouts rather than
+  community-standard biological endpoints.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

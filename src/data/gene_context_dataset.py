@@ -736,6 +736,27 @@ def collate_gene_context(batch: list[dict[str, torch.Tensor]]) -> dict[str, torc
 class PatchSetDataset(GeneContextDataset):
     """Patch-to-patch dataset with independent future patch sampling."""
 
+    @staticmethod
+    def _compute_split_fraction(lineages: np.ndarray) -> float:
+        if len(lineages) == 0:
+            return 0.0
+
+        parent_counts: dict[str, int] = {}
+        for lineage in lineages:
+            if len(lineage) <= 1:
+                continue
+            parent = lineage[:-1]
+            parent_counts[parent] = parent_counts.get(parent, 0) + 1
+
+        split_like = 0
+        for lineage in lineages:
+            if len(lineage) <= 1:
+                continue
+            parent = lineage[:-1]
+            if parent_counts.get(parent, 0) >= 2:
+                split_like += 1
+        return float(split_like / max(1, len(lineages)))
+
     def _select_patch_from_indices(
         self,
         window_indices: np.ndarray,
@@ -803,6 +824,14 @@ class PatchSetDataset(GeneContextDataset):
         future_valid = future_view["valid_mask"]
         future_mean_gene = future_genes[future_valid].mean(dim=0)
         future_patch_size = torch.tensor(float(future_valid.sum().item()), dtype=torch.float32)
+        current_split_fraction = torch.tensor(
+            self._compute_split_fraction(self.lineages[current_indices]),
+            dtype=torch.float32,
+        )
+        future_split_fraction = torch.tensor(
+            self._compute_split_fraction(self.lineages[future_indices]),
+            dtype=torch.float32,
+        )
 
         return {
             "current_genes": current_view["genes"],
@@ -821,6 +850,8 @@ class PatchSetDataset(GeneContextDataset):
             "future_time": future_view["time"],
             "future_mean_gene": future_mean_gene,
             "future_patch_size": future_patch_size,
+            "current_split_fraction": current_split_fraction,
+            "future_split_fraction": future_split_fraction,
         }
 
 
@@ -846,6 +877,8 @@ def collate_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.T
         "future_time": torch.zeros(len(batch)),
         "future_mean_gene": torch.zeros(len(batch), gene_dim),
         "future_patch_size": torch.zeros(len(batch)),
+        "current_split_fraction": torch.zeros(len(batch)),
+        "future_split_fraction": torch.zeros(len(batch)),
     }
 
     for i, item in enumerate(batch):
@@ -867,5 +900,7 @@ def collate_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.T
         output["future_time"][i] = item["future_time"]
         output["future_mean_gene"][i] = item["future_mean_gene"]
         output["future_patch_size"][i] = item["future_patch_size"]
+        output["current_split_fraction"][i] = item["current_split_fraction"]
+        output["future_split_fraction"][i] = item["future_split_fraction"]
 
     return output

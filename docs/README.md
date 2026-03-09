@@ -8,8 +8,8 @@ This repo is organized around one primary objective:
 
 - `docs/REPO_STRUCTURE.md`: current repository layout and what each area is for.
 - `docs/ROADMAP.md`: merged long-term goal and near-term execution order.
-- `docs/GENE_CONTEXT_BASELINE.md`: biological interpretation of the active one-step local population-update baseline.
-- `docs/EXPERIMENT_HISTORY.md`: chronological record of the main context-validation and supervision-repair experiments.
+- `docs/GENE_CONTEXT_BASELINE.md`: biological interpretation of the active local developmental prediction baselines, including the new patch-set path.
+- `docs/EXPERIMENT_HISTORY.md`: chronological record of the main context-validation, supervision-repair, and patch-set experiments.
 - `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`: whole-embryo architecture as the intended destination of the current line of work.
 - `docs/REPO_STRUCTURE.md`: current repository layout and what each area is for.
 
@@ -26,5 +26,6 @@ If you want the current project logic in the right order, read:
 
 1. `docs/ROADMAP.md`
 2. `docs/GENE_CONTEXT_BASELINE.md`
-3. `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
-4. `docs/REPO_STRUCTURE.md`
+3. `docs/EXPERIMENT_HISTORY.md`
+4. `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
+5. `docs/REPO_STRUCTURE.md`

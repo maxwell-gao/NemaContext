@@ -578,6 +578,102 @@ correct answer is:
 > and predicts how each cell's gene program will move next, along with whether
 > it is more likely to divide or disappear.
 
+## Current Active Readout Layer
+
+The project has now moved beyond treating token-level `gene/split/delete`
+prediction as the only active benchmark.
+
+The main active benchmark is now patch-to-patch set prediction:
+
+- encode a local developmental patch at time `t`,
+- predict the local developmental patch at `t + dt`,
+- compare multi-cell and single-cell patch encoders,
+- scale context size and ask when larger developmental context becomes useful.
+
+The most important recent result is that this set-level objective is the first
+one where the multi-cell model consistently outperforms the matched
+single-cell control.
+
+## Why Patch-Level Biological Readouts Were Added
+
+A single aggregate loss was no longer enough once patch size changed.
+
+Two problems appeared:
+
+- raw `total` loss was strongly affected by the patch-size regression term,
+- a lower total loss did not tell us whether the model was better at
+  reconstructing composition, diversity, or only a coarse average.
+
+So the active patch-set evaluation now includes:
+
+- normalized set metrics:
+  - `normalized_total`
+  - `ot_per_token`
+  - `total_wo_size`
+- composition readouts:
+  - `mean_gene_rmse`
+  - `mean_gene_cosine`
+  - `pca_mean_dist`
+  - `pca_var_dist`
+- diversity readouts:
+  - `diversity_abs_error`
+  - `entropy_abs_error`
+- patch-level summary context:
+  - `current_split_fraction`
+  - `future_split_fraction`
+  - `split_fraction_shift`
+
+These are still research readouts rather than community-standard biological
+benchmarks, but they are more interpretable than raw total loss alone.
+
+## What The New Readouts Currently Say
+
+The current patch-set comparison suggests a more specific biological picture.
+
+Multi-cell is currently strongest on:
+
+- set-level future-state alignment (`ot_per_token`, `latent`),
+- recovering diversity and entropy of the future patch,
+- recovering variance structure in PCA space.
+
+Single-cell can still remain competitive on:
+
+- some mean-centered summary metrics,
+- especially `mean_gene_rmse` and `pca_mean_dist` on some scales.
+
+So the present interpretation is not:
+
+> multi-cell is better at everything.
+
+It is:
+
+> multi-cell is better at recovering the structure of the next local
+> developmental population, while single-cell can still stay competitive on
+> simpler mean-state summaries.
+
+That distinction matters biologically because structure recovery is closer to
+the final whole-embryo objective than mean-state recovery alone.
+
+## Current Limitations Of The Active Readouts
+
+These readouts are useful, but they are still not domain-standard endpoints.
+
+Important limitations:
+
+- `split_fraction` is currently a target-side summary, not yet a predicted
+  biological summary head,
+- diversity, entropy, and PCA distances are still expression-space proxies,
+- they do not yet give explicit cell-type composition accuracy,
+- they do not directly measure tissue organization or lineage consistency,
+- they should be used as interpretation layers on top of the set-level
+  objective, not as the sole optimization target.
+
+So the right reading is:
+
+- patch-set prediction is now the active modeling task,
+- composition readouts improve biological interpretability,
+- but they do not yet replace the need for later embryo-scale evaluation.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).
