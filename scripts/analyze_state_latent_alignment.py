@@ -17,6 +17,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from examples.whole_organism_ar.train_gene_context import EVENT_SUBSET_THRESHOLDS, resolve_event_filters  # noqa: E402
+from examples.whole_organism_ar.train_masked_state_views import MaskedStateViewModel  # noqa: E402
 from examples.whole_organism_ar.train_state_views import StateViewModel  # noqa: E402
 from src.data.gene_context_dataset import MultiViewPatchStateDataset, collate_multi_view_patch_state  # noqa: E402
 
@@ -199,7 +200,8 @@ def main():
     if len(dataset) == 0:
         raise ValueError("State-view dataset is empty.")
 
-    model = StateViewModel(
+    model_cls = MaskedStateViewModel if "masked_view_predictor.0.weight" in ckpt["model_state_dict"] else StateViewModel
+    model = model_cls(
         gene_dim=ckpt["gene_dim"],
         context_size=config["context_size"],
         model_type=config["model_type"],
@@ -231,7 +233,10 @@ def main():
             z_b, _ = model.encode_view(batch, "current_view_1")
             z_f, _ = model.encode_view(batch, "future_view_0")
             z_state = 0.5 * (z_a + z_b)
-            pred_future = model.predictor(z_a)
+            if hasattr(model, "predictor"):
+                pred_future = model.predictor(z_a)
+            else:
+                pred_future = model.future_predictor(z_a)
         z_state = z_state.cpu().numpy()
         z_future = z_f.cpu().numpy()
         pred_future = pred_future.cpu().numpy()

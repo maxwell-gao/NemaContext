@@ -1094,6 +1094,8 @@ class MultiViewPatchStateDataset(PatchSetDataset):
 
         output["views_per_state"] = torch.tensor(self.views_per_state, dtype=torch.long)
         output["future_views_per_state"] = torch.tensor(self.future_views_per_state, dtype=torch.long)
+        output["current_center_min"] = torch.tensor(float(pair.current_center), dtype=torch.float32)
+        output["future_center_min"] = torch.tensor(float(pair.future_center), dtype=torch.float32)
         return output
 
 
@@ -1147,4 +1149,6 @@ def collate_multi_view_patch_state(batch: list[dict[str, torch.Tensor]]) -> dict
 
     output["views_per_state"] = torch.stack([item["views_per_state"] for item in batch])
     output["future_views_per_state"] = torch.stack([item["future_views_per_state"] for item in batch])
+    output["current_center_min"] = torch.stack([item["current_center_min"] for item in batch])
+    output["future_center_min"] = torch.stack([item["future_center_min"] for item in batch])
     return output

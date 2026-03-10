@@ -57,6 +57,10 @@ What is already established:
   future developmental probes including future founder composition,
   future cell-type composition, future lineage-depth structure, future spatial
   extent, and future split-fraction alignment,
+- a masked self-supervised state-learning route now preserves strong
+  biological structure and, with masked gene reconstruction, matches or
+  exceeds the broad state-view baseline on several future developmental
+  probes,
 - whole-organism autoregressive infrastructure and variable-cell-count code are
   already present in the repository.
 
@@ -66,6 +70,8 @@ What remains weak:
   developmental prediction,
 - `split/delete` supervision is still weaker than the gene-state target,
 - multi-step dynamics are not yet biologically closed under changing context,
+- temporal discrimination in the current self-supervised route is not yet an
+  effective learning signal,
 - the active benchmark can still absorb too much attention relative to the
   final whole-embryo objective.
 
@@ -161,6 +167,9 @@ Current update:
 - the first biologically meaningful result has now appeared in this phase:
   broad multi-view state latents encode future developmental structure better
   than broad no-context controls.
+- a second, more self-supervised result is now also in place:
+  masked view + masked future + masked gene reconstruction yields a
+  biologically strong latent, while temporal discrimination remains weak.
 
 Definition of done:
 
@@ -173,6 +182,13 @@ Definition of done:
   local helper signal,
 - and the latent can predict biologically interpretable future developmental
   features rather than only project-specific reconstruction losses.
+
+Practical note for the next iteration:
+
+- self-supervised progress should now focus on reconstruction-style signals
+  that are working,
+- temporal discrimination should not remain the main optimization focus unless
+  its task formulation changes materially.
 
 ## Phase 4: Population Dynamics
 

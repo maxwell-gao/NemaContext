@@ -836,6 +836,73 @@ This still does **not** mean the project already has a whole-embryo simulator.
 It means the project has reached the first stage where a learned state
 representation can be discussed in biological rather than purely ML terms.
 
+## Masked Self-Supervised Extension
+
+The project now also contains a more explicitly self-supervised extension of
+the broad state-view route.
+
+Its objective combines:
+
+- masked current-view latent reconstruction,
+- masked future-state latent reconstruction,
+- masked gene reconstruction on masked positions only,
+- and a temporal discrimination branch.
+
+The practical result is asymmetric:
+
+- masked view and masked future reconstruction work,
+- masked gene reconstruction materially improves the biological content of the
+  latent,
+- temporal discrimination does **not** currently improve beyond the random
+  small-batch baseline.
+
+So the right interpretation is not:
+
+> self-supervision failed.
+
+It is:
+
+> reconstruction-style self-supervision is currently effective,
+> while the present contrastive temporal objective is not.
+
+## What The Masked Route Adds
+
+The masked route is now biologically competitive with the broad state-view
+baseline.
+
+It preserves:
+
+- developmental-time alignment,
+- founder-lineage structure,
+- and strong future split-fraction alignment.
+
+And with explicit gene reconstruction added, it now improves or matches the
+broad state-view baseline on several future developmental probes:
+
+- future founder composition,
+- future cell-type composition,
+- future lineage-depth statistics,
+- future spatial extent.
+
+What it still does **not** optimize best is:
+
+- direct future latent cosine alignment.
+
+So the broad state-view baseline and the masked route now have different
+strengths:
+
+- broad state-view:
+  - strongest direct future-latent regression
+- masked + gene:
+  - strongest self-supervised biological structure
+  - stronger future developmental probes on several biologically meaningful
+    targets
+
+This distinction is useful, because it separates:
+
+- the best future-regression code,
+- from the best self-supervised developmental state representation.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).

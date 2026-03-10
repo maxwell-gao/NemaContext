@@ -19,6 +19,10 @@ Current strongest biological result:
 - the broad-coverage `dt = 40` multi-view multi-cell encoder learns a latent
   that aligns with developmental time and predicts future developmental
   structure better than the matched broad single-cell control.
+- the strongest explicitly self-supervised route is now
+  `masked view + masked future + masked gene reconstruction`, which preserves
+  biological structure and improves several future developmental probes, while
+  the current temporal-discrimination branch remains ineffective.
 
 ## Repository Layout
 

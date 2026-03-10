@@ -41,3 +41,7 @@ Current biological milestone:
   whose latent can be argued to have direct biological meaning,
   because it aligns with developmental time and predicts future developmental
   structure better than the broad single-cell control.
+- a masked self-supervised extension now also exists:
+  `masked view + masked future + masked gene` currently yields the strongest
+  self-supervised biological state representation, while temporal
+  discrimination remains weak.

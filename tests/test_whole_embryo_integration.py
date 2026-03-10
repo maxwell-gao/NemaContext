@@ -45,6 +45,10 @@ from examples.whole_organism_ar.train_state_views import (  # noqa: E402
     StateViewModel,
     compute_metrics as compute_state_view_metrics,
 )
+from examples.whole_organism_ar.train_masked_state_views import (  # noqa: E402
+    MaskedStateViewModel,
+    compute_masked_metrics,
+)
 
 
 @pytest.fixture
@@ -650,12 +654,67 @@ def test_multi_view_patch_state_dataset_and_state_model_forward():
     assert z_f.shape == (2, 64)
     assert "current_view_0_indices" in sample
     assert "future_view_0_indices" in sample
+    assert "current_center_min" in sample
+    assert "future_center_min" in sample
     assert sample["current_view_0_indices"].ndim == 1
     assert sample["future_view_0_indices"].ndim == 1
 
     total, metrics = compute_state_view_metrics(model, batch, ot_weight=0.1)
     assert torch.isfinite(total)
     assert {"total", "view", "future", "ot"}.issubset(metrics)
+
+
+def test_masked_state_view_model_forward():
+    """Masked self-supervised state-view training path should run end-to-end."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = MultiViewPatchStateDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        views_per_state=2,
+        future_views_per_state=2,
+        random_seed=0,
+    )
+    if len(dataset) == 0:
+        pytest.skip("No multi-view masked state samples available")
+
+    batch = collate_multi_view_patch_state([dataset[0], dataset[min(1, len(dataset) - 1)]])
+    model = MaskedStateViewModel(
+        gene_dim=32,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    model.eval()
+
+    total, metrics = compute_masked_metrics(
+        model,
+        batch,
+        mask_ratio=0.25,
+        disc_temperature=0.1,
+        ot_weight=0.05,
+    )
+    assert torch.isfinite(total)
+    assert {
+        "total",
+        "masked_view",
+        "temporal_disc",
+        "masked_future",
+        "current_gene",
+        "future_gene",
+        "ot",
+    }.issubset(metrics)
 
 
 if __name__ == "__main__":

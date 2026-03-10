@@ -949,6 +949,88 @@ This is now the strongest evidence in the repository that multi-cell context
 is contributing biologically relevant predictive information rather than only
 lowering a project-specific loss.
 
+## 20. Masked Self-Supervised State Learning Preserved Biological Structure, But Temporal Discrimination Did Not Activate
+
+What changed:
+
+- a new masked self-supervised training path was added on top of the shared
+  multi-view state encoder,
+- the training objective combined:
+  - masked current-view latent reconstruction,
+  - temporal discrimination,
+  - masked future-state latent reconstruction,
+  - and later explicit masked gene reconstruction.
+
+What worked:
+
+- masked current-view reconstruction learned reliably,
+- masked future-state reconstruction also learned reliably,
+- explicit masked gene reconstruction improved the biological usefulness of
+  the resulting latent,
+- the masked latent preserved very strong developmental-time alignment and
+  founder separation,
+- future split-fraction alignment became even stronger than in the broad
+  state-view baseline.
+
+What did not work:
+
+- temporal discrimination stayed near the random baseline,
+- even after moving from plain in-batch negatives to hard negatives based on
+  shared current/future windows,
+- this indicated that the contrastive branch was not the effective source of
+  learning in the current setup.
+
+Interpretation:
+
+- the useful self-supervised signals are currently:
+  - masked view reconstruction,
+  - masked future-state reconstruction,
+  - gene reconstruction,
+- the ineffective self-supervised signal is currently:
+  - temporal discrimination.
+
+## 21. Gene Reconstruction Made The Masked Route Biologically Competitive
+
+What changed:
+
+- masked current/future gene reconstruction was added and computed only on
+  masked positions,
+- this increased molecular pressure on the latent without reverting to a
+  plain supervised regression task.
+
+What happened:
+
+- masked biological alignment remained strong:
+  - `latent_to_time_r2 ≈ 0.9980`
+  - `founder_knn_purity_k5 = 1.0`
+  - `latent_to_future_split_r2 ≈ 0.8027`
+- future developmental probes became stronger than in the plain broad
+  state-view baseline on several targets:
+  - future founder composition:
+    - broad state-view: `0.9348`
+    - masked + gene: `0.9632`
+  - future cell-type composition:
+    - broad state-view: `0.9518`
+    - masked + gene: `0.9695`
+  - future spatial extent recovered strongly relative to masked-only:
+    - masked-only: `0.9245`
+    - masked + gene: `0.9660`
+
+But:
+
+- direct future latent cosine alignment still remained worse than the broad
+  state-view baseline,
+- so the masked route should be interpreted as learning a more biologically
+  structured state representation, not the strongest direct future-regression
+  code.
+
+Current takeaway:
+
+- the best self-supervised route in the repository is now
+  `masked view + masked future + masked gene`,
+- temporal discrimination should no longer be treated as the primary lever
+  until a materially different objective is introduced.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full
