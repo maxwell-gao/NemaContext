@@ -29,3 +29,8 @@ If you want the current project logic in the right order, read:
 3. `docs/EXPERIMENT_HISTORY.md`
 4. `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
 5. `docs/REPO_STRUCTURE.md`
+
+Current active scripts now split into two levels:
+
+- `train_patch_set.py` / `evaluate_patch_set.py`: local state pretext task.
+- `train_state_views.py`: shared-encoder multi-view state representation learning.

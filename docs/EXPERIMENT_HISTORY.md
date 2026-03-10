@@ -811,6 +811,41 @@ Interpretation:
 - different patch covers of the same embryo window should be treated as
   different observations of one underlying local state.
 
+## 17. Shared-Encoder Multi-View State Training Was Implemented And Passed The First Control
+
+What changed:
+
+- a new `MultiViewPatchStateDataset` was added,
+- a new `train_state_views.py` path was added,
+- the training unit changed from "predict this patch" to
+  "encode multiple views of the same embryo window with one shared network and
+  predict the future state representation."
+
+Minimal objective:
+
+- same-time view consistency between two current views,
+- current-to-future latent prediction,
+- low-weight patch-set OT as an auxiliary constraint.
+
+First result at `context_size = 256`, `global_context_size = 32`:
+
+- `dt = 20`
+  - multi-cell best `val_total = 10.1111`
+  - single-cell best `val_total = 10.0784`
+  - multi-cell did not yet win
+- `dt = 40`
+  - multi-cell best `val_total = 9.9439`
+  - single-cell best `val_total = 10.1233`
+  - multi-cell became better
+
+Key interpretation:
+
+- same-time view-consistency is not the decisive readout,
+- the real signal comes from current-to-future latent predictability,
+- multi-cell becomes more useful at the more informative `dt = 40` time scale,
+- this is the first direct evidence that the new state-representation route is
+  doing something different from the earlier patch reconstruction route.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

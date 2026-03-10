@@ -268,7 +268,10 @@ Definition of done:
    than as a new ontology of patch entities.
 7. Build shared-encoder multi-view state learning on top of the validated
    patch-set pretext task.
-8. Re-enter whole-organism rollout only when the set-level update rule and
+8. Compare `dt = 20` and `dt = 40` under the shared-encoder state objective and
+   verify whether multi-cell advantage appears only at the more informative
+   time scale.
+9. Re-enter whole-organism rollout only when the set-level update rule and
    event targets are both strong enough to survive repeated application.
 
 ## Non-Goals

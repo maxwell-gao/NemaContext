@@ -712,6 +712,50 @@ The active transition is now:
 - make the main objective representation consistency and future-state
   predictability rather than patch identity itself.
 
+## First Shared-Encoder Multi-View Result
+
+The first direct state-representation experiment is now in place.
+
+Setup:
+
+- same local patch encoder family as the patch-set path,
+- two current-time views from the same embryo window,
+- one future view from the paired future window,
+- shared encoder across all views,
+- losses:
+  - same-time view consistency,
+  - current-to-future latent prediction,
+  - low-weight OT auxiliary reconstruction.
+
+The first comparison was run at:
+
+- `context_size = 256`
+- `global_context_size = 32`
+- `dt = 20` and `40`
+
+What it showed:
+
+- at `dt = 20`, the single-cell control is still slightly better,
+- at `dt = 40`, the multi-cell model becomes better on the primary future-state
+  prediction term,
+- same-time view-consistency alone is not enough to distinguish the models,
+  because the single-cell control can trivially collapse different views toward
+  similar representations,
+- the more meaningful discriminator is current-to-future latent
+  predictability.
+
+This is important because it is the first clear result in the new direction:
+
+> multi-cell advantage becomes more visible when the task is to predict future
+> state representations across a more informative time scale, not merely to
+> align views at the same time.
+
+So the next stage of the project should evaluate multi-cell models mainly by:
+
+- future-state latent prediction,
+- not same-time similarity alone,
+- and not patch identity or patch selection heuristics.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).

@@ -1017,3 +1017,130 @@ def collate_multi_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, t
         "patches_per_state": torch.full((batch_size,), patches_per_state, dtype=torch.long),
     }
     return output
+
+
+class MultiViewPatchStateDataset(PatchSetDataset):
+    """Multiple local views of the same time-paired embryo state."""
+
+    def __init__(
+        self,
+        *args,
+        views_per_state: int = 2,
+        future_views_per_state: int = 1,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        if views_per_state < 2:
+            raise ValueError("views_per_state must be >= 2")
+        if future_views_per_state < 1:
+            raise ValueError("future_views_per_state must be >= 1")
+        self.views_per_state = views_per_state
+        self.future_views_per_state = future_views_per_state
+
+    def _sample_views(
+        self,
+        window_indices: np.ndarray,
+        center: float,
+        rng: np.random.Generator,
+        n_views: int,
+    ) -> list[dict[str, torch.Tensor]]:
+        views: list[dict[str, torch.Tensor]] = []
+        for _ in range(n_views):
+            indices, roles, relpos = self._select_patch_from_indices(window_indices, rng)
+            views.append(self._build_patch_view(indices, roles, relpos, center))
+        return views
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        pair = self.time_pairs[idx % len(self.time_pairs)]
+        rng = np.random.default_rng(self.random_seed + idx)
+
+        current_views = self._sample_views(
+            pair.current_indices,
+            pair.current_center,
+            rng,
+            self.views_per_state,
+        )
+        future_views = self._sample_views(
+            pair.future_indices,
+            pair.future_center,
+            rng,
+            self.future_views_per_state,
+        )
+
+        output: dict[str, torch.Tensor] = {}
+        for view_idx, view in enumerate(current_views):
+            prefix = f"current_view_{view_idx}"
+            output[f"{prefix}_genes"] = view["genes"]
+            output[f"{prefix}_context_role"] = view["context_role"]
+            output[f"{prefix}_relative_position"] = view["relative_position"]
+            output[f"{prefix}_token_times"] = view["token_times"]
+            output[f"{prefix}_valid_mask"] = view["valid_mask"]
+            output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
+            output[f"{prefix}_time"] = view["time"]
+
+        for view_idx, view in enumerate(future_views):
+            prefix = f"future_view_{view_idx}"
+            output[f"{prefix}_genes"] = view["genes"]
+            output[f"{prefix}_context_role"] = view["context_role"]
+            output[f"{prefix}_relative_position"] = view["relative_position"]
+            output[f"{prefix}_token_times"] = view["token_times"]
+            output[f"{prefix}_valid_mask"] = view["valid_mask"]
+            output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
+            output[f"{prefix}_time"] = view["time"]
+
+        output["views_per_state"] = torch.tensor(self.views_per_state, dtype=torch.long)
+        output["future_views_per_state"] = torch.tensor(self.future_views_per_state, dtype=torch.long)
+        return output
+
+
+def collate_multi_view_patch_state(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+    first = batch[0]
+    current_prefixes = sorted(
+        {key.rsplit("_", 1)[0] for key in first if key.startswith("current_view_") and key.endswith("_genes")}
+    )
+    future_prefixes = sorted(
+        {key.rsplit("_", 1)[0] for key in first if key.startswith("future_view_") and key.endswith("_genes")}
+    )
+
+    def _collate_view(prefix: str) -> dict[str, torch.Tensor]:
+        return collate_patch_set(
+            [
+                {
+                    "current_genes": item[f"{prefix}_genes"],
+                    "current_context_role": item[f"{prefix}_context_role"],
+                    "current_relative_position": item[f"{prefix}_relative_position"],
+                    "current_token_times": item[f"{prefix}_token_times"],
+                    "current_valid_mask": item[f"{prefix}_valid_mask"],
+                    "current_anchor_mask": item[f"{prefix}_anchor_mask"],
+                    "current_time": item[f"{prefix}_time"],
+                    "future_genes": item[f"{prefix}_genes"],
+                    "future_context_role": item[f"{prefix}_context_role"],
+                    "future_relative_position": item[f"{prefix}_relative_position"],
+                    "future_token_times": item[f"{prefix}_token_times"],
+                    "future_valid_mask": item[f"{prefix}_valid_mask"],
+                    "future_anchor_mask": item[f"{prefix}_anchor_mask"],
+                    "future_time": item[f"{prefix}_time"],
+                    "future_mean_gene": item[f"{prefix}_genes"].mean(dim=0),
+                    "future_patch_size": torch.tensor(float(item[f"{prefix}_valid_mask"].sum().item())),
+                    "current_split_fraction": torch.tensor(0.0),
+                    "future_split_fraction": torch.tensor(0.0),
+                }
+                for item in batch
+            ]
+        )
+
+    output: dict[str, torch.Tensor] = {}
+    for prefix in current_prefixes + future_prefixes:
+        collated = _collate_view(prefix)
+        base = prefix
+        output[f"{base}_genes"] = collated["current_genes"]
+        output[f"{base}_context_role"] = collated["current_context_role"]
+        output[f"{base}_relative_position"] = collated["current_relative_position"]
+        output[f"{base}_token_times"] = collated["current_token_times"]
+        output[f"{base}_valid_mask"] = collated["current_valid_mask"]
+        output[f"{base}_anchor_mask"] = collated["current_anchor_mask"]
+        output[f"{base}_time"] = collated["current_time"]
+
+    output["views_per_state"] = torch.stack([item["views_per_state"] for item in batch])
+    output["future_views_per_state"] = torch.stack([item["future_views_per_state"] for item in batch])
+    return output

@@ -13,6 +13,8 @@ Current interpretation:
 - the final target is whole-organism developmental prediction,
 - the active executable benchmark is now the local transcriptomic
   `patch-set` update task,
+- the next active transition is shared-encoder multi-view state learning over
+  multiple patch views of the same embryo window,
 - downstream rollout scripts remain important, but they are not yet the main
   evidence source.
 
@@ -20,6 +22,7 @@ Recommended current entry points:
 
 - `train_patch_set.py`
 - `evaluate_patch_set.py`
+- `train_state_views.py`
 - `train_gene_context.py`
 - `evaluate_gene_context.py`
 - `train_gene_single_cell.py`
