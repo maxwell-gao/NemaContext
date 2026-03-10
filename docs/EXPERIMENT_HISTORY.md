@@ -846,6 +846,109 @@ Key interpretation:
 - this is the first direct evidence that the new state-representation route is
   doing something different from the earlier patch reconstruction route.
 
+## 18. Broad-Coverage State-View Training Produced The First Biologically Meaningful Alignment Signal
+
+What changed:
+
+- the state-view training defaults were widened:
+  - `samples_per_pair` increased from `4` to `16`,
+  - `event_subset` default switched from `anchor_split_rich` to `none`,
+- the goal was to train a shared encoder on a broader slice of developmental
+  windows instead of a narrow event-enriched subdistribution.
+
+What happened:
+
+- the broad `dt = 40` multi-cell run improved substantially over the earlier
+  narrow-subset state-view baseline,
+- biological alignment analysis on the resulting latent space showed:
+  - extremely strong alignment with developmental time,
+  - strong founder-lineage separation under the available sampled founders,
+  - weak-to-moderate spatial-region alignment,
+  - and, most importantly, a large positive shift in future split-fraction
+    predictability.
+
+Key result:
+
+- earlier narrow-subset latent:
+  - `latent_to_future_split_r2 = -0.5833`
+- broad multi-cell latent:
+  - `latent_to_future_split_r2 = 0.6511`
+
+Interpretation:
+
+- this is the first experiment that should be treated as biologically
+  meaningful rather than only architecturally suggestive,
+- the latent is no longer merely aligned to time,
+- it now also carries predictive information about future proliferative
+  structure.
+
+## 19. Broad Single-Cell Controls Showed That Multi-Cell Gains Land On Future Developmental Structure
+
+What changed:
+
+- the same broad-coverage `dt = 40` state-view pipeline was trained with a
+  single-cell control,
+- the same biological alignment and developmental probe analyses were run on
+  both the broad multi-cell and broad single-cell encoders.
+
+What the direct comparison showed:
+
+- single-cell still learns strong developmental structure,
+- but multi-cell strengthens the biologically most important future-facing
+  signals.
+
+Broad alignment comparison:
+
+- time alignment:
+  - multi: `latent_to_time_r2 = 0.9982`
+  - single: `0.9683`
+- founder purity:
+  - multi: `1.000`
+  - single: `0.935`
+- spatial region purity:
+  - multi: `0.265`
+  - single: `0.275`
+  - effectively a wash at this stage
+- future split-fraction alignment:
+  - multi: `0.6511`
+  - single: `0.1024`
+
+This matters because it distinguishes two kinds of improvement:
+
+- single-cell can still act as a strong local developmental compressor,
+- multi-cell more strongly recovers future developmental structure.
+
+Broad developmental probes made that distinction sharper.
+
+Future-feature probe comparison:
+
+- future founder composition:
+  - multi: `R^2 = 0.9348`
+  - single: `0.8861`
+- future cell-type composition:
+  - multi: `0.9518`
+  - single: `0.8466`
+- future lineage-depth statistics:
+  - multi: `0.9276`
+  - single: `0.8071`
+- future spatial extent:
+  - multi: `0.9883`
+  - single: `0.8942`
+
+Interpretation:
+
+- some developmental targets are already predictable from strong single-cell
+  state compression,
+- the real multi-cell advantage appears in richer future structure:
+  - composition,
+  - lineage-depth organization,
+  - spatial extent,
+  - and proliferative summary structure.
+
+This is now the strongest evidence in the repository that multi-cell context
+is contributing biologically relevant predictive information rather than only
+lowering a project-specific loss.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

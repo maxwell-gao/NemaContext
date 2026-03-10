@@ -627,6 +627,7 @@ def test_multi_view_patch_state_dataset_and_state_model_forward():
         pytest.skip("No multi-view state samples available")
 
     batch = collate_multi_view_patch_state([dataset[0], dataset[min(1, len(dataset) - 1)]])
+    sample = dataset[0]
     model = StateViewModel(
         gene_dim=32,
         context_size=8,
@@ -647,6 +648,10 @@ def test_multi_view_patch_state_dataset_and_state_model_forward():
     assert z_a.shape == (2, 64)
     assert z_b.shape == (2, 64)
     assert z_f.shape == (2, 64)
+    assert "current_view_0_indices" in sample
+    assert "future_view_0_indices" in sample
+    assert sample["current_view_0_indices"].ndim == 1
+    assert sample["future_view_0_indices"].ndim == 1
 
     total, metrics = compute_state_view_metrics(model, batch, ot_weight=0.1)
     assert torch.isfinite(total)

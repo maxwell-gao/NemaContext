@@ -756,6 +756,86 @@ So the next stage of the project should evaluate multi-cell models mainly by:
 - not same-time similarity alone,
 - and not patch identity or patch selection heuristics.
 
+## First Biologically Meaningful State-Level Result
+
+The broad-coverage `dt = 40` multi-view state encoder is the first result in
+the repository that should be treated as biologically meaningful rather than
+only architecturally diagnostic.
+
+Why:
+
+- it was trained on a much broader slice of developmental windows rather than
+  a narrow event-enriched subset,
+- it learned a state latent that aligns strongly with developmental time,
+- and that same latent now predicts future proliferative structure and richer
+  developmental composition targets.
+
+In other words:
+
+> the project now has a latent state representation that is not only useful
+> for model comparison, but also carries interpretable developmental signal.
+
+## Broad Multi-Cell vs Broad Single-Cell: What Is Shared And What Is Gained
+
+The broad single-cell control remains strong.
+
+That matters because it prevents overclaiming:
+
+- single-cell can already learn a substantial amount of developmental
+  structure,
+- especially when the task is to compress local state and predict a short
+  future latent.
+
+But the broad multi-cell encoder adds a different kind of gain.
+
+The strongest differences now appear in future developmental structure rather
+than in trivial same-time view alignment.
+
+Multi-cell is stronger on:
+
+- future split-fraction alignment,
+- future founder composition,
+- future cell-type composition,
+- future lineage-depth statistics,
+- future spatial extent.
+
+Single-cell can still remain competitive on:
+
+- same-time view consistency,
+- coarse local state compression,
+- some simpler local future-state summaries.
+
+So the right interpretation is now:
+
+> single-cell is a strong local developmental compressor,
+> while multi-cell is a stronger predictor of structured future developmental
+> state.
+
+That is the first point where "multi-cell context helps" becomes a biological
+claim rather than only an architectural one.
+
+## What "Biological Meaning" Means Here
+
+The project should now define biological meaning more carefully.
+
+A result counts as biologically meaningful when the latent or prediction:
+
+- aligns with recognizable developmental axes,
+- predicts future developmental organization rather than only a project loss,
+- and does so better under multi-cell context than under a no-context control.
+
+Under that standard, the broad `dt = 40` state encoder now qualifies because
+it supports all three:
+
+- developmental-time alignment,
+- founder- and future-composition structure,
+- and multi-cell gains on future developmental probes.
+
+This still does **not** mean the project already has a whole-embryo simulator.
+
+It means the project has reached the first stage where a learned state
+representation can be discussed in biological rather than purely ML terms.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).

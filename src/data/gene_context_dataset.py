@@ -129,6 +129,8 @@ class GeneContextDataset(Dataset):
 
         self.times = np.asarray(adata.obs["embryo_time_min"], dtype=np.float32)
         self.lineages = np.asarray(adata.obs["lineage_complete"].astype(str))
+        self.adata_obs_cell_type = np.asarray(adata.obs.get("cell_type", "unassigned").astype(str))
+        self.lineage_depths = np.asarray(adata.obs.get("lineage_depth", -1), dtype=np.float32)
         self.has_spatial = np.asarray(adata.obs.get("has_spatial", False), dtype=bool)
         spatial = np.asarray(adata.obsm.get("X_spatial"), dtype=np.float32)
         spatial_valid = np.isfinite(spatial).all(axis=1)
@@ -1043,11 +1045,11 @@ class MultiViewPatchStateDataset(PatchSetDataset):
         center: float,
         rng: np.random.Generator,
         n_views: int,
-    ) -> list[dict[str, torch.Tensor]]:
-        views: list[dict[str, torch.Tensor]] = []
+    ) -> list[tuple[np.ndarray, dict[str, torch.Tensor]]]:
+        views: list[tuple[np.ndarray, dict[str, torch.Tensor]]] = []
         for _ in range(n_views):
             indices, roles, relpos = self._select_patch_from_indices(window_indices, rng)
-            views.append(self._build_patch_view(indices, roles, relpos, center))
+            views.append((indices, self._build_patch_view(indices, roles, relpos, center)))
         return views
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
@@ -1068,7 +1070,7 @@ class MultiViewPatchStateDataset(PatchSetDataset):
         )
 
         output: dict[str, torch.Tensor] = {}
-        for view_idx, view in enumerate(current_views):
+        for view_idx, (indices, view) in enumerate(current_views):
             prefix = f"current_view_{view_idx}"
             output[f"{prefix}_genes"] = view["genes"]
             output[f"{prefix}_context_role"] = view["context_role"]
@@ -1077,8 +1079,9 @@ class MultiViewPatchStateDataset(PatchSetDataset):
             output[f"{prefix}_valid_mask"] = view["valid_mask"]
             output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
             output[f"{prefix}_time"] = view["time"]
+            output[f"{prefix}_indices"] = torch.from_numpy(indices.astype(np.int64))
 
-        for view_idx, view in enumerate(future_views):
+        for view_idx, (indices, view) in enumerate(future_views):
             prefix = f"future_view_{view_idx}"
             output[f"{prefix}_genes"] = view["genes"]
             output[f"{prefix}_context_role"] = view["context_role"]
@@ -1087,6 +1090,7 @@ class MultiViewPatchStateDataset(PatchSetDataset):
             output[f"{prefix}_valid_mask"] = view["valid_mask"]
             output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
             output[f"{prefix}_time"] = view["time"]
+            output[f"{prefix}_indices"] = torch.from_numpy(indices.astype(np.int64))
 
         output["views_per_state"] = torch.tensor(self.views_per_state, dtype=torch.long)
         output["future_views_per_state"] = torch.tensor(self.future_views_per_state, dtype=torch.long)

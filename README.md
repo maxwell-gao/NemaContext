@@ -14,6 +14,12 @@ NemaContext is focused on one goal:
 - Near-term priority: **treat patches as training views, not biological units, and move from patch prediction toward multi-view state representation learning**.
 - Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
 
+Current strongest biological result:
+
+- the broad-coverage `dt = 40` multi-view multi-cell encoder learns a latent
+  that aligns with developmental time and predicts future developmental
+  structure better than the matched broad single-cell control.
+
 ## Repository Layout
 
 - `src/branching_flows/`: core modeling code (`autoregressive_model.py`, `dynamic_cell_manager.py`, `fusion.py`)

@@ -51,6 +51,12 @@ What is already established:
 - a patch-to-patch set-level objective now outperforms the matched
   single-cell control,
 - increasing patch context size strengthens that multi-cell advantage,
+- shared-encoder state-view training at broad coverage and `dt = 40` now
+  produces the first biologically meaningful latent,
+- broad multi-cell state latents outperform broad single-cell controls on
+  future developmental probes including future founder composition,
+  future cell-type composition, future lineage-depth structure, future spatial
+  extent, and future split-fraction alignment,
 - whole-organism autoregressive infrastructure and variable-cell-count code are
   already present in the repository.
 
@@ -152,6 +158,9 @@ Current update:
   active benchmark,
 - the next transition is therefore shared-encoder multi-view state learning,
   not stronger patch hierarchy.
+- the first biologically meaningful result has now appeared in this phase:
+  broad multi-view state latents encode future developmental structure better
+  than broad no-context controls.
 
 Definition of done:
 
@@ -161,7 +170,9 @@ Definition of done:
 - the model can operate on larger populations without collapsing into
   uninformative averaging,
 - context can be interpreted as a scalable state representation, not just a
-  local helper signal.
+  local helper signal,
+- and the latent can predict biologically interpretable future developmental
+  features rather than only project-specific reconstruction losses.
 
 ## Phase 4: Population Dynamics
 
@@ -176,6 +187,8 @@ Tasks:
   different local observations of the same embryo window,
 - learn current-to-future state prediction in latent space before full
   rollout,
+- keep biological developmental probes as gate metrics rather than relying
+  only on latent or reconstruction loss,
 - update cell states and event propensities jointly,
 - evaluate short multi-step rollout under changing context,
 - measure drift in gene-state distribution, cell-count balance, and event

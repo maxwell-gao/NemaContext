@@ -34,3 +34,10 @@ Current active scripts now split into two levels:
 
 - `train_patch_set.py` / `evaluate_patch_set.py`: local state pretext task.
 - `train_state_views.py`: shared-encoder multi-view state representation learning.
+
+Current biological milestone:
+
+- the broad `dt = 40` multi-view state encoder is the first model in the repo
+  whose latent can be argued to have direct biological meaning,
+  because it aligns with developmental time and predicts future developmental
+  structure better than the broad single-cell control.
