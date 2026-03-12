@@ -36,6 +36,27 @@ class MultiPatchSetOutput:
     patch_attention_weights: torch.Tensor
 
 
+@dataclass
+class EmbryoStateOutput:
+    embryo_latent: torch.Tensor
+    local_latents: torch.Tensor
+    future_founder_composition: torch.Tensor
+    future_celltype_composition: torch.Tensor
+    future_lineage_depth_stats: torch.Tensor
+    future_spatial_extent: torch.Tensor
+    future_split_fraction: torch.Tensor
+
+
+@dataclass
+class EmbryoMaskedOutput:
+    embryo_latent: torch.Tensor
+    visible_embryo_latent: torch.Tensor
+    local_latents: torch.Tensor
+    pred_masked_view_latents: torch.Tensor
+    pred_masked_view_genes: torch.Tensor
+    masked_view_mask: torch.Tensor
+
+
 class GeneContextModel(nn.Module):
     """Time-conditioned multi-cell transformer over gene states."""
 
@@ -649,4 +670,247 @@ class MultiPatchSetModel(nn.Module):
             state_latent=state_latent,
             patch_attention_logits=patch_attention_logits,
             patch_attention_weights=patch_attention_weights,
+        )
+
+
+class EmbryoStateModel(nn.Module):
+    """Embryo-scale state encoder from multiple local observation views.
+
+    Patches are views, not ontology. The model encodes each view with the shared
+    local patch encoder and pools them into one embryo-level latent.
+    """
+
+    def __init__(
+        self,
+        gene_dim: int,
+        context_size: int,
+        celltype_dim: int,
+        model_type: str = "multi_cell",
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        head_dim: int = 32,
+        use_pairwise_spatial_bias: bool = True,
+    ):
+        super().__init__()
+        if model_type == "single_cell":
+            self.local_model = SingleCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_layers=n_layers,
+            )
+        else:
+            self.local_model = MultiCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                head_dim=head_dim,
+                use_pairwise_spatial_bias=use_pairwise_spatial_bias,
+            )
+        self.state_proj = nn.Sequential(
+            nn.Linear(2 * d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.future_founder_head = nn.Linear(d_model, 8)
+        self.future_celltype_head = nn.Linear(d_model, celltype_dim)
+        self.future_depth_head = nn.Linear(d_model, 3)
+        self.future_spatial_head = nn.Linear(d_model, 4)
+        self.future_split_head = nn.Linear(d_model, 1)
+
+    def encode_embryo(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size, n_views, patch_len, gene_dim = genes.shape
+        flat_kwargs = {
+            "genes": genes.view(batch_size * n_views, patch_len, gene_dim),
+            "time": time.view(batch_size * n_views),
+            "future_time": time.view(batch_size * n_views),
+            "token_times": token_times.view(batch_size * n_views, patch_len),
+            "valid_mask": valid_mask.view(batch_size * n_views, patch_len),
+            "anchor_mask": anchor_mask.view(batch_size * n_views, patch_len),
+            "context_role": None if context_role is None else context_role.view(batch_size * n_views, patch_len),
+            "relative_position": None if relative_position is None else relative_position.view(
+                batch_size * n_views, patch_len, relative_position.shape[-1]
+            ),
+        }
+        local_latents, _ = self.local_model.encode_patch(**flat_kwargs)
+        local_latents = local_latents.view(batch_size, n_views, -1)
+        valid_views = valid_mask.any(dim=-1)
+        pooled = (local_latents * valid_views.unsqueeze(-1).float()).sum(dim=1) / valid_views.float().sum(
+            dim=1, keepdim=True
+        ).clamp_min(1.0)
+        anchor_view = local_latents[:, 0]
+        embryo_latent = self.state_proj(torch.cat([anchor_view, pooled], dim=-1))
+        return embryo_latent, local_latents
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> EmbryoStateOutput:
+        embryo_latent, local_latents = self.encode_embryo(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+        return EmbryoStateOutput(
+            embryo_latent=embryo_latent,
+            local_latents=local_latents,
+            future_founder_composition=self.future_founder_head(embryo_latent),
+            future_celltype_composition=self.future_celltype_head(embryo_latent),
+            future_lineage_depth_stats=self.future_depth_head(embryo_latent),
+            future_spatial_extent=self.future_spatial_head(embryo_latent),
+            future_split_fraction=self.future_split_head(embryo_latent),
+        )
+
+
+class EmbryoMaskedViewModel(nn.Module):
+    """Embryo-level masked multi-view model.
+
+    Local views are observations of the same embryo state. A subset of views is
+    hidden, and the visible views must reconstruct the masked views' latent and
+    mean gene content.
+    """
+
+    def __init__(
+        self,
+        gene_dim: int,
+        context_size: int,
+        model_type: str = "multi_cell",
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        head_dim: int = 32,
+        use_pairwise_spatial_bias: bool = True,
+    ):
+        super().__init__()
+        if model_type == "single_cell":
+            self.local_model = SingleCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_layers=n_layers,
+            )
+        else:
+            self.local_model = MultiCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                head_dim=head_dim,
+                use_pairwise_spatial_bias=use_pairwise_spatial_bias,
+            )
+        self.state_proj = nn.Sequential(
+            nn.Linear(2 * d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.masked_view_latent_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.masked_view_gene_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, gene_dim),
+        )
+
+    def encode_local_views(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        batch_size, n_views, patch_len, gene_dim = genes.shape
+        flat_kwargs = {
+            "genes": genes.view(batch_size * n_views, patch_len, gene_dim),
+            "time": time.view(batch_size * n_views),
+            "future_time": time.view(batch_size * n_views),
+            "token_times": token_times.view(batch_size * n_views, patch_len),
+            "valid_mask": valid_mask.view(batch_size * n_views, patch_len),
+            "anchor_mask": anchor_mask.view(batch_size * n_views, patch_len),
+            "context_role": None if context_role is None else context_role.view(batch_size * n_views, patch_len),
+            "relative_position": None if relative_position is None else relative_position.view(
+                batch_size * n_views, patch_len, relative_position.shape[-1]
+            ),
+        }
+        local_latents, _ = self.local_model.encode_patch(**flat_kwargs)
+        return local_latents.view(batch_size, n_views, -1)
+
+    def pool_visible(
+        self,
+        local_latents: torch.Tensor,
+        visible_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        pooled = (local_latents * visible_mask.unsqueeze(-1).float()).sum(dim=1) / visible_mask.float().sum(
+            dim=1, keepdim=True
+        ).clamp_min(1.0)
+        first_visible_idx = visible_mask.float().argmax(dim=1)
+        first_visible = local_latents[torch.arange(local_latents.shape[0], device=local_latents.device), first_visible_idx]
+        return self.state_proj(torch.cat([first_visible, pooled], dim=-1))
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        masked_view_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> EmbryoMaskedOutput:
+        local_latents = self.encode_local_views(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+        visible_mask = ~masked_view_mask
+        visible_embryo_latent = self.pool_visible(local_latents, visible_mask)
+        full_embryo_latent = self.pool_visible(
+            local_latents,
+            torch.ones_like(masked_view_mask, dtype=torch.bool),
+        )
+        pred_masked_view_latents = self.masked_view_latent_head(visible_embryo_latent)
+        pred_masked_view_genes = self.masked_view_gene_head(visible_embryo_latent)
+        return EmbryoMaskedOutput(
+            embryo_latent=full_embryo_latent,
+            visible_embryo_latent=visible_embryo_latent,
+            local_latents=local_latents,
+            pred_masked_view_latents=pred_masked_view_latents,
+            pred_masked_view_genes=pred_masked_view_genes,
+            masked_view_mask=masked_view_mask,
         )

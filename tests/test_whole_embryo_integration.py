@@ -22,6 +22,8 @@ sys.path.insert(0, str(project_root))
 
 from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
 from src.branching_flows.gene_context import (  # noqa: E402
+    EmbryoMaskedViewModel,
+    EmbryoStateModel,
     GeneContextModel,
     MultiPatchSetModel,
     MultiCellPatchSetModel,
@@ -29,10 +31,12 @@ from src.branching_flows.gene_context import (  # noqa: E402
 )
 from src.branching_flows.states import BranchingState  # noqa: E402
 from src.data.gene_context_dataset import (  # noqa: E402
+    EmbryoViewDataset,
     GeneContextDataset,
     MultiViewPatchStateDataset,
     MultiPatchSetDataset,
     PatchSetDataset,
+    collate_embryo_view,
     collate_gene_context,
     collate_multi_view_patch_state,
     collate_multi_patch_set,
@@ -271,6 +275,139 @@ def test_global_spatial_coordinates(lineage_file):
             if len(positions) > 1:
                 x_range = positions_array[:, 0].max() - positions_array[:, 0].min()
                 assert x_range > 0, "No variation in AP axis"
+
+
+def test_embryo_view_dataset_and_model_forward():
+    """Embryo-state path should collate multi-view local observations and predict embryo probes."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = EmbryoViewDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        views_per_embryo=3,
+        top_cell_types=4,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient embryo-view samples")
+
+    batch = collate_embryo_view([dataset[0], dataset[1]])
+    assert batch["view_0_genes"].shape[0] == 2
+    assert batch["view_0_genes"].shape[2] == dataset.gene_dim
+    assert batch["future_founder_composition"].shape[1] == 8
+    assert batch["future_celltype_composition"].shape[1] == 4
+    assert batch["future_lineage_depth_stats"].shape[1] == 3
+    assert batch["future_spatial_extent"].shape[1] == 4
+    assert batch["future_split_fraction"].shape[1] == 1
+
+    n_views = int(batch["views_per_embryo"][0].item())
+    genes = torch.stack([batch[f"view_{i}_genes"] for i in range(n_views)], dim=1)
+    context_role = torch.stack([batch[f"view_{i}_context_role"] for i in range(n_views)], dim=1)
+    relative_position = torch.stack([batch[f"view_{i}_relative_position"] for i in range(n_views)], dim=1)
+    token_times = torch.stack([batch[f"view_{i}_token_times"] for i in range(n_views)], dim=1)
+    valid_mask = torch.stack([batch[f"view_{i}_valid_mask"] for i in range(n_views)], dim=1)
+    anchor_mask = torch.stack([batch[f"view_{i}_anchor_mask"] for i in range(n_views)], dim=1)
+    time = torch.stack([batch[f"view_{i}_time"] for i in range(n_views)], dim=1)
+
+    model = EmbryoStateModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        celltype_dim=4,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    out = model(
+        genes=genes,
+        time=time,
+        token_times=token_times,
+        valid_mask=valid_mask,
+        anchor_mask=anchor_mask,
+        context_role=context_role,
+        relative_position=relative_position,
+    )
+
+    assert out.embryo_latent.shape == (2, 64)
+    assert out.local_latents.shape[:2] == (2, n_views)
+    assert out.future_founder_composition.shape == (2, 8)
+    assert out.future_celltype_composition.shape == (2, 4)
+    assert out.future_lineage_depth_stats.shape == (2, 3)
+    assert out.future_spatial_extent.shape == (2, 4)
+    assert out.future_split_fraction.shape == (2, 1)
+
+
+def test_embryo_masked_view_model_forward():
+    """Embryo masked multi-view model should reconstruct masked view content from visible views."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = EmbryoViewDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        views_per_embryo=4,
+        top_cell_types=4,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient embryo-view samples")
+
+    batch = collate_embryo_view([dataset[0], dataset[1]])
+    n_views = int(batch["views_per_embryo"][0].item())
+    genes = torch.stack([batch[f"view_{i}_genes"] for i in range(n_views)], dim=1)
+    context_role = torch.stack([batch[f"view_{i}_context_role"] for i in range(n_views)], dim=1)
+    relative_position = torch.stack([batch[f"view_{i}_relative_position"] for i in range(n_views)], dim=1)
+    token_times = torch.stack([batch[f"view_{i}_token_times"] for i in range(n_views)], dim=1)
+    valid_mask = torch.stack([batch[f"view_{i}_valid_mask"] for i in range(n_views)], dim=1)
+    anchor_mask = torch.stack([batch[f"view_{i}_anchor_mask"] for i in range(n_views)], dim=1)
+    time = torch.stack([batch[f"view_{i}_time"] for i in range(n_views)], dim=1)
+    masked_view_mask = torch.tensor(
+        [[False, True, False, False], [True, False, False, False]],
+        dtype=torch.bool,
+    )
+
+    model = EmbryoMaskedViewModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    out = model(
+        genes=genes,
+        time=time,
+        token_times=token_times,
+        valid_mask=valid_mask,
+        anchor_mask=anchor_mask,
+        masked_view_mask=masked_view_mask,
+        context_role=context_role,
+        relative_position=relative_position,
+    )
+    assert out.embryo_latent.shape == (2, 64)
+    assert out.visible_embryo_latent.shape == (2, 64)
+    assert out.local_latents.shape == (2, n_views, 64)
+    assert out.pred_masked_view_latents.shape == (2, 64)
+    assert out.pred_masked_view_genes.shape == (2, dataset.gene_dim)
 
 
 def test_single_cell_model_has_no_cross_token_information_flow():
