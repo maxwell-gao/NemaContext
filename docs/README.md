@@ -36,6 +36,8 @@ Current active scripts now split into two levels:
 - `train_state_views.py`: shared-encoder multi-view state representation learning.
 - `train_masked_state_views.py`: strongest current self-supervised developmental
   state route via masked view, masked future, and masked gene reconstruction.
+- `train_embryo_masked_views.py`: active embryo-level self-supervised route via
+  masked current and masked future local views of the same embryo state.
 
 Current biological milestone:
 
@@ -46,6 +48,9 @@ Current biological milestone:
 - a masked self-supervised extension now also exists:
   `masked view + masked future + masked gene` currently yields the strongest
   self-supervised biological state representation.
+- the active embryo-scale representation route is now embryo-level masked
+  multi-view modeling with masked future views; this replaced direct embryo
+  summary regression as the preferred embryo-state training interface.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking are all currently ineffective.
 - the next architectural step is embryo-scale state aggregation from multiple

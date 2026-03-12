@@ -13,7 +13,7 @@ Interpretation:
 
 - the final project target is whole-organism developmental prediction,
 - the current active evidence path is a smaller transcriptomic population-update
-  problem,
+  problem plus embryo-level self-supervised state learning,
 - the repo therefore contains both active local-update tooling and embryo-scale
   rollout infrastructure.
 
@@ -44,6 +44,13 @@ Interpretation:
 - `evaluate_gene_context.py`: evaluation and context ablation for the gene-context baseline.
 - `train_gene_single_cell.py`: single-cell control baseline for context comparison.
 - `evaluate_gene_single_cell.py`: evaluation for the single-cell control.
+- `train_patch_set.py`: local patch-to-patch set-level pretext task.
+- `evaluate_patch_set.py`: local patch-set evaluation and ablation.
+- `train_state_views.py`: shared-encoder multi-view local state learning.
+- `train_masked_state_views.py`: strongest current local self-supervised route via masked view, masked future, and masked gene reconstruction.
+- `train_embryo_masked_views.py`: active embryo-level masked multi-view route with masked future views.
+- `train_embryo_state.py`: direct embryo summary regression baseline retained as a scaffold and comparison point.
+- `evaluate_embryo_state.py`: embryo summary-regression evaluation helper.
 - `train_autoregressive_full.py`: downstream whole-organism AR training path for later embryo-scale phases.
 - `evaluate_rollout.py`: rollout and perturbation evaluation for the downstream AR path.
 - `train_spatial_rollout.py`: engineering-only spatial rollout baseline.

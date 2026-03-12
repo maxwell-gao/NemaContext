@@ -1167,6 +1167,7 @@ class EmbryoViewDataset(PatchSetDataset):
         self,
         *args,
         views_per_embryo: int = 4,
+        future_views_per_embryo: int | None = None,
         top_cell_types: int = 8,
         **kwargs,
     ):
@@ -1174,6 +1175,7 @@ class EmbryoViewDataset(PatchSetDataset):
         if views_per_embryo < 1:
             raise ValueError("views_per_embryo must be >= 1")
         self.views_per_embryo = views_per_embryo
+        self.future_views_per_embryo = future_views_per_embryo or views_per_embryo
         self.top_cell_types = top_cell_types
         self._top_cell_type_vocab = self._build_top_cell_type_vocab()
 
@@ -1260,6 +1262,10 @@ class EmbryoViewDataset(PatchSetDataset):
         for _ in range(self.views_per_embryo):
             indices, roles, relpos = self._select_patch_from_indices(pair.current_indices, rng)
             views.append((indices, self._build_patch_view(indices, roles, relpos, pair.current_center)))
+        future_views = []
+        for _ in range(self.future_views_per_embryo):
+            indices, roles, relpos = self._select_patch_from_indices(pair.future_indices, rng)
+            future_views.append((indices, self._build_patch_view(indices, roles, relpos, pair.future_center)))
 
         output: dict[str, torch.Tensor] = {}
         for view_idx, (indices, view) in enumerate(views):
@@ -1272,8 +1278,19 @@ class EmbryoViewDataset(PatchSetDataset):
             output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
             output[f"{prefix}_time"] = view["time"]
             output[f"{prefix}_indices"] = torch.from_numpy(indices.astype(np.int64))
+        for view_idx, (indices, view) in enumerate(future_views):
+            prefix = f"future_view_{view_idx}"
+            output[f"{prefix}_genes"] = view["genes"]
+            output[f"{prefix}_context_role"] = view["context_role"]
+            output[f"{prefix}_relative_position"] = view["relative_position"]
+            output[f"{prefix}_token_times"] = view["token_times"]
+            output[f"{prefix}_valid_mask"] = view["valid_mask"]
+            output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
+            output[f"{prefix}_time"] = view["time"]
+            output[f"{prefix}_indices"] = torch.from_numpy(indices.astype(np.int64))
 
         output["views_per_embryo"] = torch.tensor(self.views_per_embryo, dtype=torch.long)
+        output["future_views_per_embryo"] = torch.tensor(self.future_views_per_embryo, dtype=torch.long)
         output["current_center_min"] = torch.tensor(float(pair.current_center), dtype=torch.float32)
         output["future_center_min"] = torch.tensor(float(pair.future_center), dtype=torch.float32)
         output["top_cell_types"] = list(self._top_cell_type_vocab)
@@ -1285,6 +1302,9 @@ def collate_embryo_view(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch
     first = batch[0]
     view_prefixes = sorted(
         {key.rsplit("_", 1)[0] for key in first if key.startswith("view_") and key.endswith("_genes")}
+    )
+    future_view_prefixes = sorted(
+        {key.rsplit("_", 1)[0] for key in first if key.startswith("future_view_") and key.endswith("_genes")}
     )
 
     def _collate_view(prefix: str) -> dict[str, torch.Tensor]:
@@ -1315,7 +1335,7 @@ def collate_embryo_view(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch
         )
 
     output: dict[str, torch.Tensor] = {}
-    for prefix in view_prefixes:
+    for prefix in view_prefixes + future_view_prefixes:
         collated = _collate_view(prefix)
         output[f"{prefix}_genes"] = collated["current_genes"]
         output[f"{prefix}_context_role"] = collated["current_context_role"]
@@ -1326,6 +1346,7 @@ def collate_embryo_view(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch
         output[f"{prefix}_time"] = collated["current_time"]
 
     output["views_per_embryo"] = torch.stack([item["views_per_embryo"] for item in batch])
+    output["future_views_per_embryo"] = torch.stack([item["future_views_per_embryo"] for item in batch])
     output["current_center_min"] = torch.stack([item["current_center_min"] for item in batch])
     output["future_center_min"] = torch.stack([item["future_center_min"] for item in batch])
     output["future_founder_composition"] = torch.stack(

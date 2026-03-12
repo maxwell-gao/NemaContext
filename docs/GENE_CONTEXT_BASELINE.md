@@ -915,6 +915,64 @@ This distinction is useful, because it separates:
 - the best future-regression code,
 - from the best self-supervised developmental state representation.
 
+## Embryo-Level Transition
+
+The next active transition is now no longer direct embryo summary regression.
+
+That route was implemented and tested, but it failed badly: pooling many local
+views directly into one embryo vector and regressing embryo-scale summaries
+produced strongly negative `R^2` values on the full evaluation split.
+
+That failure clarified the real requirement:
+
+- embryo state should not be learned first as a direct summary target,
+- it should first be learned as a latent that can reconstruct missing
+  observations of the same embryo state.
+
+The active embryo-level route is therefore embryo masked multi-view modeling:
+
+- sample many local views from the same embryo window,
+- treat those views as observations of one embryo state,
+- mask current and future local views,
+- learn an embryo latent that can recover those missing views,
+- then evaluate that latent with embryo-level biological probes.
+
+## Embryo-Level Masked Future Views
+
+The strongest embryo-scale self-supervised route is now the masked-future
+variant of embryo masking.
+
+Compared with current-only embryo masking, masked future views improved
+embryo-level biological probes across almost all families:
+
+- `latent_to_time.r2`:
+  - current-only: `0.9924`
+  - masked-future: `0.9979`
+- `future_founder_composition.r2`:
+  - current-only: `0.8920`
+  - masked-future: `0.9649`
+- `future_celltype_composition.r2`:
+  - current-only: `0.9765`
+  - masked-future: `0.9911`
+- `future_lineage_depth_stats.r2`:
+  - current-only: `0.9587`
+  - masked-future: `0.9709`
+- `future_spatial_extent.r2`:
+  - current-only: `0.4568`
+  - masked-future: `0.7992`
+- `future_split_fraction.r2`:
+  - current-only: `0.9934`
+  - masked-future: `0.9952`
+
+This is the first embryo-level result in the repository where future-view
+reconstruction clearly improves a biologically meaningful embryo-state latent.
+
+So the current mainline should now be read as:
+
+- local masked+gene modeling for view-level developmental state learning,
+- embryo-level masked future-view modeling for embryo-state learning,
+- not direct embryo summary regression and not yet full embryo rollout.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).

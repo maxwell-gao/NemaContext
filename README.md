@@ -10,7 +10,8 @@ NemaContext is focused on one goal:
 - Active training tasks:
   - **patch-to-patch set-level developmental prediction** as the current local-population pretext task,
   - **shared-encoder multi-view state learning** as the active representation-learning stage built on top of patch views,
-  - **masked self-supervised state learning with gene reconstruction** as the current strongest self-supervised route.
+  - **masked self-supervised state learning with gene reconstruction** as the current strongest local self-supervised route,
+  - **embryo-level masked multi-view modeling with masked future views** as the current embryo-scale self-supervised route.
 - Immediate question: **can shared encoders learn stable developmental state representations from multiple local views of the same embryo window?**
 - Near-term priority: **treat patches as training views, not biological units, and move from patch prediction toward multi-view state representation learning**.
 - Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
@@ -23,6 +24,9 @@ Current strongest biological result:
 - the strongest explicitly self-supervised route is now
   `masked view + masked future + masked gene reconstruction`, which preserves
   biological structure and improves several future developmental probes.
+- the strongest embryo-level route is now `masked future views`, where the
+  current embryo state is trained to recover masked views from both the
+  present and the paired future window.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking have all failed to become
   effective training signals in the current setup.
@@ -95,7 +99,20 @@ uv run python examples/whole_organism_ar/train_masked_state_views.py \
   --val_event_subset none \
   --epochs 10
 
-# 6) Historical token-level baseline remains available for diagnosis
+# 6) Train the active embryo-level masked-future encoder
+uv run python examples/whole_organism_ar/train_embryo_masked_views.py \
+  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
+  --model_type multi_cell \
+  --context_size 256 \
+  --global_context_size 32 \
+  --dt_minutes 40 \
+  --views_per_embryo 8 \
+  --future_views_per_embryo 8 \
+  --samples_per_pair 16 \
+  --pairwise_spatial_bias \
+  --epochs 10
+
+# 7) Historical token-level baseline remains available for diagnosis
 uv run python examples/whole_organism_ar/train_gene_context.py \
   --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
   --sampling_strategy spatial_anchor \
@@ -111,6 +128,7 @@ Synthetic and per-founder trajectory generation is archived under
 
 Whole-organism autoregressive rollout remains in the repository as the intended
 destination of the current line of work, but the active evidence path still
-starts with smaller real-data update problems before embryo-scale claims.
-The next scaling step is embryo-state aggregation from multiple local views,
-not more patch-level contrastive tuning.
+starts with smaller real-data update problems before rollout claims.
+The current embryo-scale step is masked multi-view reconstruction with masked
+future views, not more patch-level contrastive tuning and not direct embryo
+summary regression.

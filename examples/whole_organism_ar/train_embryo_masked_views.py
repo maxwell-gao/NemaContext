@@ -36,8 +36,10 @@ def parse_args():
     p.add_argument("--samples_per_pair", type=int, default=16)
     p.add_argument("--val_samples_per_pair", type=int, default=None)
     p.add_argument("--views_per_embryo", type=int, default=8)
+    p.add_argument("--future_views_per_embryo", type=int, default=None)
     p.add_argument("--top_cell_types", type=int, default=8)
     p.add_argument("--mask_ratio", type=float, default=0.25)
+    p.add_argument("--future_mask_ratio", type=float, default=0.25)
     p.add_argument("--min_cells_per_window", type=int, default=32)
     p.add_argument("--val_fraction", type=float, default=0.2)
     p.add_argument("--sampling_strategy", choices=["random_window", "spatial_neighbors", "spatial_anchor"], default="spatial_anchor")
@@ -68,6 +70,8 @@ def parse_args():
     p.add_argument("--pairwise_spatial_bias", action="store_true")
     p.add_argument("--latent_weight", type=float, default=1.0)
     p.add_argument("--gene_weight", type=float, default=1.0)
+    p.add_argument("--future_latent_weight", type=float, default=1.0)
+    p.add_argument("--future_gene_weight", type=float, default=1.0)
     p.add_argument("--checkpoint_dir", default="checkpoints_embryo_masked_views")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -83,7 +87,16 @@ def build_mask(batch_size: int, n_views: int, mask_ratio: float, device: str) ->
     return mask
 
 
-def compute_metrics(model: EmbryoMaskedViewModel, batch: dict[str, torch.Tensor], mask_ratio: float, latent_weight: float, gene_weight: float):
+def compute_metrics(
+    model: EmbryoMaskedViewModel,
+    batch: dict[str, torch.Tensor],
+    mask_ratio: float,
+    future_mask_ratio: float,
+    latent_weight: float,
+    gene_weight: float,
+    future_latent_weight: float,
+    future_gene_weight: float,
+):
     n_views = int(batch["views_per_embryo"][0].item())
     genes = stack_view_tensor(batch, "genes", n_views)
     context_role = stack_view_tensor(batch, "context_role", n_views)
@@ -92,7 +105,16 @@ def compute_metrics(model: EmbryoMaskedViewModel, batch: dict[str, torch.Tensor]
     valid_mask = stack_view_tensor(batch, "valid_mask", n_views)
     anchor_mask = stack_view_tensor(batch, "anchor_mask", n_views)
     time = stack_view_tensor(batch, "time", n_views)
+    n_future_views = int(batch["future_views_per_embryo"][0].item())
+    future_genes = stack_view_tensor(batch, "genes", n_future_views, prefix_template="future_view_{i}_")
+    future_context_role = stack_view_tensor(batch, "context_role", n_future_views, prefix_template="future_view_{i}_")
+    future_relative_position = stack_view_tensor(batch, "relative_position", n_future_views, prefix_template="future_view_{i}_")
+    future_token_times = stack_view_tensor(batch, "token_times", n_future_views, prefix_template="future_view_{i}_")
+    future_valid_mask = stack_view_tensor(batch, "valid_mask", n_future_views, prefix_template="future_view_{i}_")
+    future_anchor_mask = stack_view_tensor(batch, "anchor_mask", n_future_views, prefix_template="future_view_{i}_")
+    future_time = stack_view_tensor(batch, "time", n_future_views, prefix_template="future_view_{i}_")
     masked_view_mask = build_mask(genes.shape[0], n_views, mask_ratio, genes.device)
+    masked_future_view_mask = build_mask(genes.shape[0], n_future_views, future_mask_ratio, genes.device)
 
     out = model(
         genes=genes,
@@ -101,8 +123,16 @@ def compute_metrics(model: EmbryoMaskedViewModel, batch: dict[str, torch.Tensor]
         valid_mask=valid_mask,
         anchor_mask=anchor_mask,
         masked_view_mask=masked_view_mask,
+        future_genes=future_genes,
+        future_time=future_time,
+        future_token_times=future_token_times,
+        future_valid_mask=future_valid_mask,
+        future_anchor_mask=future_anchor_mask,
+        masked_future_view_mask=masked_future_view_mask,
         context_role=context_role,
         relative_position=relative_position,
+        future_context_role=future_context_role,
+        future_relative_position=future_relative_position,
     )
 
     target_latents = []
@@ -118,25 +148,69 @@ def compute_metrics(model: EmbryoMaskedViewModel, batch: dict[str, torch.Tensor]
         )
     target_latents = torch.stack(target_latents, dim=0)
     target_genes = torch.stack(target_genes, dim=0)
+    future_target_latents = []
+    future_target_genes = []
+    for i in range(genes.shape[0]):
+        masked_idx = torch.nonzero(masked_future_view_mask[i], as_tuple=False).squeeze(-1)
+        future_target_latents.append(out.future_local_latents[i, masked_idx].mean(dim=0))
+        valid_views = future_valid_mask[i, masked_idx]
+        masked_genes = future_genes[i, masked_idx]
+        future_target_genes.append(
+            (masked_genes * valid_views.unsqueeze(-1).float()).sum(dim=(0, 1))
+            / valid_views.float().sum().clamp_min(1.0)
+        )
+    future_target_latents = torch.stack(future_target_latents, dim=0)
+    future_target_genes = torch.stack(future_target_genes, dim=0)
 
     latent_loss = (1.0 - F.cosine_similarity(out.pred_masked_view_latents, target_latents.detach(), dim=-1)).mean()
     gene_loss = F.mse_loss(out.pred_masked_view_genes, target_genes)
-    total = latent_weight * latent_loss + gene_weight * gene_loss
+    future_latent_loss = (
+        1.0 - F.cosine_similarity(out.pred_masked_future_view_latents, future_target_latents.detach(), dim=-1)
+    ).mean()
+    future_gene_loss = F.mse_loss(out.pred_masked_future_view_genes, future_target_genes)
+    total = (
+        latent_weight * latent_loss
+        + gene_weight * gene_loss
+        + future_latent_weight * future_latent_loss
+        + future_gene_weight * future_gene_loss
+    )
     return total, {
         "total": total.item(),
         "masked_latent": latent_loss.item(),
         "masked_gene": gene_loss.item(),
+        "masked_future_latent": future_latent_loss.item(),
+        "masked_future_gene": future_gene_loss.item(),
     }
 
 
-def run_epoch(model, loader, optimizer, device: str, mask_ratio: float, latent_weight: float, gene_weight: float):
+def run_epoch(
+    model,
+    loader,
+    optimizer,
+    device: str,
+    mask_ratio: float,
+    future_mask_ratio: float,
+    latent_weight: float,
+    gene_weight: float,
+    future_latent_weight: float,
+    future_gene_weight: float,
+):
     train = optimizer is not None
     model.train(train)
     totals: dict[str, float] = {}
     n_batches = 0
     for batch in loader:
         batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
-        loss, metrics = compute_metrics(model, batch, mask_ratio, latent_weight, gene_weight)
+        loss, metrics = compute_metrics(
+            model,
+            batch,
+            mask_ratio,
+            future_mask_ratio,
+            latent_weight,
+            gene_weight,
+            future_latent_weight,
+            future_gene_weight,
+        )
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -171,6 +245,7 @@ def main():
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode=args.delete_target_mode,
         views_per_embryo=args.views_per_embryo,
+        future_views_per_embryo=args.future_views_per_embryo,
         top_cell_types=args.top_cell_types,
         **train_filters,
     )
@@ -191,6 +266,7 @@ def main():
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode=args.delete_target_mode,
         views_per_embryo=args.views_per_embryo,
+        future_views_per_embryo=args.future_views_per_embryo,
         top_cell_types=args.top_cell_types,
         **val_filters,
     )
@@ -217,13 +293,37 @@ def main():
     history = []
     best_val = float("inf")
     for epoch in range(1, args.epochs + 1):
-        train_metrics = run_epoch(model, train_loader, optimizer, args.device, args.mask_ratio, args.latent_weight, args.gene_weight)
-        val_metrics = run_epoch(model, val_loader, None, args.device, args.mask_ratio, args.latent_weight, args.gene_weight)
+        train_metrics = run_epoch(
+            model,
+            train_loader,
+            optimizer,
+            args.device,
+            args.mask_ratio,
+            args.future_mask_ratio,
+            args.latent_weight,
+            args.gene_weight,
+            args.future_latent_weight,
+            args.future_gene_weight,
+        )
+        val_metrics = run_epoch(
+            model,
+            val_loader,
+            None,
+            args.device,
+            args.mask_ratio,
+            args.future_mask_ratio,
+            args.latent_weight,
+            args.gene_weight,
+            args.future_latent_weight,
+            args.future_gene_weight,
+        )
         history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} val_masked_latent={val_metrics['masked_latent']:.4f} "
-            f"val_masked_gene={val_metrics['masked_gene']:.4f}"
+            f"val_masked_gene={val_metrics['masked_gene']:.4f} "
+            f"val_masked_future_latent={val_metrics['masked_future_latent']:.4f} "
+            f"val_masked_future_gene={val_metrics['masked_future_gene']:.4f}"
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]

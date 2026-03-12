@@ -1069,6 +1069,84 @@ Current takeaway:
   while treating SAE as a frozen-latent interpretability branch rather than a
   new core model family.
 
+## 23. Embryo-Level Masked Multi-View Modeling Replaced Direct Embryo Summary Regression
+
+What changed:
+
+- embryo-scale state learning was first attempted as direct summary regression
+  from pooled local-view latents,
+- this failed badly: embryo-level future developmental probes on the full
+  evaluation split were strongly negative,
+- the route then changed to embryo-level masked multi-view modeling, where
+  local views are treated as observations of one embryo state rather than as
+  biological entities.
+
+What happened:
+
+- current-only embryo masking trained stably and produced a strong embryo
+  latent:
+  - `latent_to_time.r2 = 0.9924`
+  - `future_founder_composition.r2 = 0.8920`
+  - `future_celltype_composition.r2 = 0.9765`
+  - `future_lineage_depth_stats.r2 = 0.9587`
+  - `future_spatial_extent.r2 = 0.4568`
+  - `future_split_fraction.r2 = 0.9934`
+- this established that embryo-scale self-supervision was feasible, but also
+  showed that future spatial geometry was the weakest embryo-level readout.
+
+Interpretation:
+
+- embryo-state learning should not start from direct whole-embryo summary
+  regression,
+- it should first learn to complete missing local observations of the same
+  embryo state.
+
+## 24. Masked Future Views Became The Active Embryo-Level Mainline
+
+What changed:
+
+- the embryo masked-view objective was extended from current-only masking to
+  masked future views,
+- the current embryo state was trained to recover masked views from both the
+  present and the paired future window.
+
+What happened:
+
+- broad masked-future embryo training remained stable,
+- current and future masked-view losses both dropped cleanly,
+- embryo latent biological probes improved systematically over the
+  current-only embryo baseline:
+  - `latent_to_time.r2`:
+    - current-only: `0.9924`
+    - masked-future: `0.9979`
+  - `future_founder_composition.r2`:
+    - current-only: `0.8920`
+    - masked-future: `0.9649`
+  - `future_celltype_composition.r2`:
+    - current-only: `0.9765`
+    - masked-future: `0.9911`
+  - `future_lineage_depth_stats.r2`:
+    - current-only: `0.9587`
+    - masked-future: `0.9709`
+  - `future_spatial_extent.r2`:
+    - current-only: `0.4568`
+    - masked-future: `0.7992`
+  - `future_split_fraction.r2`:
+    - current-only: `0.9934`
+    - masked-future: `0.9952`
+
+Interpretation:
+
+- masked future views are not just a small extension of embryo masking,
+- they are the first embryo-level objective in the repository that clearly
+  improves future developmental structure across nearly all probe families,
+- the active embryo-scale representation route should therefore be understood
+  as:
+  - local views are observations,
+  - embryo latent is the state,
+  - masked future-view reconstruction is the main self-supervised bridge to
+    later embryo one-step dynamics.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

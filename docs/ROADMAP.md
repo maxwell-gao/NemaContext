@@ -172,6 +172,11 @@ Current update:
   masked view + masked future + masked gene reconstruction yields a
   biologically strong latent, while all tested contrastive/retrieval-style
   temporal objectives remain weak.
+- embryo-scale work has now also crossed a first useful threshold:
+  embryo-level masked multi-view modeling with masked future views produces an
+  embryo latent whose future developmental probes are substantially stronger
+  than current-only embryo masking and far stronger than direct embryo summary
+  regression.
 
 Definition of done:
 
@@ -190,8 +195,9 @@ Practical note for the next iteration:
 - self-supervised progress should now focus on reconstruction-style signals
   that are working,
 - temporal discrimination should not remain the main optimization focus,
-- the next scaling step should be embryo-state aggregation from many local
-  views rather than more patch-level contrastive tuning,
+- the next scaling step should keep embryo-scale learning on masked
+  multi-view reconstruction with future-view prediction rather than direct
+  summary regression or more patch-level contrastive tuning,
 - any SAE work should be treated as frozen-latent interpretability analysis,
   not as a replacement for the active state encoder.
 
@@ -204,10 +210,10 @@ This is the first phase that should be treated as real developmental dynamics.
 
 Tasks:
 
-- move from patch views to state representations that remain stable across
-  different local observations of the same embryo window,
-- learn current-to-future state prediction in latent space before full
-  rollout,
+- move from patch views to embryo-state representations that remain stable
+  across different local observations of the same embryo window,
+- learn current-to-future embryo-state prediction first through masked future
+  view reconstruction before full rollout,
 - keep biological developmental probes as gate metrics rather than relying
   only on latent or reconstruction loss,
 - update cell states and event propensities jointly,
@@ -220,7 +226,10 @@ Definition of done:
 
 - repeated short-horizon updates remain stable for more than one step,
 - context does not immediately become stale under autoregressive reuse,
-- rollout metrics are scientifically interpretable rather than only qualitative.
+- rollout metrics are scientifically interpretable rather than only
+  qualitative,
+- embryo-level latent probes remain biologically meaningful after moving from
+  current-only masking to masked future-view learning.
 
 ## Phase 5: Whole-Embryo Rollout
 
@@ -233,6 +242,8 @@ state, not as isolated anchor tasks.
 Tasks:
 
 - define the embryo-scale state contract,
+- promote embryo-level masked-future representation learning into embryo
+  one-step latent prediction,
 - run full-embryo one-step updates,
 - support variable population size through division and disappearance events,
 - evaluate whether global developmental structure is preserved over time,

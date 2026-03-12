@@ -307,6 +307,7 @@ def test_embryo_view_dataset_and_model_forward():
     assert batch["future_lineage_depth_stats"].shape[1] == 3
     assert batch["future_spatial_extent"].shape[1] == 4
     assert batch["future_split_fraction"].shape[1] == 1
+    assert int(batch["future_views_per_embryo"][0].item()) == 3
 
     n_views = int(batch["views_per_embryo"][0].item())
     genes = torch.stack([batch[f"view_{i}_genes"] for i in range(n_views)], dim=1)
@@ -378,8 +379,20 @@ def test_embryo_masked_view_model_forward():
     valid_mask = torch.stack([batch[f"view_{i}_valid_mask"] for i in range(n_views)], dim=1)
     anchor_mask = torch.stack([batch[f"view_{i}_anchor_mask"] for i in range(n_views)], dim=1)
     time = torch.stack([batch[f"view_{i}_time"] for i in range(n_views)], dim=1)
+    n_future_views = int(batch["future_views_per_embryo"][0].item())
+    future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
+    future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
+    future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
+    future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
+    future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
+    future_time = torch.stack([batch[f"future_view_{i}_time"] for i in range(n_future_views)], dim=1)
     masked_view_mask = torch.tensor(
         [[False, True, False, False], [True, False, False, False]],
+        dtype=torch.bool,
+    )
+    masked_future_view_mask = torch.tensor(
+        [[True, False, False, False], [False, True, False, False]],
         dtype=torch.bool,
     )
 
@@ -400,14 +413,25 @@ def test_embryo_masked_view_model_forward():
         valid_mask=valid_mask,
         anchor_mask=anchor_mask,
         masked_view_mask=masked_view_mask,
+        future_genes=future_genes,
+        future_time=future_time,
+        future_token_times=future_token_times,
+        future_valid_mask=future_valid_mask,
+        future_anchor_mask=future_anchor_mask,
+        masked_future_view_mask=masked_future_view_mask,
         context_role=context_role,
         relative_position=relative_position,
+        future_context_role=future_context_role,
+        future_relative_position=future_relative_position,
     )
     assert out.embryo_latent.shape == (2, 64)
     assert out.visible_embryo_latent.shape == (2, 64)
     assert out.local_latents.shape == (2, n_views, 64)
+    assert out.future_local_latents.shape == (2, n_future_views, 64)
     assert out.pred_masked_view_latents.shape == (2, 64)
     assert out.pred_masked_view_genes.shape == (2, dataset.gene_dim)
+    assert out.pred_masked_future_view_latents.shape == (2, 64)
+    assert out.pred_masked_future_view_genes.shape == (2, dataset.gene_dim)
 
 
 def test_single_cell_model_has_no_cross_token_information_flow():

@@ -116,6 +116,14 @@ It is now better summarized as:
 - compare single-cell and multi-cell patch encoders,
 - scale the patch until larger context begins to matter.
 
+The next shift after that is now also concrete:
+
+- treat many local patches as views of one embryo state rather than as stable
+  patch entities,
+- train embryo-scale latents by reconstructing masked current and masked
+  future views of that embryo state,
+- only then promote the learned embryo latent into embryo one-step dynamics.
+
 ## Current Core Modules
 
 - `src/branching_flows/autoregressive_model.py`
@@ -139,6 +147,22 @@ This architecture becomes the active main path again when:
 - multi-step reuse can be evaluated quantitatively,
 - embryo-scale rollout becomes scientifically interpretable rather than only
   visually plausible.
+
+Current embryo-scale precursor:
+
+- direct embryo summary regression was tested and failed,
+- embryo-level masked multi-view modeling works,
+- adding masked future views materially improves embryo-level biological
+  probes, especially future founder composition, future cell-type composition,
+  future lineage-depth statistics, future spatial extent, and split-fraction
+  alignment.
+
+So the present embryo-scale contract should be read as:
+
+- local views are observations,
+- embryo latent is the state,
+- masked future-view reconstruction is the best current bridge from local
+  self-supervision to embryo-scale dynamics.
 
 ## Interpretation Rule
 

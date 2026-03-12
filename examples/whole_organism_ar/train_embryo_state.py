@@ -73,8 +73,13 @@ def parse_args():
     return p.parse_args()
 
 
-def stack_view_tensor(batch: dict[str, torch.Tensor], base: str, n_views: int) -> torch.Tensor:
-    return torch.stack([batch[f"view_{i}_{base}"] for i in range(n_views)], dim=1)
+def stack_view_tensor(
+    batch: dict[str, torch.Tensor],
+    base: str,
+    n_views: int,
+    prefix_template: str = "view_{i}_",
+) -> torch.Tensor:
+    return torch.stack([batch[f"{prefix_template.format(i=i)}{base}"] for i in range(n_views)], dim=1)
 
 
 def r2_score_torch(y_true: torch.Tensor, y_pred: torch.Tensor) -> float:

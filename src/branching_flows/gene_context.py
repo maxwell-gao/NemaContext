@@ -52,9 +52,13 @@ class EmbryoMaskedOutput:
     embryo_latent: torch.Tensor
     visible_embryo_latent: torch.Tensor
     local_latents: torch.Tensor
+    future_local_latents: torch.Tensor | None
     pred_masked_view_latents: torch.Tensor
     pred_masked_view_genes: torch.Tensor
+    pred_masked_future_view_latents: torch.Tensor | None
+    pred_masked_future_view_genes: torch.Tensor | None
     masked_view_mask: torch.Tensor
+    masked_future_view_mask: torch.Tensor | None
 
 
 class GeneContextModel(nn.Module):
@@ -839,6 +843,17 @@ class EmbryoMaskedViewModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, gene_dim),
         )
+        self.masked_future_view_latent_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.masked_future_view_gene_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, gene_dim),
+        )
 
     def encode_local_views(
         self,
@@ -886,8 +901,16 @@ class EmbryoMaskedViewModel(nn.Module):
         valid_mask: torch.Tensor,
         anchor_mask: torch.Tensor,
         masked_view_mask: torch.Tensor,
+        future_genes: torch.Tensor | None = None,
+        future_time: torch.Tensor | None = None,
+        future_token_times: torch.Tensor | None = None,
+        future_valid_mask: torch.Tensor | None = None,
+        future_anchor_mask: torch.Tensor | None = None,
+        masked_future_view_mask: torch.Tensor | None = None,
         context_role: torch.Tensor | None = None,
         relative_position: torch.Tensor | None = None,
+        future_context_role: torch.Tensor | None = None,
+        future_relative_position: torch.Tensor | None = None,
     ) -> EmbryoMaskedOutput:
         local_latents = self.encode_local_views(
             genes=genes,
@@ -906,11 +929,37 @@ class EmbryoMaskedViewModel(nn.Module):
         )
         pred_masked_view_latents = self.masked_view_latent_head(visible_embryo_latent)
         pred_masked_view_genes = self.masked_view_gene_head(visible_embryo_latent)
+        future_local_latents = None
+        pred_masked_future_view_latents = None
+        pred_masked_future_view_genes = None
+        if (
+            future_genes is not None
+            and future_time is not None
+            and future_token_times is not None
+            and future_valid_mask is not None
+            and future_anchor_mask is not None
+            and masked_future_view_mask is not None
+        ):
+            future_local_latents = self.encode_local_views(
+                genes=future_genes,
+                time=future_time,
+                token_times=future_token_times,
+                valid_mask=future_valid_mask,
+                anchor_mask=future_anchor_mask,
+                context_role=future_context_role,
+                relative_position=future_relative_position,
+            )
+            pred_masked_future_view_latents = self.masked_future_view_latent_head(visible_embryo_latent)
+            pred_masked_future_view_genes = self.masked_future_view_gene_head(visible_embryo_latent)
         return EmbryoMaskedOutput(
             embryo_latent=full_embryo_latent,
             visible_embryo_latent=visible_embryo_latent,
             local_latents=local_latents,
+            future_local_latents=future_local_latents,
             pred_masked_view_latents=pred_masked_view_latents,
             pred_masked_view_genes=pred_masked_view_genes,
+            pred_masked_future_view_latents=pred_masked_future_view_latents,
+            pred_masked_future_view_genes=pred_masked_future_view_genes,
             masked_view_mask=masked_view_mask,
+            masked_future_view_mask=masked_future_view_mask,
         )
