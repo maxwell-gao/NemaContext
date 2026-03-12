@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -64,8 +65,11 @@ def parse_args():
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--predict_delta", action="store_true", default=True)
+    p.add_argument("--no_predict_delta", dest="predict_delta", action="store_false")
     p.add_argument("--latent_weight", type=float, default=10.0)
-    p.add_argument("--probe_weight", type=float, default=0.1)
+    p.add_argument("--probe_weight", type=float, default=0.0)
+    p.add_argument("--semantic_probe_weight", type=float, default=1.0)
     p.add_argument("--freeze_backbone", action="store_true", default=True)
     p.add_argument("--no_freeze_backbone", dest="freeze_backbone", action="store_false")
     p.add_argument("--checkpoint_dir", default="checkpoints_embryo_one_step")
@@ -125,12 +129,85 @@ def standardize(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch
     return (x - mean) / std
 
 
+def fit_linear_probe_bank(
+    backbone: EmbryoMaskedViewModel,
+    dataset: EmbryoViewDataset,
+    batch_size: int,
+    device: str,
+) -> dict[str, dict[str, torch.Tensor]]:
+    """Fit linear probes on true future embryo latents from the frozen backbone."""
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_embryo_view)
+    latents = []
+    targets = {k: [] for k in ("founder", "celltype", "depth", "spatial", "split")}
+
+    was_training = backbone.training
+    backbone.eval()
+    with torch.no_grad():
+        for batch in loader:
+            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+            n_future_views = int(batch["future_views_per_embryo"][0].item())
+            future_genes = stack_view_tensor(batch, "genes", n_future_views, prefix_template="future_view_{i}_")
+            future_context_role = stack_view_tensor(batch, "context_role", n_future_views, prefix_template="future_view_{i}_")
+            future_relative_position = stack_view_tensor(
+                batch,
+                "relative_position",
+                n_future_views,
+                prefix_template="future_view_{i}_",
+            )
+            future_token_times = stack_view_tensor(batch, "token_times", n_future_views, prefix_template="future_view_{i}_")
+            future_valid_mask = stack_view_tensor(batch, "valid_mask", n_future_views, prefix_template="future_view_{i}_")
+            future_anchor_mask = stack_view_tensor(batch, "anchor_mask", n_future_views, prefix_template="future_view_{i}_")
+            future_time = stack_view_tensor(batch, "time", n_future_views, prefix_template="future_view_{i}_")
+
+            future_latent, _ = backbone.encode_embryo_latent(
+                genes=future_genes,
+                time=future_time,
+                token_times=future_token_times,
+                valid_mask=future_valid_mask,
+                anchor_mask=future_anchor_mask,
+                context_role=future_context_role,
+                relative_position=future_relative_position,
+            )
+            latents.append(future_latent.cpu().numpy().astype(np.float32))
+            targets["founder"].append(batch["future_founder_composition"].cpu().numpy().astype(np.float32))
+            targets["celltype"].append(batch["future_celltype_composition"].cpu().numpy().astype(np.float32))
+            targets["depth"].append(batch["future_lineage_depth_stats"].cpu().numpy().astype(np.float32))
+            targets["spatial"].append(batch["future_spatial_extent"].cpu().numpy().astype(np.float32))
+            targets["split"].append(batch["future_split_fraction"].cpu().numpy().astype(np.float32))
+    if was_training:
+        backbone.train()
+
+    x = np.concatenate(latents, axis=0)
+    design = np.concatenate([x, np.ones((len(x), 1), dtype=x.dtype)], axis=1)
+    probe_bank = {}
+    for key, value in targets.items():
+        y = np.concatenate(value, axis=0)
+        weight, *_ = np.linalg.lstsq(design, y, rcond=None)
+        w = torch.from_numpy(weight[:-1].T.copy()).float()
+        b = torch.from_numpy(weight[-1].copy()).float()
+        probe_bank[key] = {"weight": w, "bias": b}
+    return probe_bank
+
+
+def apply_probe_bank(
+    latent: torch.Tensor,
+    probe_bank: dict[str, dict[str, torch.Tensor]],
+    key: str,
+) -> torch.Tensor:
+    probe = probe_bank[key]
+    weight = probe["weight"].to(latent.device)
+    bias = probe["bias"].to(latent.device)
+    return F.linear(latent, weight, bias)
+
+
 def compute_metrics(
     model: EmbryoOneStepLatentModel,
     batch: dict[str, torch.Tensor],
     latent_weight: float,
     probe_weight: float,
+    semantic_probe_weight: float,
     probe_stats: dict[str, torch.Tensor],
+    probe_bank: dict[str, dict[str, torch.Tensor]] | None,
 ):
     n_views = int(batch["views_per_embryo"][0].item())
     n_future_views = int(batch["future_views_per_embryo"][0].item())
@@ -165,7 +242,14 @@ def compute_metrics(
         future_context_role=future_context_role,
         future_relative_position=future_relative_position,
     )
-    latent_loss = (1.0 - F.cosine_similarity(out.pred_future_embryo_latent, out.target_future_embryo_latent.detach(), dim=-1)).mean()
+    if out.pred_future_delta is not None and out.target_future_delta is not None and model.predict_delta:
+        latent_loss = (
+            1.0 - F.cosine_similarity(out.pred_future_delta, out.target_future_delta.detach(), dim=-1)
+        ).mean()
+    else:
+        latent_loss = (
+            1.0 - F.cosine_similarity(out.pred_future_embryo_latent, out.target_future_embryo_latent.detach(), dim=-1)
+        ).mean()
     founder_target = standardize(
         batch["future_founder_composition"],
         probe_stats["founder_mean"].to(batch["future_founder_composition"].device),
@@ -197,7 +281,45 @@ def compute_metrics(
     spatial_loss = F.mse_loss(out.future_spatial_extent, spatial_target)
     split_loss = F.mse_loss(out.future_split_fraction, split_target)
     probe_loss = founder_loss + celltype_loss + depth_loss + spatial_loss + split_loss
-    total = latent_weight * latent_loss + probe_weight * probe_loss
+    semantic_founder_loss = torch.tensor(0.0, device=latent_loss.device)
+    semantic_celltype_loss = torch.tensor(0.0, device=latent_loss.device)
+    semantic_depth_loss = torch.tensor(0.0, device=latent_loss.device)
+    semantic_spatial_loss = torch.tensor(0.0, device=latent_loss.device)
+    semantic_split_loss = torch.tensor(0.0, device=latent_loss.device)
+    semantic_probe_loss = torch.tensor(0.0, device=latent_loss.device)
+    if probe_bank is not None:
+        semantic_founder_loss = F.mse_loss(
+            apply_probe_bank(out.pred_future_embryo_latent, probe_bank, "founder"),
+            founder_target,
+        )
+        semantic_celltype_loss = F.mse_loss(
+            apply_probe_bank(out.pred_future_embryo_latent, probe_bank, "celltype"),
+            celltype_target,
+        )
+        semantic_depth_loss = F.mse_loss(
+            apply_probe_bank(out.pred_future_embryo_latent, probe_bank, "depth"),
+            depth_target,
+        )
+        semantic_spatial_loss = F.mse_loss(
+            apply_probe_bank(out.pred_future_embryo_latent, probe_bank, "spatial"),
+            spatial_target,
+        )
+        semantic_split_loss = F.mse_loss(
+            apply_probe_bank(out.pred_future_embryo_latent, probe_bank, "split"),
+            split_target,
+        )
+        semantic_probe_loss = (
+            semantic_founder_loss
+            + semantic_celltype_loss
+            + semantic_depth_loss
+            + 0.5 * semantic_spatial_loss
+            + semantic_split_loss
+        )
+    total = (
+        latent_weight * latent_loss
+        + probe_weight * probe_loss
+        + semantic_probe_weight * semantic_probe_loss
+    )
     metrics = {
         "total": total.item(),
         "latent": latent_loss.item(),
@@ -206,6 +328,11 @@ def compute_metrics(
         "depth": depth_loss.item(),
         "spatial": spatial_loss.item(),
         "split": split_loss.item(),
+        "semantic_founder": semantic_founder_loss.item(),
+        "semantic_celltype": semantic_celltype_loss.item(),
+        "semantic_depth": semantic_depth_loss.item(),
+        "semantic_spatial": semantic_spatial_loss.item(),
+        "semantic_split": semantic_split_loss.item(),
         "founder_r2": r2_score_torch(batch["future_founder_composition"], out.future_founder_composition),
         "celltype_r2": r2_score_torch(batch["future_celltype_composition"], out.future_celltype_composition),
         "depth_r2": r2_score_torch(batch["future_lineage_depth_stats"], out.future_lineage_depth_stats),
@@ -222,7 +349,9 @@ def run_epoch(
     device: str,
     latent_weight: float,
     probe_weight: float,
+    semantic_probe_weight: float,
     probe_stats: dict[str, torch.Tensor],
+    probe_bank: dict[str, dict[str, torch.Tensor]] | None,
 ):
     train = optimizer is not None
     model.train(train)
@@ -230,7 +359,15 @@ def run_epoch(
     n_batches = 0
     for batch in loader:
         batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
-        loss, metrics = compute_metrics(model, batch, latent_weight, probe_weight, probe_stats)
+        loss, metrics = compute_metrics(
+            model,
+            batch,
+            latent_weight,
+            probe_weight,
+            semantic_probe_weight,
+            probe_stats,
+            probe_bank,
+        )
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -311,11 +448,19 @@ def main():
         backbone=backbone,
         celltype_dim=len(train_ds._top_cell_type_vocab),
         d_model=cfg["d_model"],
+        predict_delta=args.predict_delta,
     ).to(args.device)
     if args.freeze_backbone:
         for p in model.backbone.parameters():
             p.requires_grad = False
         model.backbone.eval()
+
+    probe_bank = fit_linear_probe_bank(
+        backbone=model.backbone,
+        dataset=train_ds,
+        batch_size=args.batch_size,
+        device=args.device,
+    )
 
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
     checkpoint_dir = Path(args.checkpoint_dir)
@@ -330,7 +475,9 @@ def main():
             args.device,
             args.latent_weight,
             args.probe_weight,
+            args.semantic_probe_weight,
             probe_stats,
+            probe_bank,
         )
         val_metrics = run_epoch(
             model,
@@ -339,12 +486,16 @@ def main():
             args.device,
             args.latent_weight,
             args.probe_weight,
+            args.semantic_probe_weight,
             probe_stats,
+            probe_bank,
         )
         history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} val_latent={val_metrics['latent']:.4f} "
+            f"val_sem_founder={val_metrics['semantic_founder']:.4f} "
+            f"val_sem_celltype={val_metrics['semantic_celltype']:.4f} "
             f"val_founder_r2={val_metrics['founder_r2']:.4f} val_celltype_r2={val_metrics['celltype_r2']:.4f} "
             f"val_depth_r2={val_metrics['depth_r2']:.4f} val_spatial_r2={val_metrics['spatial_r2']:.4f} "
             f"val_split_r2={val_metrics['split_r2']:.4f}"
@@ -360,6 +511,10 @@ def main():
                     "top_cell_types": list(train_ds._top_cell_type_vocab),
                     "best_val": best_val,
                     "best_val_metrics": val_metrics,
+                    "probe_bank": {
+                        key: {"weight": value["weight"].cpu(), "bias": value["bias"].cpu()}
+                        for key, value in probe_bank.items()
+                    },
                     "backbone_checkpoint": args.backbone_checkpoint,
                 },
                 checkpoint_dir / "best.pt",

@@ -46,6 +46,10 @@ from src.data.gene_context_dataset import (  # noqa: E402
 from src.data.trajectory_extractor import WholeEmbryoTrajectoryExtractor  # noqa: E402
 from examples.whole_organism_ar.train_autoregressive_full import EmbryoTrajectoryDataset  # noqa: E402
 from examples.whole_organism_ar.train_patch_set import compute_patch_set_metrics  # noqa: E402
+from examples.whole_organism_ar.train_embryo_one_step import (  # noqa: E402
+    apply_probe_bank,
+    fit_linear_probe_bank,
+)
 from examples.whole_organism_ar.train_state_views import (  # noqa: E402
     StateViewModel,
     compute_metrics as compute_state_view_metrics,
@@ -486,7 +490,7 @@ def test_embryo_one_step_latent_model_forward():
         head_dim=16,
         use_pairwise_spatial_bias=True,
     )
-    model = EmbryoOneStepLatentModel(backbone=backbone, celltype_dim=4, d_model=64)
+    model = EmbryoOneStepLatentModel(backbone=backbone, celltype_dim=4, d_model=64, predict_delta=True)
     out = model(
         genes=genes,
         time=time,
@@ -506,11 +510,62 @@ def test_embryo_one_step_latent_model_forward():
     assert out.current_embryo_latent.shape == (2, 64)
     assert out.target_future_embryo_latent.shape == (2, 64)
     assert out.pred_future_embryo_latent.shape == (2, 64)
+    assert out.target_future_delta is not None
+    assert out.pred_future_delta is not None
+    assert out.target_future_delta.shape == (2, 64)
+    assert out.pred_future_delta.shape == (2, 64)
     assert out.future_founder_composition.shape == (2, 8)
     assert out.future_celltype_composition.shape == (2, 4)
     assert out.future_lineage_depth_stats.shape == (2, 3)
     assert out.future_spatial_extent.shape == (2, 4)
     assert out.future_split_fraction.shape == (2, 1)
+
+
+def test_embryo_future_probe_bank_shapes():
+    """Frozen probe bank should fit and decode future embryo latents with expected shapes."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = EmbryoViewDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        views_per_embryo=2,
+        future_views_per_embryo=2,
+        top_cell_types=4,
+        random_seed=0,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient embryo samples")
+
+    backbone = EmbryoMaskedViewModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    probe_bank = fit_linear_probe_bank(
+        backbone=backbone,
+        dataset=dataset,
+        batch_size=2,
+        device="cpu",
+    )
+    assert set(probe_bank) == {"founder", "celltype", "depth", "spatial", "split"}
+    z = torch.randn(2, 64)
+    assert apply_probe_bank(z, probe_bank, "founder").shape == (2, 8)
+    assert apply_probe_bank(z, probe_bank, "celltype").shape == (2, 4)
+    assert apply_probe_bank(z, probe_bank, "depth").shape == (2, 3)
+    assert apply_probe_bank(z, probe_bank, "spatial").shape == (2, 4)
+    assert apply_probe_bank(z, probe_bank, "split").shape == (2, 1)
 
 
 def test_single_cell_model_has_no_cross_token_information_flow():

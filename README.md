@@ -29,7 +29,8 @@ Current strongest biological result:
   present and the paired future window.
 - a first embryo one-step latent predictor now also works on top of that
   backbone: future embryo latent cosine loss is very low, but jointly trained
-  probe heads are still weak.
+  probe heads are still weak, and later diagnostics show that pure cosine
+  matching does not preserve the biology-readable future-latent manifold.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking have all failed to become
   effective training signals in the current setup.
@@ -147,3 +148,7 @@ starts with smaller real-data update problems before rollout claims.
 The current embryo-scale step is masked multi-view reconstruction with masked
 future views, followed by latent-first embryo one-step prediction, not more
 patch-level contrastive tuning and not direct embryo summary regression.
+Current embryo one-step diagnosis is also sharper than before:
+the future latent target is stable under view resampling and permutation,
+but the latent geometry is too concentrated for cosine alone to enforce
+biology-readable dynamics.

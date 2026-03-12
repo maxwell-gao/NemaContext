@@ -135,6 +135,7 @@ def main():
         backbone=backbone,
         celltype_dim=ckpt["celltype_dim"],
         d_model=backbone_cfg["d_model"],
+        predict_delta=config.get("predict_delta", False),
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(args.device)

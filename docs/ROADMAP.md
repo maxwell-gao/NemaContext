@@ -181,6 +181,11 @@ Current update:
   future embryo latent prediction is already strong on top of the masked-future
   backbone, but joint probe heads are still weak and should not yet be treated
   as the final embryo-dynamics contract.
+- additional diagnostics now show that the future embryo latent target is
+  itself stable under repeated future-view resampling and almost invariant to
+  view order, so the main one-step bottleneck is no longer target noise but
+  latent geometry: cosine-only matching is too weak to preserve the
+  biology-readable future-latent manifold.
 
 Definition of done:
 
@@ -204,6 +209,9 @@ Practical note for the next iteration:
   summary regression or more patch-level contrastive tuning,
 - embryo one-step training should now be treated as latent-first:
   first learn `Z_t -> Z_{t+dt}`, then attach frozen developmental probes,
+- do not assume that smaller cosine automatically implies biologically correct
+  dynamics; true-future and predicted-future latent probe gaps must remain a
+  required diagnostic,
 - any SAE work should be treated as frozen-latent interpretability analysis,
   not as a replacement for the active state encoder.
 
@@ -240,6 +248,9 @@ Definition of done:
   current-only masking to masked future-view learning,
 - embryo one-step latent prediction is reliable before joint probe training is
   treated as solved.
+- the next embryo-dynamics work should improve latent geometry or target
+  metrics rather than re-introducing more probe co-training or more temporal
+  discrimination variants.
 
 ## Phase 5: Whole-Embryo Rollout
 

@@ -170,6 +170,13 @@ A first embryo one-step latent predictor is now also in place:
 - current embryo latent predicts future embryo latent,
 - future latent cosine loss becomes very small,
 - but jointly trained developmental probe heads are still weak.
+- further diagnostics now show that this is not mainly because the future
+  target is noisy:
+  repeated future-view resampling produces nearly identical future latents,
+  and pure view permutation barely changes them.
+- the remaining failure mode is geometric:
+  cosine-only one-step matching can produce a future latent that is close in
+  angle while still leaving the biology-readable future-latent manifold.
 
 So the current architecture lesson is:
 
@@ -177,7 +184,9 @@ So the current architecture lesson is:
 - future latent prediction should be treated as the primary embryo one-step
   objective,
 - developmental probes should remain a secondary readout or a later frozen
-  probe stage until that path becomes stable.
+  probe stage until that path becomes stable,
+- and future work on embryo dynamics should target manifold-preserving latent
+  transitions rather than more direct probe co-training.
 
 ## Interpretation Rule
 

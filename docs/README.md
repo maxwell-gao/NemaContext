@@ -55,6 +55,10 @@ Current biological milestone:
   summary regression as the preferred embryo-state training interface.
 - a first embryo one-step latent dynamics baseline now exists and already
   learns future embryo latents well, but direct joint probe heads remain weak.
+- later diagnostics now show that the future embryo latent target itself is
+  stable under view resampling and permutation; the main remaining problem is
+  that cosine-only one-step dynamics do not preserve the biology-readable
+  future-latent manifold.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking are all currently ineffective.
 - the next architectural step is embryo-scale state aggregation from multiple

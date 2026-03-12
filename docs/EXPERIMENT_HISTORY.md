@@ -1179,6 +1179,99 @@ Interpretation:
   - rather than forcing latent dynamics and probe decoding to succeed in one
     joint stage.
 
+## 26. Predicted-Future Probe Gaps Showed The Problem Is In Dynamics, Not Readout
+
+What changed:
+
+- frozen probes were fit on `true future embryo latents`,
+- the same probes were then applied to `predicted future embryo latents`
+  produced by the embryo one-step model,
+- comparisons were done on held-out full-split evaluation.
+
+What happened:
+
+- `true future latent` was highly biology-readable:
+  - founder composition `R² ≈ 0.986`
+  - cell-type composition `R² ≈ 0.996`
+  - lineage-depth stats `R² ≈ 0.992`
+  - spatial extent `R² ≈ 0.850`
+  - split fraction `R² ≈ 0.938`
+- `predicted future latent` was not:
+  - founder `R² ≈ -0.06`
+  - celltype `R² ≈ -0.46`
+  - depth `R² ≈ -0.62`
+  - spatial `R² ≈ -8.30`
+  - split `R² ≈ -6.62`
+
+Interpretation:
+
+- the probe contract itself is not the main problem,
+- the embryo one-step predictor is failing to land on the same
+  biology-readable future-latent manifold,
+- small latent cosine loss is therefore not sufficient evidence that embryo
+  dynamics are biologically correct.
+
+## 27. Future-Latent Stability Was High, But Its Cosine Geometry Was Too Concentrated
+
+What changed:
+
+- the best masked-future embryo backbone was diagnosed directly,
+- for the same future window, multiple independent future-view resamplings
+  were re-encoded,
+- and fixed future-view sets were also re-encoded after pure view-order
+  permutations.
+
+What happened:
+
+- repeated resampling of the same future window produced almost identical
+  latents:
+  - mean within-pair resample cosine `≈ 0.999992`
+- pure view-order permutation had negligible effect:
+  - mean order sensitivity `1 - cosine ≈ 1.06e-05`
+- so the future target is stable under the current observation contract.
+
+But:
+
+- different future windows were also extremely close in cosine space:
+  - mean between-pair centroid cosine `≈ 0.999462`
+- so within-window and between-window cosine values were separated only very
+  weakly.
+
+Interpretation:
+
+- the main one-step bottleneck is not target instability,
+- it is latent geometry:
+  - `future_latent` is stable,
+  - but cosine space is too concentrated for cosine-only matching to provide
+    a strong embryo-dynamics target.
+
+## 28. Direct Semantic Forcing And Naive Delta Prediction Both Failed
+
+What changed:
+
+- a frozen semantic probe-bank loss was injected directly into one-step
+  training,
+- and, separately, one-step prediction was reformulated as naive ambient-space
+  delta prediction.
+
+What happened:
+
+- direct semantic forcing broke latent dynamics itself:
+  - one-step latent loss stopped improving,
+  - predicted-latent probe `R²` collapsed catastrophically.
+- naive delta prediction also failed:
+  - training remained stable,
+  - but predicted-latent biological readability became even worse than the
+    absolute latent baseline.
+
+Interpretation:
+
+- semantic information is useful, but adding probe loss too early and too
+  directly is not a valid fix,
+- naive ambient-space delta prediction is also not enough,
+- the next embryo-dynamics iteration should therefore target better latent
+  geometry or target metrics, not more direct probe co-training.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

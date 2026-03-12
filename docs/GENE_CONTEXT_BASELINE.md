@@ -995,6 +995,47 @@ So the correct reading is:
 - and future developmental probes should likely be attached to frozen
   predicted latents rather than co-trained as the main one-step objective.
 
+## Embryo One-Step Probe Gap And Target Stability
+
+Later diagnostics clarified the embryo one-step bottleneck much more sharply.
+
+First, `true future latent` remains highly biology-readable under held-out
+probe fitting:
+
+- founder composition `R² ≈ 0.986`
+- cell-type composition `R² ≈ 0.996`
+- lineage-depth stats `R² ≈ 0.992`
+- spatial extent `R² ≈ 0.850`
+- split fraction `R² ≈ 0.938`
+
+But the corresponding `predicted future latent` from the embryo one-step model
+remains strongly unreadable under the same frozen probes.
+
+This means the main failure is in the dynamics mapping, not in the probe
+contract itself.
+
+Target-construction diagnostics also rule out a simpler explanation:
+
+- repeated resampling of future views within the same future window produces
+  almost identical embryo latents,
+- and merely permuting the order of future views changes the embryo latent
+  negligibly.
+
+So the current embryo target is stable enough for training.
+
+The more likely problem is geometric:
+
+- future embryo latents are very tightly concentrated in cosine space,
+- so cosine-only matching can become small even when the predicted latent does
+  not land on the same biology-readable manifold as the true future latent.
+
+This is why:
+
+- direct semantic probe loss failed when added too early,
+- naive ambient-space delta prediction also failed,
+- and the next embryo-dynamics step should focus on better latent geometry or
+  target metrics, not more joint probe supervision.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).

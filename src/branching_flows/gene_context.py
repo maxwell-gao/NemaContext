@@ -66,6 +66,8 @@ class EmbryoOneStepOutput:
     current_embryo_latent: torch.Tensor
     target_future_embryo_latent: torch.Tensor
     pred_future_embryo_latent: torch.Tensor
+    target_future_delta: torch.Tensor | None
+    pred_future_delta: torch.Tensor | None
     future_founder_composition: torch.Tensor
     future_celltype_composition: torch.Tensor
     future_lineage_depth_stats: torch.Tensor
@@ -1014,9 +1016,11 @@ class EmbryoOneStepLatentModel(nn.Module):
         backbone: EmbryoMaskedViewModel,
         celltype_dim: int,
         d_model: int = 256,
+        predict_delta: bool = False,
     ):
         super().__init__()
         self.backbone = backbone
+        self.predict_delta = predict_delta
         self.predictor = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.LayerNorm(d_model),
@@ -1064,11 +1068,18 @@ class EmbryoOneStepLatentModel(nn.Module):
             context_role=future_context_role,
             relative_position=future_relative_position,
         )
-        pred_future_embryo_latent = self.predictor(current_embryo_latent)
+        target_future_delta = target_future_embryo_latent - current_embryo_latent
+        pred_future_delta = self.predictor(current_embryo_latent)
+        if self.predict_delta:
+            pred_future_embryo_latent = current_embryo_latent + pred_future_delta
+        else:
+            pred_future_embryo_latent = pred_future_delta
         return EmbryoOneStepOutput(
             current_embryo_latent=current_embryo_latent,
             target_future_embryo_latent=target_future_embryo_latent,
             pred_future_embryo_latent=pred_future_embryo_latent,
+            target_future_delta=target_future_delta,
+            pred_future_delta=pred_future_delta,
             future_founder_composition=self.future_founder_head(pred_future_embryo_latent),
             future_celltype_composition=self.future_celltype_head(pred_future_embryo_latent),
             future_lineage_depth_stats=self.future_depth_head(pred_future_embryo_latent),
