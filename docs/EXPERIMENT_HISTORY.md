@@ -1147,6 +1147,38 @@ Interpretation:
   - masked future-view reconstruction is the main self-supervised bridge to
     later embryo one-step dynamics.
 
+## 25. Embryo One-Step Latent Dynamics Worked Before Joint Probe Decoding
+
+What changed:
+
+- a new embryo one-step baseline was added on top of the best masked-future
+  embryo backbone,
+- the first version jointly trained:
+  - future embryo latent prediction,
+  - and direct future developmental probe heads.
+
+What happened:
+
+- the naive version failed because probe scales were badly imbalanced,
+  especially `future_spatial_extent`,
+- after switching to a latent-first objective and standardizing probe targets,
+  embryo one-step latent prediction became stable:
+  - `val_latent` dropped from `0.2881` at epoch 1 to `~0.0009`,
+  - full-split future embryo latent cosine loss reached `0.00054`,
+- but the jointly trained probe heads still failed on aggregate evaluation:
+  - founder, celltype, depth, spatial, and split `R^2` remained strongly
+    negative on the full split.
+
+Interpretation:
+
+- embryo-level latent dynamics are now working as a real learned objective,
+- direct joint probe decoding is not yet the right training contract,
+- the next correct split is:
+  - first learn `Z_t -> Z_{t+dt}`,
+  - then attach frozen probes to predicted future latents,
+  - rather than forcing latent dynamics and probe decoding to succeed in one
+    joint stage.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

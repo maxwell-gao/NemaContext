@@ -49,8 +49,10 @@ Interpretation:
 - `train_state_views.py`: shared-encoder multi-view local state learning.
 - `train_masked_state_views.py`: strongest current local self-supervised route via masked view, masked future, and masked gene reconstruction.
 - `train_embryo_masked_views.py`: active embryo-level masked multi-view route with masked future views.
+- `train_embryo_one_step.py`: latent-first embryo one-step dynamics baseline on top of the best masked-future embryo backbone.
 - `train_embryo_state.py`: direct embryo summary regression baseline retained as a scaffold and comparison point.
 - `evaluate_embryo_state.py`: embryo summary-regression evaluation helper.
+- `evaluate_embryo_one_step.py`: aggregate embryo one-step latent/probe evaluation helper.
 - `train_autoregressive_full.py`: downstream whole-organism AR training path for later embryo-scale phases.
 - `evaluate_rollout.py`: rollout and perturbation evaluation for the downstream AR path.
 - `train_spatial_rollout.py`: engineering-only spatial rollout baseline.

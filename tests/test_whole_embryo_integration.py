@@ -23,6 +23,7 @@ sys.path.insert(0, str(project_root))
 from src.branching_flows.autoregressive_model import AutoregressiveNemaModel  # noqa: E402
 from src.branching_flows.gene_context import (  # noqa: E402
     EmbryoMaskedViewModel,
+    EmbryoOneStepLatentModel,
     EmbryoStateModel,
     GeneContextModel,
     MultiPatchSetModel,
@@ -432,6 +433,84 @@ def test_embryo_masked_view_model_forward():
     assert out.pred_masked_view_genes.shape == (2, dataset.gene_dim)
     assert out.pred_masked_future_view_latents.shape == (2, 64)
     assert out.pred_masked_future_view_genes.shape == (2, dataset.gene_dim)
+
+
+def test_embryo_one_step_latent_model_forward():
+    """Embryo one-step model should predict future embryo latent from current embryo state."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = EmbryoViewDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        views_per_embryo=3,
+        future_views_per_embryo=3,
+        top_cell_types=4,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient embryo-view samples")
+
+    batch = collate_embryo_view([dataset[0], dataset[1]])
+    n_views = int(batch["views_per_embryo"][0].item())
+    n_future_views = int(batch["future_views_per_embryo"][0].item())
+    genes = torch.stack([batch[f"view_{i}_genes"] for i in range(n_views)], dim=1)
+    context_role = torch.stack([batch[f"view_{i}_context_role"] for i in range(n_views)], dim=1)
+    relative_position = torch.stack([batch[f"view_{i}_relative_position"] for i in range(n_views)], dim=1)
+    token_times = torch.stack([batch[f"view_{i}_token_times"] for i in range(n_views)], dim=1)
+    valid_mask = torch.stack([batch[f"view_{i}_valid_mask"] for i in range(n_views)], dim=1)
+    anchor_mask = torch.stack([batch[f"view_{i}_anchor_mask"] for i in range(n_views)], dim=1)
+    time = torch.stack([batch[f"view_{i}_time"] for i in range(n_views)], dim=1)
+    future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
+    future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
+    future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
+    future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
+    future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
+    future_time = torch.stack([batch[f"future_view_{i}_time"] for i in range(n_future_views)], dim=1)
+
+    backbone = EmbryoMaskedViewModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    model = EmbryoOneStepLatentModel(backbone=backbone, celltype_dim=4, d_model=64)
+    out = model(
+        genes=genes,
+        time=time,
+        token_times=token_times,
+        valid_mask=valid_mask,
+        anchor_mask=anchor_mask,
+        future_genes=future_genes,
+        future_time=future_time,
+        future_token_times=future_token_times,
+        future_valid_mask=future_valid_mask,
+        future_anchor_mask=future_anchor_mask,
+        context_role=context_role,
+        relative_position=relative_position,
+        future_context_role=future_context_role,
+        future_relative_position=future_relative_position,
+    )
+    assert out.current_embryo_latent.shape == (2, 64)
+    assert out.target_future_embryo_latent.shape == (2, 64)
+    assert out.pred_future_embryo_latent.shape == (2, 64)
+    assert out.future_founder_composition.shape == (2, 8)
+    assert out.future_celltype_composition.shape == (2, 4)
+    assert out.future_lineage_depth_stats.shape == (2, 3)
+    assert out.future_spatial_extent.shape == (2, 4)
+    assert out.future_split_fraction.shape == (2, 1)
 
 
 def test_single_cell_model_has_no_cross_token_information_flow():

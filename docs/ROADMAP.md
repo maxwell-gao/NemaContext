@@ -177,6 +177,10 @@ Current update:
   embryo latent whose future developmental probes are substantially stronger
   than current-only embryo masking and far stronger than direct embryo summary
   regression.
+- a first embryo one-step latent dynamics baseline also now exists:
+  future embryo latent prediction is already strong on top of the masked-future
+  backbone, but joint probe heads are still weak and should not yet be treated
+  as the final embryo-dynamics contract.
 
 Definition of done:
 
@@ -198,6 +202,8 @@ Practical note for the next iteration:
 - the next scaling step should keep embryo-scale learning on masked
   multi-view reconstruction with future-view prediction rather than direct
   summary regression or more patch-level contrastive tuning,
+- embryo one-step training should now be treated as latent-first:
+  first learn `Z_t -> Z_{t+dt}`, then attach frozen developmental probes,
 - any SAE work should be treated as frozen-latent interpretability analysis,
   not as a replacement for the active state encoder.
 
@@ -214,6 +220,8 @@ Tasks:
   across different local observations of the same embryo window,
 - learn current-to-future embryo-state prediction first through masked future
   view reconstruction before full rollout,
+- validate embryo one-step latent prediction separately from embryo probe
+  decoding,
 - keep biological developmental probes as gate metrics rather than relying
   only on latent or reconstruction loss,
 - update cell states and event propensities jointly,
@@ -229,7 +237,9 @@ Definition of done:
 - rollout metrics are scientifically interpretable rather than only
   qualitative,
 - embryo-level latent probes remain biologically meaningful after moving from
-  current-only masking to masked future-view learning.
+  current-only masking to masked future-view learning,
+- embryo one-step latent prediction is reliable before joint probe training is
+  treated as solved.
 
 ## Phase 5: Whole-Embryo Rollout
 
@@ -244,6 +254,8 @@ Tasks:
 - define the embryo-scale state contract,
 - promote embryo-level masked-future representation learning into embryo
   one-step latent prediction,
+- keep probe decoding secondary to latent dynamics until a frozen-latent probe
+  path is validated,
 - run full-embryo one-step updates,
 - support variable population size through division and disappearance events,
 - evaluate whether global developmental structure is preserved over time,

@@ -17,6 +17,7 @@ Current interpretation:
   multiple patch views of the same embryo window,
 - the active embryo-scale route is embryo masked multi-view learning with
   masked future views,
+- the next embryo dynamics step is latent-first embryo one-step prediction,
 - downstream rollout scripts remain important, but they are not yet the main
   evidence source.
 
@@ -27,6 +28,7 @@ Recommended current entry points:
 - `train_state_views.py`
 - `train_masked_state_views.py`
 - `train_embryo_masked_views.py`
+- `train_embryo_one_step.py`
 - `train_gene_context.py`
 - `evaluate_gene_context.py`
 - `train_gene_single_cell.py`

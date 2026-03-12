@@ -61,6 +61,18 @@ class EmbryoMaskedOutput:
     masked_future_view_mask: torch.Tensor | None
 
 
+@dataclass
+class EmbryoOneStepOutput:
+    current_embryo_latent: torch.Tensor
+    target_future_embryo_latent: torch.Tensor
+    pred_future_embryo_latent: torch.Tensor
+    future_founder_composition: torch.Tensor
+    future_celltype_composition: torch.Tensor
+    future_lineage_depth_stats: torch.Tensor
+    future_spatial_extent: torch.Tensor
+    future_split_fraction: torch.Tensor
+
+
 class GeneContextModel(nn.Module):
     """Time-conditioned multi-cell transformer over gene states."""
 
@@ -893,6 +905,35 @@ class EmbryoMaskedViewModel(nn.Module):
         first_visible = local_latents[torch.arange(local_latents.shape[0], device=local_latents.device), first_visible_idx]
         return self.state_proj(torch.cat([first_visible, pooled], dim=-1))
 
+    def encode_embryo_latent(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+        visible_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        local_latents = self.encode_local_views(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+        if visible_mask is None:
+            visible_mask = torch.ones(
+                local_latents.shape[:2],
+                dtype=torch.bool,
+                device=local_latents.device,
+            )
+        embryo_latent = self.pool_visible(local_latents, visible_mask)
+        return embryo_latent, local_latents
+
     def forward(
         self,
         genes: torch.Tensor,
@@ -962,4 +1003,75 @@ class EmbryoMaskedViewModel(nn.Module):
             pred_masked_future_view_genes=pred_masked_future_view_genes,
             masked_view_mask=masked_view_mask,
             masked_future_view_mask=masked_future_view_mask,
+        )
+
+
+class EmbryoOneStepLatentModel(nn.Module):
+    """Predict future embryo latent and future probes from current embryo state."""
+
+    def __init__(
+        self,
+        backbone: EmbryoMaskedViewModel,
+        celltype_dim: int,
+        d_model: int = 256,
+    ):
+        super().__init__()
+        self.backbone = backbone
+        self.predictor = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.future_founder_head = nn.Linear(d_model, 8)
+        self.future_celltype_head = nn.Linear(d_model, celltype_dim)
+        self.future_depth_head = nn.Linear(d_model, 3)
+        self.future_spatial_head = nn.Linear(d_model, 4)
+        self.future_split_head = nn.Linear(d_model, 1)
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        future_genes: torch.Tensor,
+        future_time: torch.Tensor,
+        future_token_times: torch.Tensor,
+        future_valid_mask: torch.Tensor,
+        future_anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+        future_context_role: torch.Tensor | None = None,
+        future_relative_position: torch.Tensor | None = None,
+    ) -> EmbryoOneStepOutput:
+        current_embryo_latent, _ = self.backbone.encode_embryo_latent(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+        target_future_embryo_latent, _ = self.backbone.encode_embryo_latent(
+            genes=future_genes,
+            time=future_time,
+            token_times=future_token_times,
+            valid_mask=future_valid_mask,
+            anchor_mask=future_anchor_mask,
+            context_role=future_context_role,
+            relative_position=future_relative_position,
+        )
+        pred_future_embryo_latent = self.predictor(current_embryo_latent)
+        return EmbryoOneStepOutput(
+            current_embryo_latent=current_embryo_latent,
+            target_future_embryo_latent=target_future_embryo_latent,
+            pred_future_embryo_latent=pred_future_embryo_latent,
+            future_founder_composition=self.future_founder_head(pred_future_embryo_latent),
+            future_celltype_composition=self.future_celltype_head(pred_future_embryo_latent),
+            future_lineage_depth_stats=self.future_depth_head(pred_future_embryo_latent),
+            future_spatial_extent=self.future_spatial_head(pred_future_embryo_latent),
+            future_split_fraction=self.future_split_head(pred_future_embryo_latent),
         )

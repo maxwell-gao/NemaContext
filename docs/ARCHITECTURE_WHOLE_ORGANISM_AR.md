@@ -164,6 +164,21 @@ So the present embryo-scale contract should be read as:
 - masked future-view reconstruction is the best current bridge from local
   self-supervision to embryo-scale dynamics.
 
+A first embryo one-step latent predictor is now also in place:
+
+- frozen masked-future backbone,
+- current embryo latent predicts future embryo latent,
+- future latent cosine loss becomes very small,
+- but jointly trained developmental probe heads are still weak.
+
+So the current architecture lesson is:
+
+- embryo latent dynamics are now more mature than embryo probe decoding,
+- future latent prediction should be treated as the primary embryo one-step
+  objective,
+- developmental probes should remain a secondary readout or a later frozen
+  probe stage until that path becomes stable.
+
 ## Interpretation Rule
 
 If a result only shows that a focal anchor can be predicted one step ahead, it

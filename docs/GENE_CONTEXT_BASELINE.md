@@ -971,7 +971,29 @@ So the current mainline should now be read as:
 
 - local masked+gene modeling for view-level developmental state learning,
 - embryo-level masked future-view modeling for embryo-state learning,
+- embryo one-step latent prediction on top of that embryo backbone,
 - not direct embryo summary regression and not yet full embryo rollout.
+
+## Embryo One-Step Latent Dynamics
+
+The first embryo one-step baseline has now also been implemented on top of the
+best masked-future embryo backbone.
+
+Its strongest result is not joint probe decoding, but latent dynamics:
+
+- future embryo latent cosine loss is already very small,
+- meaning the current embryo latent can predict the next embryo latent
+  reliably under the present state contract.
+
+At the same time, the current jointly trained developmental probe heads remain
+weak on aggregate evaluation.
+
+So the correct reading is:
+
+- embryo latent dynamics are now more mature than embryo probe decoding,
+- the embryo one-step route should stay latent-first,
+- and future developmental probes should likely be attached to frozen
+  predicted latents rather than co-trained as the main one-step objective.
 
 ## References
 

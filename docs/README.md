@@ -38,6 +38,8 @@ Current active scripts now split into two levels:
   state route via masked view, masked future, and masked gene reconstruction.
 - `train_embryo_masked_views.py`: active embryo-level self-supervised route via
   masked current and masked future local views of the same embryo state.
+- `train_embryo_one_step.py`: latent-first embryo one-step dynamics baseline on
+  top of the best masked-future embryo backbone.
 
 Current biological milestone:
 
@@ -51,6 +53,8 @@ Current biological milestone:
 - the active embryo-scale representation route is now embryo-level masked
   multi-view modeling with masked future views; this replaced direct embryo
   summary regression as the preferred embryo-state training interface.
+- a first embryo one-step latent dynamics baseline now exists and already
+  learns future embryo latents well, but direct joint probe heads remain weak.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking are all currently ineffective.
 - the next architectural step is embryo-scale state aggregation from multiple

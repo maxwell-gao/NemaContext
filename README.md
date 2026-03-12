@@ -27,6 +27,9 @@ Current strongest biological result:
 - the strongest embryo-level route is now `masked future views`, where the
   current embryo state is trained to recover masked views from both the
   present and the paired future window.
+- a first embryo one-step latent predictor now also works on top of that
+  backbone: future embryo latent cosine loss is very low, but jointly trained
+  probe heads are still weak.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking have all failed to become
   effective training signals in the current setup.
@@ -112,7 +115,19 @@ uv run python examples/whole_organism_ar/train_embryo_masked_views.py \
   --pairwise_spatial_bias \
   --epochs 10
 
-# 7) Historical token-level baseline remains available for diagnosis
+# 7) Train embryo one-step latent prediction on top of the best embryo backbone
+uv run python examples/whole_organism_ar/train_embryo_one_step.py \
+  --backbone_checkpoint checkpoints_embryo_masked_views/best.pt \
+  --context_size 256 \
+  --global_context_size 32 \
+  --dt_minutes 40 \
+  --views_per_embryo 8 \
+  --future_views_per_embryo 8 \
+  --samples_per_pair 16 \
+  --freeze_backbone \
+  --epochs 10
+
+# 8) Historical token-level baseline remains available for diagnosis
 uv run python examples/whole_organism_ar/train_gene_context.py \
   --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
   --sampling_strategy spatial_anchor \
@@ -130,5 +145,5 @@ Whole-organism autoregressive rollout remains in the repository as the intended
 destination of the current line of work, but the active evidence path still
 starts with smaller real-data update problems before rollout claims.
 The current embryo-scale step is masked multi-view reconstruction with masked
-future views, not more patch-level contrastive tuning and not direct embryo
-summary regression.
+future views, followed by latent-first embryo one-step prediction, not more
+patch-level contrastive tuning and not direct embryo summary regression.
