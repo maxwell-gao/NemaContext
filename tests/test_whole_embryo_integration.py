@@ -47,6 +47,7 @@ from examples.whole_organism_ar.train_state_views import (  # noqa: E402
 )
 from examples.whole_organism_ar.train_masked_state_views import (  # noqa: E402
     MaskedStateViewModel,
+    TemporalQueue,
     compute_masked_metrics,
 )
 
@@ -703,18 +704,31 @@ def test_masked_state_view_model_forward():
         batch,
         mask_ratio=0.25,
         disc_temperature=0.1,
+        retrieval_margin=0.2,
         ot_weight=0.05,
     )
     assert torch.isfinite(total)
     assert {
         "total",
         "masked_view",
-        "temporal_disc",
+        "future_retrieval",
         "masked_future",
         "current_gene",
         "future_gene",
         "ot",
     }.issubset(metrics)
+
+    total_queue, metrics_queue = compute_masked_metrics(
+        model,
+        batch,
+        mask_ratio=0.25,
+        disc_temperature=0.1,
+        retrieval_margin=0.2,
+        ot_weight=0.05,
+        temporal_queue=TemporalQueue(max_size=8, feature_dim=64, device=torch.device("cpu")),
+    )
+    assert torch.isfinite(total_queue)
+    assert torch.isfinite(torch.tensor(metrics_queue["future_retrieval"]))
 
 
 if __name__ == "__main__":

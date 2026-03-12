@@ -854,7 +854,9 @@ The practical result is asymmetric:
 - masked gene reconstruction materially improves the biological content of the
   latent,
 - temporal discrimination does **not** currently improve beyond the random
-  small-batch baseline.
+  baseline,
+- and neither hard-negative discrimination, queue-based discrimination, nor
+  future-retrieval ranking changed that conclusion.
 
 So the right interpretation is not:
 
@@ -887,6 +889,16 @@ broad state-view baseline on several future developmental probes:
 What it still does **not** optimize best is:
 
 - direct future latent cosine alignment.
+
+What this means for next steps:
+
+- the active self-supervised route should stay reconstruction-centered,
+- temporal discrimination should be treated as a failed branch for now,
+- patch-set remains a useful local pretext task,
+- but the next real modeling step is embryo-state aggregation from multiple
+  local views,
+- and any SAE work should be post hoc interpretability on frozen latents
+  rather than a new main training objective.
 
 So the broad state-view baseline and the masked route now have different
 strengths:

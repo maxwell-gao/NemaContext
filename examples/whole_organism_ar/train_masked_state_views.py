@@ -133,40 +133,79 @@ def mask_view_genes(
     return masked, mask
 
 
-def info_nce_loss(pred: torch.Tensor, target: torch.Tensor, temperature: float) -> torch.Tensor:
-    pred = F.normalize(pred, dim=-1)
-    target = F.normalize(target, dim=-1)
-    logits = pred @ target.T / temperature
-    labels = torch.arange(pred.shape[0], device=pred.device)
-    return F.cross_entropy(logits, labels)
-
-
-def hard_negative_temporal_loss(
+def future_retrieval_ranking_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
     current_center: torch.Tensor,
     future_center: torch.Tensor,
     temperature: float,
+    margin: float,
+    queue_target: torch.Tensor | None = None,
+    queue_current_center: torch.Tensor | None = None,
+    queue_future_center: torch.Tensor | None = None,
 ) -> torch.Tensor:
     pred = F.normalize(pred, dim=-1)
     target = F.normalize(target, dim=-1)
-    logits = pred @ target.T / temperature
+    all_target = target
+    all_current_center = current_center
+    all_future_center = future_center
+    if queue_target is not None and queue_target.numel() > 0:
+        all_target = torch.cat([target, F.normalize(queue_target.to(pred.device), dim=-1)], dim=0)
+        assert queue_current_center is not None and queue_future_center is not None
+        all_current_center = torch.cat([current_center, queue_current_center.to(pred.device)], dim=0)
+        all_future_center = torch.cat([future_center, queue_future_center.to(pred.device)], dim=0)
+
+    logits = pred @ all_target.T / temperature
 
     bsz = pred.shape[0]
     labels = torch.arange(bsz, device=pred.device)
 
-    same_future = future_center.unsqueeze(1) == future_center.unsqueeze(0)
-    same_current = current_center.unsqueeze(1) == current_center.unsqueeze(0)
-    wrong_dt = (future_center - current_center).unsqueeze(1) != (future_center - current_center).unsqueeze(0)
+    same_future = future_center.unsqueeze(1) == all_future_center.unsqueeze(0)
+    same_current = current_center.unsqueeze(1) == all_current_center.unsqueeze(0)
+    wrong_dt = (future_center - current_center).unsqueeze(1) != (
+        all_future_center - all_current_center
+    ).unsqueeze(0)
 
-    allowed = same_future | same_current | wrong_dt
-    allowed.fill_diagonal_(True)
-    no_hard_negatives = allowed.sum(dim=1) <= 1
+    negative_mask = (same_future | same_current | wrong_dt)
+    negative_mask[:, :bsz].fill_diagonal_(False)
+    no_hard_negatives = negative_mask.sum(dim=1) == 0
     if torch.any(no_hard_negatives):
-        allowed[no_hard_negatives] = True
+        fallback = torch.ones_like(negative_mask[no_hard_negatives], dtype=torch.bool)
+        fallback[:, :bsz].fill_diagonal_(False)
+        negative_mask[no_hard_negatives] = fallback
 
-    masked_logits = logits.masked_fill(~allowed, float("-inf"))
-    return F.cross_entropy(masked_logits, labels)
+    pos_scores = logits[torch.arange(bsz, device=pred.device), labels]
+    masked_neg = logits.masked_fill(~negative_mask, float("-inf"))
+    hard_neg_scores = torch.logsumexp(masked_neg, dim=1)
+    return F.softplus(margin + hard_neg_scores - pos_scores).mean()
+
+
+class TemporalQueue:
+    """FIFO queue of future representations for harder temporal negatives."""
+
+    def __init__(self, max_size: int, feature_dim: int, device: torch.device):
+        self.max_size = max(0, max_size)
+        self.feature_dim = feature_dim
+        self.device = device
+        self._target = torch.empty((0, feature_dim), device=device)
+        self._current_center = torch.empty((0,), dtype=torch.long, device=device)
+        self._future_center = torch.empty((0,), dtype=torch.long, device=device)
+
+    def get(self) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+        if self.max_size <= 0 or self._target.shape[0] == 0:
+            return None, None, None
+        return self._target, self._current_center, self._future_center
+
+    @torch.no_grad()
+    def enqueue(self, target: torch.Tensor, current_center: torch.Tensor, future_center: torch.Tensor):
+        if self.max_size <= 0:
+            return
+        target = target.detach().to(self.device)
+        current_center = current_center.detach().to(self.device)
+        future_center = future_center.detach().to(self.device)
+        self._target = torch.cat([self._target, target], dim=0)[-self.max_size :]
+        self._current_center = torch.cat([self._current_center, current_center], dim=0)[-self.max_size :]
+        self._future_center = torch.cat([self._future_center, future_center], dim=0)[-self.max_size :]
 
 
 def compute_masked_metrics(
@@ -174,7 +213,9 @@ def compute_masked_metrics(
     batch: dict[str, torch.Tensor],
     mask_ratio: float,
     disc_temperature: float,
+    retrieval_margin: float,
     ot_weight: float,
+    temporal_queue: TemporalQueue | None = None,
 ):
     current_visible_genes, _current_mask = mask_view_genes(
         batch["current_view_0_genes"],
@@ -204,13 +245,22 @@ def compute_masked_metrics(
 
     future_pred = model.disc_projector(model.future_predictor(z_current_visible))
     future_target_proj = model.disc_projector(z_future_target.detach())
-    temporal_disc_loss = hard_negative_temporal_loss(
+    queue_target, queue_current_center, queue_future_center = (
+        temporal_queue.get() if temporal_queue is not None else (None, None, None)
+    )
+    temporal_disc_loss = future_retrieval_ranking_loss(
         future_pred,
         future_target_proj,
         batch["current_center_min"],
         batch["future_center_min"],
         disc_temperature,
+        retrieval_margin,
+        queue_target=queue_target,
+        queue_current_center=queue_current_center,
+        queue_future_center=queue_future_center,
     )
+    if temporal_queue is not None:
+        temporal_queue.enqueue(future_target_proj, batch["current_center_min"], batch["future_center_min"])
 
     if "future_view_1_genes" in batch:
         z_future_visible, _ = model.encode_view(
@@ -261,7 +311,7 @@ def compute_masked_metrics(
     return total, {
         "total": total.item(),
         "masked_view": masked_view_loss.item(),
-        "temporal_disc": temporal_disc_loss.item(),
+        "future_retrieval": temporal_disc_loss.item(),
         "masked_future": masked_future_loss.item(),
         "current_gene": current_gene_loss.item(),
         "future_gene": future_gene_loss.item(),
@@ -269,14 +319,34 @@ def compute_masked_metrics(
     }
 
 
-def run_epoch(model, loader, optimizer, device: str, mask_ratio: float, disc_temperature: float, ot_weight: float):
+def run_epoch(
+    model,
+    loader,
+    optimizer,
+    device: str,
+    mask_ratio: float,
+    disc_temperature: float,
+    retrieval_margin: float,
+    ot_weight: float,
+    queue_size: int = 0,
+):
     train = optimizer is not None
     model.train(train)
     totals: dict[str, float] = {}
     n_batches = 0
+    feature_dim = model.encoder.encoder.d_model
+    temporal_queue = TemporalQueue(queue_size, feature_dim, torch.device(device)) if queue_size > 0 else None
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
-        loss, metrics = compute_masked_metrics(model, batch, mask_ratio, disc_temperature, ot_weight)
+        loss, metrics = compute_masked_metrics(
+            model,
+            batch,
+            mask_ratio,
+            disc_temperature,
+            retrieval_margin,
+            ot_weight,
+            temporal_queue=temporal_queue,
+        )
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -322,6 +392,7 @@ def parse_args():
     p.add_argument("--val_min_anchor_del_positive", type=int, default=None)
     p.add_argument("--delete_target_mode", choices=["weak", "strict"], default="strict")
     p.add_argument("--batch_size", type=int, default=8)
+    p.add_argument("--queue_size", type=int, default=0)
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--d_model", type=int, default=256)
@@ -331,6 +402,7 @@ def parse_args():
     p.add_argument("--pairwise_spatial_bias", action="store_true")
     p.add_argument("--mask_ratio", type=float, default=0.3)
     p.add_argument("--disc_temperature", type=float, default=0.1)
+    p.add_argument("--retrieval_margin", type=float, default=0.2)
     p.add_argument("--ot_weight", type=float, default=0.05)
     p.add_argument("--checkpoint_dir", default="checkpoints_masked_state_views")
     p.add_argument("--seed", type=int, default=0)
@@ -409,16 +481,32 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(
-            model, train_loader, optimizer, args.device, args.mask_ratio, args.disc_temperature, args.ot_weight
+            model,
+            train_loader,
+            optimizer,
+            args.device,
+            args.mask_ratio,
+            args.disc_temperature,
+            args.retrieval_margin,
+            args.ot_weight,
+            queue_size=args.queue_size,
         )
         val_metrics = run_epoch(
-            model, val_loader, None, args.device, args.mask_ratio, args.disc_temperature, args.ot_weight
+            model,
+            val_loader,
+            None,
+            args.device,
+            args.mask_ratio,
+            args.disc_temperature,
+            args.retrieval_margin,
+            args.ot_weight,
+            queue_size=args.queue_size,
         )
         history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} val_masked_view={val_metrics['masked_view']:.4f} "
-            f"val_disc={val_metrics['temporal_disc']:.4f} val_masked_future={val_metrics['masked_future']:.4f} "
+            f"val_retrieval={val_metrics['future_retrieval']:.4f} val_masked_future={val_metrics['masked_future']:.4f} "
             f"val_current_gene={val_metrics['current_gene']:.4f} val_future_gene={val_metrics['future_gene']:.4f}"
         )
         if val_metrics["total"] < best_val:

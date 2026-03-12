@@ -34,6 +34,8 @@ Current active scripts now split into two levels:
 
 - `train_patch_set.py` / `evaluate_patch_set.py`: local state pretext task.
 - `train_state_views.py`: shared-encoder multi-view state representation learning.
+- `train_masked_state_views.py`: strongest current self-supervised developmental
+  state route via masked view, masked future, and masked gene reconstruction.
 
 Current biological milestone:
 
@@ -43,5 +45,9 @@ Current biological milestone:
   structure better than the broad single-cell control.
 - a masked self-supervised extension now also exists:
   `masked view + masked future + masked gene` currently yields the strongest
-  self-supervised biological state representation, while temporal
-  discrimination remains weak.
+  self-supervised biological state representation.
+- temporal discrimination, hard-negative discrimination, queue-based
+  discrimination, and future-retrieval ranking are all currently ineffective.
+- the next architectural step is embryo-scale state aggregation from multiple
+  local views; SAE is currently an analysis-only option on frozen latents, not
+  a main training component.

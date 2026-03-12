@@ -70,8 +70,9 @@ What remains weak:
   developmental prediction,
 - `split/delete` supervision is still weaker than the gene-state target,
 - multi-step dynamics are not yet biologically closed under changing context,
-- temporal discrimination in the current self-supervised route is not yet an
-  effective learning signal,
+- temporal discrimination, hard-negative discrimination, queue-based
+  discrimination, and future-retrieval ranking are not effective learning
+  signals in the current self-supervised route,
 - the active benchmark can still absorb too much attention relative to the
   final whole-embryo objective.
 
@@ -169,7 +170,8 @@ Current update:
   than broad no-context controls.
 - a second, more self-supervised result is now also in place:
   masked view + masked future + masked gene reconstruction yields a
-  biologically strong latent, while temporal discrimination remains weak.
+  biologically strong latent, while all tested contrastive/retrieval-style
+  temporal objectives remain weak.
 
 Definition of done:
 
@@ -187,8 +189,11 @@ Practical note for the next iteration:
 
 - self-supervised progress should now focus on reconstruction-style signals
   that are working,
-- temporal discrimination should not remain the main optimization focus unless
-  its task formulation changes materially.
+- temporal discrimination should not remain the main optimization focus,
+- the next scaling step should be embryo-state aggregation from many local
+  views rather than more patch-level contrastive tuning,
+- any SAE work should be treated as frozen-latent interpretability analysis,
+  not as a replacement for the active state encoder.
 
 ## Phase 4: Population Dynamics
 

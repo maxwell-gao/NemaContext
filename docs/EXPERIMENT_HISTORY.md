@@ -1031,6 +1031,44 @@ Current takeaway:
 - temporal discrimination should no longer be treated as the primary lever
   until a materially different objective is introduced.
 
+## 22. Larger Batch, Queue Memory, And Future Retrieval Did Not Rescue Temporal Learning
+
+What changed:
+
+- temporal discrimination was retried with:
+  - larger batch size,
+  - queue-based future negatives,
+  - hard-negative filtering by current/future windows,
+  - and finally a direct future-retrieval ranking objective.
+
+What happened:
+
+- reconstruction-style terms still learned normally:
+  - masked current-view loss dropped,
+  - masked future-state loss dropped,
+  - masked future-gene loss dropped,
+- but the temporal objective still did not become useful:
+  - queue-based discrimination stayed effectively flat,
+  - retrieval/ranking loss also stayed effectively flat.
+
+Interpretation:
+
+- the problem is no longer "too few negatives" or "too small a batch",
+- the current contrastive / retrieval framing itself appears mismatched to the
+  developmental time structure in this dataset,
+- developmental time clearly has biological meaning in the learned latents,
+  but this family of temporal objectives is not the right way to extract it.
+
+Current takeaway:
+
+- keep `masked view + masked future + masked gene` as the active
+  self-supervised route,
+- stop spending the main optimization budget on temporal
+  discrimination/retrieval,
+- shift the roadmap toward embryo-state aggregation from multiple local views,
+  while treating SAE as a frozen-latent interpretability branch rather than a
+  new core model family.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full
