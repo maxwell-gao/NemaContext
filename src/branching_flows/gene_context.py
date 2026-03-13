@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 
 import torch
@@ -73,6 +74,15 @@ class EmbryoOneStepOutput:
     future_lineage_depth_stats: torch.Tensor
     future_spatial_extent: torch.Tensor
     future_split_fraction: torch.Tensor
+
+
+@dataclass
+class EmbryoJEPAOutput:
+    context_embryo_latent: torch.Tensor
+    target_masked_future_latent: torch.Tensor
+    pred_masked_future_latent: torch.Tensor
+    masked_view_mask: torch.Tensor
+    masked_future_view_mask: torch.Tensor
 
 
 class GeneContextModel(nn.Module):
@@ -1085,4 +1095,105 @@ class EmbryoOneStepLatentModel(nn.Module):
             future_lineage_depth_stats=self.future_depth_head(pred_future_embryo_latent),
             future_spatial_extent=self.future_spatial_head(pred_future_embryo_latent),
             future_split_fraction=self.future_split_head(pred_future_embryo_latent),
+        )
+
+
+class EmbryoJEPAModel(nn.Module):
+    """Minimal JEPA for embryo views using a frozen/EMA target encoder."""
+
+    def __init__(
+        self,
+        backbone: EmbryoMaskedViewModel,
+        d_model: int = 256,
+        ema_decay: float = 0.99,
+    ):
+        super().__init__()
+        self.online_backbone = backbone
+        self.target_backbone = copy.deepcopy(backbone)
+        self.ema_decay = ema_decay
+        for param in self.target_backbone.parameters():
+            param.requires_grad_(False)
+        self.predictor = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.target_backbone.eval()
+
+    @staticmethod
+    def aggregate_masked_latents(
+        local_latents: torch.Tensor,
+        masked_view_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        targets = []
+        for i in range(local_latents.shape[0]):
+            masked_idx = torch.nonzero(masked_view_mask[i], as_tuple=False).squeeze(-1)
+            targets.append(local_latents[i, masked_idx].mean(dim=0))
+        return torch.stack(targets, dim=0)
+
+    @torch.no_grad()
+    def update_target_encoder(self):
+        for target_param, online_param in zip(
+            self.target_backbone.parameters(),
+            self.online_backbone.parameters(),
+            strict=True,
+        ):
+            target_param.data.mul_(self.ema_decay).add_(online_param.data, alpha=1.0 - self.ema_decay)
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.target_backbone.eval()
+        return self
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        masked_view_mask: torch.Tensor,
+        future_genes: torch.Tensor,
+        future_time: torch.Tensor,
+        future_token_times: torch.Tensor,
+        future_valid_mask: torch.Tensor,
+        future_anchor_mask: torch.Tensor,
+        masked_future_view_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+        future_context_role: torch.Tensor | None = None,
+        future_relative_position: torch.Tensor | None = None,
+    ) -> EmbryoJEPAOutput:
+        context_embryo_latent, _ = self.online_backbone.encode_embryo_latent(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+            visible_mask=~masked_view_mask,
+        )
+        pred_masked_future_latent = self.predictor(context_embryo_latent)
+        with torch.no_grad():
+            future_local_latents = self.target_backbone.encode_local_views(
+                genes=future_genes,
+                time=future_time,
+                token_times=future_token_times,
+                valid_mask=future_valid_mask,
+                anchor_mask=future_anchor_mask,
+                context_role=future_context_role,
+                relative_position=future_relative_position,
+            )
+            target_masked_future_latent = self.aggregate_masked_latents(
+                future_local_latents,
+                masked_future_view_mask,
+            )
+        return EmbryoJEPAOutput(
+            context_embryo_latent=context_embryo_latent,
+            target_masked_future_latent=target_masked_future_latent,
+            pred_masked_future_latent=pred_masked_future_latent,
+            masked_view_mask=masked_view_mask,
+            masked_future_view_mask=masked_future_view_mask,
         )

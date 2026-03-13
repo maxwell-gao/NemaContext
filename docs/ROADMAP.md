@@ -177,6 +177,10 @@ Current update:
   embryo latent whose future developmental probes are substantially stronger
   than current-only embryo masking and far stronger than direct embryo summary
   regression.
+- a minimal embryo JEPA path is now also implemented on the same embryo-view
+  interface; the first instability was traced to per-batch target whitening of
+  a highly concentrated target latent, and the stabilized layer-normalized
+  version now smoke-trains normally.
 - a first embryo one-step latent dynamics baseline also now exists:
   future embryo latent prediction is already strong on top of the masked-future
   backbone, but joint probe heads are still weak and should not yet be treated
@@ -214,6 +218,8 @@ Practical note for the next iteration:
   required diagnostic,
 - any SAE work should be treated as frozen-latent interpretability analysis,
   not as a replacement for the active state encoder.
+- embryo JEPA should currently be treated as an exploratory geometry-focused
+  alternative, not yet as the primary embryo-scale dynamics result.
 
 ## Phase 4: Population Dynamics
 

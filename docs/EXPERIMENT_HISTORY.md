@@ -1272,6 +1272,41 @@ Interpretation:
 - the next embryo-dynamics iteration should therefore target better latent
   geometry or target metrics, not more direct probe co-training.
 
+## 29. Minimal Embryo JEPA Was Implemented And Stabilized
+
+What changed:
+
+- a new minimal embryo JEPA route was added on top of the existing
+  embryo-view interface,
+- visible current views act as context,
+- masked future views act as the target,
+- an online encoder predicts embeddings produced by an EMA target encoder.
+
+First failure:
+
+- the original JEPA loss whitened target latents per batch and per dimension,
+- but the embryo future latent is highly concentrated,
+- so many target dimensions had near-zero standard deviation.
+
+Representative diagnosis:
+
+- raw latent MSE stayed moderate (`≈ 0.22` in a small diagnostic batch),
+- whitened MSE exploded (`≈ 1.9e5`).
+
+Fix:
+
+- remove per-batch target whitening,
+- replace it with layer-normalized target matching,
+- keep only lightweight variance/covariance regularization.
+
+Current status:
+
+- the minimal JEPA route now smoke-trains stably,
+- it is ready for formal broad comparison against the active masked-future
+  reconstruction route,
+- but those broad comparison results were not yet treated as established at
+  the time of this document update.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

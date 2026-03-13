@@ -188,6 +188,18 @@ So the current architecture lesson is:
 - and future work on embryo dynamics should target manifold-preserving latent
   transitions rather than more direct probe co-training.
 
+A minimal embryo JEPA route now also exists on the same embryo-view interface:
+
+- visible current views define the context,
+- masked future views define the target,
+- an EMA teacher provides target embeddings for a lightweight predictor.
+
+Its first instability was traced to per-batch target whitening in a highly
+concentrated latent space. After switching to layer-normalized target matching,
+the minimal JEPA route now smoke-trains stably and can be treated as an
+exploratory geometry-focused alternative to the active masked-future
+reconstruction route.
+
 ## Interpretation Rule
 
 If a result only shows that a focal anchor can be predicted one step ahead, it

@@ -11,7 +11,8 @@ NemaContext is focused on one goal:
   - **patch-to-patch set-level developmental prediction** as the current local-population pretext task,
   - **shared-encoder multi-view state learning** as the active representation-learning stage built on top of patch views,
   - **masked self-supervised state learning with gene reconstruction** as the current strongest local self-supervised route,
-  - **embryo-level masked multi-view modeling with masked future views** as the current embryo-scale self-supervised route.
+  - **embryo-level masked multi-view modeling with masked future views** as the current embryo-scale self-supervised route,
+  - **minimal embryo JEPA** as an exploratory embryo-dynamics alternative under active debugging.
 - Immediate question: **can shared encoders learn stable developmental state representations from multiple local views of the same embryo window?**
 - Near-term priority: **treat patches as training views, not biological units, and move from patch prediction toward multi-view state representation learning**.
 - Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
@@ -27,6 +28,10 @@ Current strongest biological result:
 - the strongest embryo-level route is now `masked future views`, where the
   current embryo state is trained to recover masked views from both the
   present and the paired future window.
+- a minimal embryo JEPA path now exists on the same embryo-view interface; its
+  first failure mode was traced to unstable per-batch target whitening in a
+  highly concentrated latent space, and the stabilized version now trains
+  normally in smoke tests.
 - a first embryo one-step latent predictor now also works on top of that
   backbone: future embryo latent cosine loss is very low, but jointly trained
   probe heads are still weak, and later diagnostics show that pure cosine
@@ -126,6 +131,18 @@ uv run python examples/whole_organism_ar/train_embryo_one_step.py \
   --future_views_per_embryo 8 \
   --samples_per_pair 16 \
   --freeze_backbone \
+  --epochs 10
+
+# 7b) Train the minimal embryo JEPA objective on the same embryo-view interface
+uv run python examples/whole_organism_ar/train_embryo_jepa.py \
+  --init_checkpoint checkpoints_embryo_masked_views/best.pt \
+  --context_size 256 \
+  --global_context_size 32 \
+  --dt_minutes 40 \
+  --views_per_embryo 8 \
+  --future_views_per_embryo 8 \
+  --samples_per_pair 16 \
+  --pairwise_spatial_bias \
   --epochs 10
 
 # 8) Historical token-level baseline remains available for diagnosis

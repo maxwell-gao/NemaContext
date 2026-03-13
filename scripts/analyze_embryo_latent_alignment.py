@@ -116,7 +116,27 @@ def main():
         collate_fn=collate_embryo_view,
     )
 
-    if "masked_view_latent_head.0.weight" in ckpt["model_state_dict"]:
+    state_dict = ckpt["model_state_dict"]
+    if "online_backbone.masked_view_latent_head.0.weight" in state_dict:
+        model = EmbryoMaskedViewModel(
+            gene_dim=ckpt["gene_dim"],
+            context_size=config["context_size"],
+            model_type=config["model_type"],
+            d_model=config["d_model"],
+            n_heads=config["n_heads"],
+            n_layers=config["n_layers"],
+            head_dim=config["head_dim"],
+            use_pairwise_spatial_bias=config["pairwise_spatial_bias"],
+        )
+        model.load_state_dict(
+            {
+                key.removeprefix("online_backbone."): value
+                for key, value in state_dict.items()
+                if key.startswith("online_backbone.")
+            }
+        )
+        is_masked = True
+    elif "masked_view_latent_head.0.weight" in state_dict:
         model = EmbryoMaskedViewModel(
             gene_dim=ckpt["gene_dim"],
             context_size=config["context_size"],
@@ -141,7 +161,8 @@ def main():
             use_pairwise_spatial_bias=config["pairwise_spatial_bias"],
         )
         is_masked = False
-    model.load_state_dict(ckpt["model_state_dict"])
+    if "online_backbone.masked_view_latent_head.0.weight" not in state_dict:
+        model.load_state_dict(state_dict)
     model.to(args.device)
     model.eval()
 

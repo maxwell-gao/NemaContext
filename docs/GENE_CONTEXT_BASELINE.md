@@ -1036,6 +1036,31 @@ This is why:
 - and the next embryo-dynamics step should focus on better latent geometry or
   target metrics, not more joint probe supervision.
 
+## Minimal Embryo JEPA
+
+A minimal embryo JEPA route now exists on the same embryo-view interface:
+
+- current visible views define the context,
+- masked future views define the target,
+- an online encoder predicts target embeddings produced by an EMA teacher.
+
+The first implementation exposed a concrete geometry bug:
+
+- future embryo latents are highly concentrated,
+- per-batch per-dimension whitening made some target dimensions nearly
+  singular,
+- raw latent MSE stayed moderate while whitened MSE exploded.
+
+After replacing that whitening step with layer-normalized target matching, the
+minimal JEPA route now trains stably in smoke tests.
+
+At this point it should be read as:
+
+- a plausible alternative embryo-dynamics contract,
+- already debugged enough for formal broad comparison,
+- but not yet a stronger established result than the active masked-future
+  reconstruction route.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).
