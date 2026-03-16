@@ -1307,6 +1307,67 @@ Current status:
 - but those broad comparison results were not yet treated as established at
   the time of this document update.
 
+## 30. MAE-Style Future-Set Completion Became The Strongest Embryo Predictive Route
+
+What changed:
+
+- embryo prediction was reformulated from a single future embryo latent into a
+  prediction of masked future local-view sets,
+- the first version used a simple slot-style set predictor,
+- the stronger follow-up changed that predictor into a more MAE-like decoder:
+  current context plus visible future parts reconstruct masked future parts.
+
+What happened:
+
+- the slot-style future-set baseline trained stably for both
+  reconstruction-backed and JEPA-backed backbones,
+- but the predicted future-set mean latent remained only weakly
+  biology-readable.
+
+Held-out `pred R²` for the older slot predictor:
+
+- reconstruction-backed:
+  - founder `-0.12`
+  - celltype `0.02`
+  - depth `-0.15`
+  - spatial `-0.99`
+  - split `-0.40`
+- JEPA-backed:
+  - founder `-3.44`
+  - celltype `-1.41`
+  - depth `-0.32`
+  - spatial `-10.65`
+  - split `-6.44`
+
+The stronger MAE-style future-part completion route then improved the
+predicted future-set mean latent on most probe families.
+
+Reconstruction-backed MAE future-set:
+
+- founder `-0.12 -> -0.07`
+- depth `-0.15 -> +0.01`
+- spatial `-0.99 -> -0.21`
+- split `-0.40 -> -0.27`
+- celltype changed slightly from `0.02 -> -0.04`
+
+JEPA-backed MAE future-set:
+
+- founder `-3.44 -> -1.71`
+- celltype `-1.41 -> -0.21`
+- depth `-0.32 -> +0.43`
+- spatial `-10.65 -> -6.36`
+- split `-6.44 -> -4.75`
+
+Interpretation:
+
+- the main embryo predictive object should be future parts, not a single
+  future state vector,
+- stronger decoder capacity helps when predicting masked future parts,
+- reconstruction-backed MAE-style future-set completion is now the best embryo
+  predictive contract in the repository,
+- JEPA remains strongest as an embryo representation route, but not yet as the
+  best predictive bridge to future developmental structure.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

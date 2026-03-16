@@ -1271,7 +1271,7 @@ class EmbryoJEPAModel(nn.Module):
 
 
 class EmbryoFutureSetModel(nn.Module):
-    """Predict a masked set of future local-view latents from current embryo context."""
+    """MAE-style masked future local-view set prediction from current and visible future parts."""
 
     def __init__(
         self,
@@ -1279,13 +1279,35 @@ class EmbryoFutureSetModel(nn.Module):
         future_slots: int,
         d_model: int = 256,
         gene_dim: int | None = None,
+        n_heads: int = 4,
+        decoder_layers: int = 3,
+        head_dim: int = 32,
     ):
         super().__init__()
         if future_slots < 1:
             raise ValueError("future_slots must be >= 1")
         self.backbone = backbone
         self.future_slots = future_slots
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.slot_queries = nn.Parameter(torch.randn(future_slots, d_model) * 0.02)
+        self.token_type = nn.Embedding(3, d_model)
+        self.visible_future_proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.decoder_blocks = nn.ModuleList(
+            [
+                TransformerBlockAutoregressive(
+                    d_model=d_model,
+                    n_heads=max(1, min(n_heads, 4)),
+                    head_dim=head_dim,
+                )
+                for _ in range(decoder_layers)
+            ]
+        )
+        self.decoder_norm = nn.LayerNorm(d_model)
         self.slot_predictor = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.LayerNorm(d_model),
@@ -1372,8 +1394,29 @@ class EmbryoFutureSetModel(nn.Module):
             future_valid_mask,
             masked_future_view_mask,
         )
-        slot_input = context_embryo_latent.unsqueeze(1) + self.slot_queries.unsqueeze(0)
-        pred_future_set_latents = self.slot_predictor(slot_input)
+        visible_future_mask = ~masked_future_view_mask
+        current_token = context_embryo_latent.unsqueeze(1) + self.token_type.weight[0].view(1, 1, -1)
+        visible_future_tokens = self.visible_future_proj(future_local_latents)
+        visible_future_tokens = visible_future_tokens + self.token_type.weight[1].view(1, 1, -1)
+        visible_future_tokens = visible_future_tokens * visible_future_mask.unsqueeze(-1).float()
+        masked_slot_tokens = self.mask_token + self.slot_queries.unsqueeze(0)
+        masked_slot_tokens = masked_slot_tokens + self.token_type.weight[2].view(1, 1, -1)
+        decoder_tokens = torch.cat(
+            [current_token, visible_future_tokens, masked_slot_tokens.expand(genes.shape[0], -1, -1)],
+            dim=1,
+        )
+        decoder_mask = torch.cat(
+            [
+                torch.ones(genes.shape[0], 1, dtype=torch.bool, device=genes.device),
+                visible_future_mask,
+                torch.ones(genes.shape[0], self.future_slots, dtype=torch.bool, device=genes.device),
+            ],
+            dim=1,
+        )
+        for block in self.decoder_blocks:
+            decoder_tokens = block(decoder_tokens, decoder_mask)
+        decoder_tokens = self.decoder_norm(decoder_tokens)
+        pred_future_set_latents = self.slot_predictor(decoder_tokens[:, -self.future_slots :])
         pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
         return EmbryoFutureSetOutput(
             context_embryo_latent=context_embryo_latent,

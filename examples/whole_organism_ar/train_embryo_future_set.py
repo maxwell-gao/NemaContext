@@ -79,6 +79,7 @@ def parse_args():
     p.add_argument("--n_layers", type=int, default=4)
     p.add_argument("--head_dim", type=int, default=32)
     p.add_argument("--pairwise_spatial_bias", action="store_true")
+    p.add_argument("--decoder_layers", type=int, default=3)
     p.add_argument("--latent_set_weight", type=float, default=1.0)
     p.add_argument("--gene_set_weight", type=float, default=0.5)
     p.add_argument("--mean_latent_weight", type=float, default=0.25)
@@ -376,6 +377,9 @@ def main():
         future_slots=future_slots,
         d_model=args.d_model if ckpt is None else int(ckpt["config"]["d_model"]),
         gene_dim=args.n_hvg if ckpt is None else int(ckpt["gene_dim"]),
+        n_heads=args.n_heads if ckpt is None else int(ckpt["config"]["n_heads"]),
+        decoder_layers=args.decoder_layers,
+        head_dim=args.head_dim if ckpt is None else int(ckpt["config"]["head_dim"]),
     ).to(args.device)
     if args.freeze_backbone:
         for param in model.backbone.parameters():

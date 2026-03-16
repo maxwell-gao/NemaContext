@@ -211,8 +211,13 @@ Practical note for the next iteration:
 - the next scaling step should keep embryo-scale learning on masked
   multi-view reconstruction with future-view prediction rather than direct
   summary regression or more patch-level contrastive tuning,
-- embryo one-step training should now be treated as latent-first:
+- embryo one-step training should now be treated as a diagnostic branch:
   first learn `Z_t -> Z_{t+dt}`, then attach frozen developmental probes,
+  but do not treat that contract as the main embryo predictive route,
+- the main embryo predictive route should instead move through
+  MAE-style future-part completion:
+  current views plus visible future parts should reconstruct masked future
+  local-view sets before any return to direct global latent transition,
 - do not assume that smaller cosine automatically implies biologically correct
   dynamics; true-future and predicted-future latent probe gaps must remain a
   required diagnostic,
@@ -220,6 +225,8 @@ Practical note for the next iteration:
   not as a replacement for the active state encoder.
 - embryo JEPA should currently be treated as an exploratory geometry-focused
   alternative, not yet as the primary embryo-scale dynamics result.
+- reconstruction-backed MAE future-set completion is currently the strongest
+  embryo-scale predictive contract in the repository.
 
 ## Phase 4: Population Dynamics
 

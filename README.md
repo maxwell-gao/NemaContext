@@ -28,6 +28,10 @@ Current strongest biological result:
 - the strongest embryo-level route is now `masked future views`, where the
   current embryo state is trained to recover masked views from both the
   present and the paired future window.
+- the strongest embryo-scale predictive route is now
+  `reconstruction-backed MAE future-set completion`, where current views plus
+  visible future parts are used to reconstruct masked future local-view sets;
+  this is currently more promising than direct global one-step latent jumps.
 - a minimal embryo JEPA path now exists on the same embryo-view interface; its
   first failure mode was traced to unstable per-batch target whitening in a
   highly concentrated latent space, and the stabilized version now trains
@@ -36,6 +40,11 @@ Current strongest biological result:
   backbone: future embryo latent cosine loss is very low, but jointly trained
   probe heads are still weak, and later diagnostics show that pure cosine
   matching does not preserve the biology-readable future-latent manifold.
+- the embryo-level future-set route now has two forms:
+  - an older slot-MLP predictor,
+  - and a stronger MAE-style decoder that conditions on visible future parts.
+  The MAE-style reconstruction-backed version improves predicted future
+  founder/depth/spatial structure relative to the older future-set baseline.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking have all failed to become
   effective training signals in the current setup.
@@ -133,7 +142,21 @@ uv run python examples/whole_organism_ar/train_embryo_one_step.py \
   --freeze_backbone \
   --epochs 10
 
-# 7b) Train the minimal embryo JEPA objective on the same embryo-view interface
+# 7b) Train the strongest current embryo predictive route:
+# reconstruction-backed MAE future-set completion
+uv run python examples/whole_organism_ar/train_embryo_future_set.py \
+  --backbone_checkpoint checkpoints_embryo_masked_views/best.pt \
+  --context_size 256 \
+  --global_context_size 32 \
+  --dt_minutes 40 \
+  --views_per_embryo 8 \
+  --future_views_per_embryo 8 \
+  --samples_per_pair 16 \
+  --pairwise_spatial_bias \
+  --freeze_backbone \
+  --epochs 10
+
+# 7c) Train the minimal embryo JEPA objective on the same embryo-view interface
 uv run python examples/whole_organism_ar/train_embryo_jepa.py \
   --init_checkpoint checkpoints_embryo_masked_views/best.pt \
   --context_size 256 \

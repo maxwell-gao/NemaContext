@@ -200,6 +200,32 @@ the minimal JEPA route now smoke-trains stably and can be treated as an
 exploratory geometry-focused alternative to the active masked-future
 reconstruction route.
 
+The newest predictive bridge is no longer direct one-step embryo-latent
+prediction, but embryo-scale future-part completion.
+
+In practice this now means:
+
+- keep the masked-future embryo backbone as the state encoder,
+- treat future local views as the parts that need to be completed,
+- use current views plus visible future parts to reconstruct masked future
+  local-view sets,
+- only then aggregate those predicted future parts into larger embryo-level
+  summaries.
+
+This route matters because the repository has now tested three embryo
+predictive contracts:
+
+- direct global one-step latent prediction,
+- slot-style future-set prediction,
+- MAE-style future-part completion with a stronger decoder.
+
+The current empirical ordering is:
+
+- reconstruction-backed MAE future-set completion is best,
+- reconstruction-backed slot future-set prediction is weaker but related,
+- JEPA-backed one-step and JEPA-backed future-set prediction remain useful as
+  representation diagnostics, not yet as the best embryo predictive contract.
+
 ## Interpretation Rule
 
 If a result only shows that a focal anchor can be predicted one step ahead, it

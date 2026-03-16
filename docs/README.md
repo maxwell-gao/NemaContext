@@ -38,6 +38,8 @@ Current active scripts now split into two levels:
   state route via masked view, masked future, and masked gene reconstruction.
 - `train_embryo_masked_views.py`: active embryo-level self-supervised route via
   masked current and masked future local views of the same embryo state.
+- `train_embryo_future_set.py`: strongest current embryo predictive route via
+  reconstruction-backed MAE-style masked future local-view set completion.
 - `train_embryo_one_step.py`: latent-first embryo one-step dynamics baseline on
   top of the best masked-future embryo backbone.
 - `train_embryo_jepa.py`: minimal embryo JEPA objective over visible current
@@ -55,6 +57,10 @@ Current biological milestone:
 - the active embryo-scale representation route is now embryo-level masked
   multi-view modeling with masked future views; this replaced direct embryo
   summary regression as the preferred embryo-state training interface.
+- the active embryo-scale predictive route is now reconstruction-backed
+  MAE-style future-set completion:
+  current context plus visible future parts predict masked future local-view
+  sets more reliably than direct global one-step latent prediction.
 - a minimal embryo JEPA route now exists on the same embryo-view contract; the
   first instability was traced to per-batch target whitening, and the
   stabilized layer-normalized version now trains normally in smoke tests.
@@ -66,6 +72,9 @@ Current biological milestone:
   future-latent manifold.
 - temporal discrimination, hard-negative discrimination, queue-based
   discrimination, and future-retrieval ranking are all currently ineffective.
-- the next architectural step is embryo-scale state aggregation from multiple
-  local views; SAE is currently an analysis-only option on frozen latents, not
-  a main training component.
+- JEPA remains useful as an embedding route, but JEPA-backed future-set and
+  JEPA-backed one-step prediction are still weaker than the reconstruction-led
+  embryo predictive route.
+- the next architectural step is to strengthen MAE-style future-part
+  completion rather than returning to direct global latent jumps; SAE remains
+  an analysis-only option on frozen latents, not a main training component.

@@ -49,6 +49,7 @@ Interpretation:
 - `train_state_views.py`: shared-encoder multi-view local state learning.
 - `train_masked_state_views.py`: strongest current local self-supervised route via masked view, masked future, and masked gene reconstruction.
 - `train_embryo_masked_views.py`: active embryo-level masked multi-view route with masked future views.
+- `train_embryo_future_set.py`: strongest current embryo predictive route via reconstruction-backed MAE-style future local-view set completion.
 - `train_embryo_one_step.py`: latent-first embryo one-step dynamics baseline on top of the best masked-future embryo backbone.
 - `train_embryo_jepa.py`: minimal embryo JEPA training over visible current views and masked future-view embeddings.
 - `train_embryo_state.py`: direct embryo summary regression baseline retained as a scaffold and comparison point.

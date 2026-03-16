@@ -1061,6 +1061,68 @@ At this point it should be read as:
 - but not yet a stronger established result than the active masked-future
   reconstruction route.
 
+## Embryo Future-Set Prediction
+
+The next embryo predictive contract moved away from direct global latent jumps
+and toward future-part prediction.
+
+The key idea is:
+
+- current embryo views are context,
+- future local views are the parts to be predicted,
+- and prediction quality should be judged by whether the resulting future-set
+  representation preserves future developmental structure.
+
+The first version used a simple slot-style set predictor. That route trained
+cleanly, but its predicted future-set mean latents remained only weakly
+biology-readable:
+
+- reconstruction-backed slot future-set:
+  - founder `pred R² ≈ -0.12`
+  - celltype `pred R² ≈ 0.02`
+  - depth `pred R² ≈ -0.15`
+  - spatial `pred R² ≈ -0.99`
+  - split `pred R² ≈ -0.40`
+- JEPA-backed slot future-set was markedly worse.
+
+That result was still useful, because it showed that future local-view sets are
+already a better predictive object than a single future embryo latent.
+
+The stronger follow-up changed the predictor into a more MAE-like completion
+contract:
+
+- current context stays visible,
+- visible future parts are also provided,
+- a stronger decoder reconstructs the masked future local-view set.
+
+This MAE-style reconstruction-backed future-set route is now the strongest
+embryo predictive path in the repository.
+
+Held-out probe readability of the predicted future-set mean latent improved to:
+
+- founder `pred R² ≈ -0.07`
+- celltype `pred R² ≈ -0.04`
+- depth `pred R² ≈ 0.01`
+- spatial `pred R² ≈ -0.21`
+- split `pred R² ≈ -0.27`
+
+Relative to the older reconstruction-backed slot predictor, the main gains are:
+
+- founder: `-0.12 -> -0.07`
+- depth: `-0.15 -> +0.01`
+- spatial: `-0.99 -> -0.21`
+- split: `-0.40 -> -0.27`
+
+The current interpretation is:
+
+- the embryo future is better treated as a structured set of local parts than
+  as a single next-state vector,
+- reconstruction-backed completion is better aligned with the data and the
+  biology than pure current-to-future latent jumps,
+- JEPA remains a strong embryo representation route,
+- but reconstruction remains the stronger predictive bridge for future-part
+  completion.
+
 ## References
 
 1. La Manno G, et al. *RNA velocity of single cells*. Nature (2018).

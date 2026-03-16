@@ -17,7 +17,10 @@ Current interpretation:
   multiple patch views of the same embryo window,
 - the active embryo-scale route is embryo masked multi-view learning with
   masked future views,
-- the next embryo dynamics step is latent-first embryo one-step prediction,
+- the strongest embryo predictive route is now reconstruction-backed
+  MAE-style future-set completion,
+- latent-first embryo one-step prediction remains a diagnostic branch rather
+  than the best predictive contract,
 - a minimal embryo JEPA objective is now available on the same embryo-view
   interface as an alternative future-state prediction contract,
 - downstream rollout scripts remain important, but they are not yet the main
@@ -30,6 +33,7 @@ Recommended current entry points:
 - `train_state_views.py`
 - `train_masked_state_views.py`
 - `train_embryo_masked_views.py`
+- `train_embryo_future_set.py`
 - `train_embryo_one_step.py`
 - `train_embryo_jepa.py`
 - `train_gene_context.py`
