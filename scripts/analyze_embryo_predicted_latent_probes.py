@@ -16,20 +16,19 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from examples.whole_organism_ar.train_embryo_state import stack_view_tensor  # noqa: E402
+from examples.whole_organism_ar.train_embryo_one_step import load_backbone_from_checkpoint  # noqa: E402
 from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
     EVENT_SUBSET_THRESHOLDS,
     resolve_event_filters,
 )
-from src.branching_flows.gene_context import (  # noqa: E402
-    EmbryoMaskedViewModel,
-    EmbryoOneStepLatentModel,
-)
+from src.branching_flows.gene_context import EmbryoOneStepLatentModel  # noqa: E402
 from src.data.gene_context_dataset import EmbryoViewDataset, collate_embryo_view  # noqa: E402
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Probe true vs predicted future embryo latents.")
     p.add_argument("--checkpoint", required=True, help="Embryo one-step checkpoint.")
+    p.add_argument("--space", choices=["raw", "prediction"], default="raw")
     p.add_argument("--split", choices=["val", "all"], default="val")
     p.add_argument("--samples_per_pair_override", type=int, default=16)
     p.add_argument("--event_subset_override", choices=["none", *sorted(EVENT_SUBSET_THRESHOLDS)], default="none")
@@ -117,24 +116,14 @@ def build_dataset(
 def load_model(checkpoint_path: str, device: str):
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     config = ckpt["config"]
-    backbone_ckpt = torch.load(ckpt["backbone_checkpoint"], map_location="cpu")
-    backbone_cfg = backbone_ckpt["config"]
-    backbone = EmbryoMaskedViewModel(
-        gene_dim=backbone_ckpt["gene_dim"],
-        context_size=backbone_cfg["context_size"],
-        model_type=backbone_cfg["model_type"],
-        d_model=backbone_cfg["d_model"],
-        n_heads=backbone_cfg["n_heads"],
-        n_layers=backbone_cfg["n_layers"],
-        head_dim=backbone_cfg["head_dim"],
-        use_pairwise_spatial_bias=backbone_cfg["pairwise_spatial_bias"],
-    )
-    backbone.load_state_dict(backbone_ckpt["model_state_dict"])
+    backbone_ckpt, backbone_cfg, backbone = load_backbone_from_checkpoint(ckpt["backbone_checkpoint"])
     model = EmbryoOneStepLatentModel(
         backbone=backbone,
         celltype_dim=ckpt["celltype_dim"],
         d_model=backbone_cfg["d_model"],
         predict_delta=config.get("predict_delta", False),
+        prediction_space_dim=config.get("prediction_space_dim"),
+        target_ema_decay=config.get("target_ema_decay", 0.99),
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device)
@@ -147,6 +136,7 @@ def collect_latents_and_targets(
     dataset: EmbryoViewDataset,
     batch_size: int,
     device: str,
+    space: str,
 ):
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_embryo_view)
     true_latents = []
@@ -189,8 +179,14 @@ def collect_latents_and_targets(
                 future_context_role=future_context_role,
                 future_relative_position=future_relative_position,
             )
-            true_latents.append(out.target_future_embryo_latent.cpu().numpy())
-            pred_latents.append(out.pred_future_embryo_latent.cpu().numpy())
+            if space == "prediction":
+                if out.target_prediction_space is None or out.pred_prediction_space is None:
+                    raise RuntimeError("Checkpoint/model does not expose prediction-space outputs")
+                true_latents.append(out.target_prediction_space.cpu().numpy())
+                pred_latents.append(out.pred_prediction_space.cpu().numpy())
+            else:
+                true_latents.append(out.target_future_embryo_latent.cpu().numpy())
+                pred_latents.append(out.pred_future_embryo_latent.cpu().numpy())
             targets["founder"].append(batch["future_founder_composition"].cpu().numpy())
             targets["celltype"].append(batch["future_celltype_composition"].cpu().numpy())
             targets["depth"].append(batch["future_lineage_depth_stats"].cpu().numpy())
@@ -233,11 +229,13 @@ def main():
         dataset=eval_ds,
         batch_size=args.batch_size,
         device=args.device,
+        space=args.space,
     )
 
     metrics = {
         "checkpoint": args.checkpoint,
         "backbone_checkpoint": ckpt["backbone_checkpoint"],
+        "space": args.space,
         "split": args.split,
         "n_eval_samples": int(len(eval_true_latent)),
         "targets": {},

@@ -49,7 +49,9 @@ from examples.whole_organism_ar.train_autoregressive_full import EmbryoTrajector
 from examples.whole_organism_ar.train_patch_set import compute_patch_set_metrics  # noqa: E402
 from examples.whole_organism_ar.train_embryo_one_step import (  # noqa: E402
     apply_probe_bank,
+    apply_latent_geometry,
     fit_linear_probe_bank,
+    fit_pca_whitening,
 )
 from examples.whole_organism_ar.train_state_views import (  # noqa: E402
     StateViewModel,
@@ -658,6 +660,108 @@ def test_embryo_future_probe_bank_shapes():
     assert apply_probe_bank(z, probe_bank, "depth").shape == (2, 3)
     assert apply_probe_bank(z, probe_bank, "spatial").shape == (2, 4)
     assert apply_probe_bank(z, probe_bank, "split").shape == (2, 1)
+
+
+def test_pca_whitening_geometry_shapes_and_stability():
+    """PCA whitening should reduce latent dimension while remaining numerically stable."""
+    latents = torch.randn(12, 16)
+    geometry = fit_pca_whitening(latents.numpy(), pca_dim=8, ridge=1e-3)
+    projected = apply_latent_geometry(latents, geometry)
+
+    assert projected.shape == (12, 8)
+    assert not torch.isnan(projected).any()
+    assert torch.isfinite(projected).all()
+
+
+def test_embryo_one_step_learned_prediction_space_and_ema():
+    """One-step model should support learned prediction space with EMA target projector."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = EmbryoViewDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        views_per_embryo=3,
+        future_views_per_embryo=3,
+        top_cell_types=4,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient embryo-view samples")
+
+    batch = collate_embryo_view([dataset[0], dataset[1]])
+    n_views = int(batch["views_per_embryo"][0].item())
+    n_future_views = int(batch["future_views_per_embryo"][0].item())
+    genes = torch.stack([batch[f"view_{i}_genes"] for i in range(n_views)], dim=1)
+    context_role = torch.stack([batch[f"view_{i}_context_role"] for i in range(n_views)], dim=1)
+    relative_position = torch.stack([batch[f"view_{i}_relative_position"] for i in range(n_views)], dim=1)
+    token_times = torch.stack([batch[f"view_{i}_token_times"] for i in range(n_views)], dim=1)
+    valid_mask = torch.stack([batch[f"view_{i}_valid_mask"] for i in range(n_views)], dim=1)
+    anchor_mask = torch.stack([batch[f"view_{i}_anchor_mask"] for i in range(n_views)], dim=1)
+    time = torch.stack([batch[f"view_{i}_time"] for i in range(n_views)], dim=1)
+    future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
+    future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
+    future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
+    future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
+    future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
+    future_time = torch.stack([batch[f"future_view_{i}_time"] for i in range(n_future_views)], dim=1)
+
+    backbone = EmbryoMaskedViewModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    model = EmbryoOneStepLatentModel(
+        backbone=backbone,
+        celltype_dim=4,
+        d_model=64,
+        predict_delta=False,
+        prediction_space_dim=32,
+        target_ema_decay=0.9,
+    )
+    out = model(
+        genes=genes,
+        time=time,
+        token_times=token_times,
+        valid_mask=valid_mask,
+        anchor_mask=anchor_mask,
+        future_genes=future_genes,
+        future_time=future_time,
+        future_token_times=future_token_times,
+        future_valid_mask=future_valid_mask,
+        future_anchor_mask=future_anchor_mask,
+        context_role=context_role,
+        relative_position=relative_position,
+        future_context_role=future_context_role,
+        future_relative_position=future_relative_position,
+    )
+    assert out.current_prediction_space is not None
+    assert out.target_prediction_space is not None
+    assert out.pred_prediction_space is not None
+    assert out.current_prediction_space.shape == (2, 32)
+    assert out.target_prediction_space.shape == (2, 32)
+    assert out.pred_prediction_space.shape == (2, 32)
+
+    target_before = next(model.target_projector.parameters()).detach().clone()
+    online_param = next(model.online_projector.parameters())
+    with torch.no_grad():
+        online_param.add_(0.1)
+    model.update_target_encoder()
+    target_after = next(model.target_projector.parameters()).detach()
+    assert not torch.equal(target_before, target_after)
 
 
 def test_single_cell_model_has_no_cross_token_information_flow():

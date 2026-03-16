@@ -67,9 +67,22 @@ def parse_args():
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--predict_delta", action="store_true", default=True)
     p.add_argument("--no_predict_delta", dest="predict_delta", action="store_false")
+    p.add_argument(
+        "--transition_geometry",
+        choices=["cosine", "pca_whitened_delta", "learned_prediction_space"],
+        default="learned_prediction_space",
+    )
+    p.add_argument("--latent_pca_dim", type=int, default=64)
+    p.add_argument("--latent_whiten_ridge", type=float, default=1e-3)
+    p.add_argument("--prediction_space_dim", type=int, default=128)
+    p.add_argument("--target_ema_decay", type=float, default=0.99)
+    p.add_argument("--prediction_space_weight", type=float, default=1.0)
+    p.add_argument("--prediction_space_var_weight", type=float, default=0.05)
+    p.add_argument("--prediction_space_cov_weight", type=float, default=0.05)
+    p.add_argument("--latent_decode_aux_weight", type=float, default=0.1)
     p.add_argument("--latent_weight", type=float, default=10.0)
     p.add_argument("--probe_weight", type=float, default=0.0)
-    p.add_argument("--semantic_probe_weight", type=float, default=1.0)
+    p.add_argument("--semantic_probe_weight", type=float, default=0.0)
     p.add_argument("--freeze_backbone", action="store_true", default=True)
     p.add_argument("--no_freeze_backbone", dest="freeze_backbone", action="store_false")
     p.add_argument("--checkpoint_dir", default="checkpoints_embryo_one_step")
@@ -127,6 +140,87 @@ def compute_probe_stats(dataset: EmbryoViewDataset) -> dict[str, torch.Tensor]:
 
 def standardize(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
     return (x - mean) / std
+
+
+def fit_pca_whitening(latents: np.ndarray, pca_dim: int, ridge: float) -> dict[str, torch.Tensor]:
+    """Fit a ridge-whitened PCA geometry for latent dynamics."""
+    x = np.asarray(latents, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"Expected 2D latent array, got shape {x.shape}")
+    n_samples, latent_dim = x.shape
+    if n_samples < 2:
+        raise ValueError("Need at least two latent samples to fit PCA whitening")
+
+    mean = x.mean(axis=0, keepdims=False)
+    centered = x - mean
+    cov = (centered.T @ centered) / float(max(1, n_samples - 1))
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    order = np.argsort(eigvals)[::-1]
+    keep = max(1, min(int(pca_dim), latent_dim, n_samples))
+    order = order[:keep]
+    eigvals = np.maximum(eigvals[order], 0.0)
+    components = eigvecs[:, order].astype(np.float32)
+    scales = (1.0 / np.sqrt(eigvals + ridge)).astype(np.float32)
+    return {
+        "mean": torch.from_numpy(mean.astype(np.float32)),
+        "components": torch.from_numpy(components),
+        "scales": torch.from_numpy(scales),
+        "pca_dim": torch.tensor(keep),
+        "ridge": torch.tensor(float(ridge)),
+    }
+
+
+def apply_latent_geometry(
+    latent: torch.Tensor,
+    geometry: dict[str, torch.Tensor] | None,
+) -> torch.Tensor:
+    if geometry is None:
+        return latent
+    mean = geometry["mean"].to(latent.device)
+    components = geometry["components"].to(latent.device)
+    scales = geometry["scales"].to(latent.device)
+    projected = (latent - mean) @ components
+    return projected * scales
+
+
+def variance_loss(x: torch.Tensor, target_std: float = 1.0) -> torch.Tensor:
+    std = x.std(dim=0, unbiased=False)
+    return torch.relu(target_std - std).mean()
+
+
+def covariance_loss(x: torch.Tensor) -> torch.Tensor:
+    if x.shape[0] <= 1:
+        return x.new_zeros(())
+    x = x - x.mean(dim=0, keepdim=True)
+    cov = (x.T @ x) / float(max(1, x.shape[0] - 1))
+    off_diag = cov - torch.diag(torch.diag(cov))
+    return off_diag.pow(2).mean()
+
+
+def load_backbone_from_checkpoint(
+    checkpoint_path: str,
+) -> tuple[dict, dict, EmbryoMaskedViewModel]:
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    cfg = ckpt["config"]
+    backbone = EmbryoMaskedViewModel(
+        gene_dim=ckpt["gene_dim"],
+        context_size=cfg["context_size"],
+        model_type=cfg["model_type"],
+        d_model=cfg["d_model"],
+        n_heads=cfg["n_heads"],
+        n_layers=cfg["n_layers"],
+        head_dim=cfg["head_dim"],
+        use_pairwise_spatial_bias=cfg["pairwise_spatial_bias"],
+    )
+    state_dict = ckpt["model_state_dict"]
+    if any(key.startswith("online_backbone.") for key in state_dict):
+        state_dict = {
+            key.removeprefix("online_backbone."): value
+            for key, value in state_dict.items()
+            if key.startswith("online_backbone.")
+        }
+    backbone.load_state_dict(state_dict)
+    return ckpt, cfg, backbone
 
 
 def fit_linear_probe_bank(
@@ -189,6 +283,73 @@ def fit_linear_probe_bank(
     return probe_bank
 
 
+def fit_dataset_latent_geometry(
+    backbone: EmbryoMaskedViewModel,
+    dataset: EmbryoViewDataset,
+    batch_size: int,
+    device: str,
+    pca_dim: int,
+    ridge: float,
+) -> dict[str, torch.Tensor]:
+    """Fit PCA-whitened geometry from true future embryo latents."""
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_embryo_view)
+    latents = []
+
+    was_training = backbone.training
+    backbone.eval()
+    with torch.no_grad():
+        for batch in loader:
+            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+            n_future_views = int(batch["future_views_per_embryo"][0].item())
+            future_genes = stack_view_tensor(batch, "genes", n_future_views, prefix_template="future_view_{i}_")
+            future_context_role = stack_view_tensor(
+                batch,
+                "context_role",
+                n_future_views,
+                prefix_template="future_view_{i}_",
+            )
+            future_relative_position = stack_view_tensor(
+                batch,
+                "relative_position",
+                n_future_views,
+                prefix_template="future_view_{i}_",
+            )
+            future_token_times = stack_view_tensor(
+                batch,
+                "token_times",
+                n_future_views,
+                prefix_template="future_view_{i}_",
+            )
+            future_valid_mask = stack_view_tensor(
+                batch,
+                "valid_mask",
+                n_future_views,
+                prefix_template="future_view_{i}_",
+            )
+            future_anchor_mask = stack_view_tensor(
+                batch,
+                "anchor_mask",
+                n_future_views,
+                prefix_template="future_view_{i}_",
+            )
+            future_time = stack_view_tensor(batch, "time", n_future_views, prefix_template="future_view_{i}_")
+
+            future_latent, _ = backbone.encode_embryo_latent(
+                genes=future_genes,
+                time=future_time,
+                token_times=future_token_times,
+                valid_mask=future_valid_mask,
+                anchor_mask=future_anchor_mask,
+                context_role=future_context_role,
+                relative_position=future_relative_position,
+            )
+            latents.append(future_latent.cpu().numpy().astype(np.float32))
+    if was_training:
+        backbone.train()
+
+    return fit_pca_whitening(np.concatenate(latents, axis=0), pca_dim=pca_dim, ridge=ridge)
+
+
 def apply_probe_bank(
     latent: torch.Tensor,
     probe_bank: dict[str, dict[str, torch.Tensor]],
@@ -203,11 +364,17 @@ def apply_probe_bank(
 def compute_metrics(
     model: EmbryoOneStepLatentModel,
     batch: dict[str, torch.Tensor],
+    transition_geometry: str,
+    prediction_space_weight: float,
+    prediction_space_var_weight: float,
+    prediction_space_cov_weight: float,
+    latent_decode_aux_weight: float,
     latent_weight: float,
     probe_weight: float,
     semantic_probe_weight: float,
     probe_stats: dict[str, torch.Tensor],
     probe_bank: dict[str, dict[str, torch.Tensor]] | None,
+    latent_geometry: dict[str, torch.Tensor] | None,
 ):
     n_views = int(batch["views_per_embryo"][0].item())
     n_future_views = int(batch["future_views_per_embryo"][0].item())
@@ -242,7 +409,53 @@ def compute_metrics(
         future_context_role=future_context_role,
         future_relative_position=future_relative_position,
     )
-    if out.pred_future_delta is not None and out.target_future_delta is not None and model.predict_delta:
+    latent_mse = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    latent_dir = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    latent_mag = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    prediction_space_mse = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    prediction_space_cos = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    prediction_space_var = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    prediction_space_cov = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    latent_decode_aux = torch.tensor(0.0, device=out.pred_future_embryo_latent.device)
+    if transition_geometry == "pca_whitened_delta":
+        u_current = apply_latent_geometry(out.current_embryo_latent, latent_geometry)
+        u_target = apply_latent_geometry(out.target_future_embryo_latent.detach(), latent_geometry)
+        u_pred = apply_latent_geometry(out.pred_future_embryo_latent, latent_geometry)
+        target_delta = u_target - u_current.detach()
+        pred_delta = u_pred - u_current
+        latent_mse = F.mse_loss(pred_delta, target_delta)
+        latent_dir = (1.0 - F.cosine_similarity(pred_delta, target_delta, dim=-1)).mean()
+        latent_mag = F.mse_loss(
+            torch.linalg.norm(pred_delta, dim=-1),
+            torch.linalg.norm(target_delta, dim=-1),
+        )
+        latent_loss = latent_mse + 0.5 * latent_dir + 0.1 * latent_mag
+    elif transition_geometry == "learned_prediction_space":
+        if out.pred_prediction_space is None or out.target_prediction_space is None:
+            raise RuntimeError("learned_prediction_space requires prediction-space outputs")
+        pred_space = out.pred_prediction_space
+        target_space = out.target_prediction_space.detach()
+        pred_space_ln = F.layer_norm(pred_space, (pred_space.shape[-1],))
+        target_space_ln = F.layer_norm(target_space, (target_space.shape[-1],))
+        prediction_space_mse = F.mse_loss(pred_space_ln, target_space_ln)
+        prediction_space_cos = (1.0 - F.cosine_similarity(pred_space, target_space, dim=-1)).mean()
+        prediction_space_var = variance_loss(pred_space)
+        prediction_space_cov = covariance_loss(pred_space)
+        latent_decode_aux = (
+            1.0
+            - F.cosine_similarity(
+                out.pred_future_embryo_latent,
+                out.target_future_embryo_latent.detach(),
+                dim=-1,
+            )
+        ).mean()
+        latent_loss = (
+            prediction_space_weight * (prediction_space_mse + 0.5 * prediction_space_cos)
+            + prediction_space_var_weight * prediction_space_var
+            + prediction_space_cov_weight * prediction_space_cov
+            + latent_decode_aux_weight * latent_decode_aux
+        )
+    elif out.pred_future_delta is not None and out.target_future_delta is not None and model.predict_delta:
         latent_loss = (
             1.0 - F.cosine_similarity(out.pred_future_delta, out.target_future_delta.detach(), dim=-1)
         ).mean()
@@ -323,6 +536,14 @@ def compute_metrics(
     metrics = {
         "total": total.item(),
         "latent": latent_loss.item(),
+        "latent_mse": latent_mse.item(),
+        "latent_dir": latent_dir.item(),
+        "latent_mag": latent_mag.item(),
+        "space_mse": prediction_space_mse.item(),
+        "space_cos": prediction_space_cos.item(),
+        "space_var": prediction_space_var.item(),
+        "space_cov": prediction_space_cov.item(),
+        "latent_decode_aux": latent_decode_aux.item(),
         "founder": founder_loss.item(),
         "celltype": celltype_loss.item(),
         "depth": depth_loss.item(),
@@ -347,11 +568,17 @@ def run_epoch(
     loader,
     optimizer,
     device: str,
+    transition_geometry: str,
+    prediction_space_weight: float,
+    prediction_space_var_weight: float,
+    prediction_space_cov_weight: float,
+    latent_decode_aux_weight: float,
     latent_weight: float,
     probe_weight: float,
     semantic_probe_weight: float,
     probe_stats: dict[str, torch.Tensor],
     probe_bank: dict[str, dict[str, torch.Tensor]] | None,
+    latent_geometry: dict[str, torch.Tensor] | None,
 ):
     train = optimizer is not None
     model.train(train)
@@ -362,17 +589,24 @@ def run_epoch(
         loss, metrics = compute_metrics(
             model,
             batch,
+            transition_geometry,
+            prediction_space_weight,
+            prediction_space_var_weight,
+            prediction_space_cov_weight,
+            latent_decode_aux_weight,
             latent_weight,
             probe_weight,
             semantic_probe_weight,
             probe_stats,
             probe_bank,
+            latent_geometry,
         )
         if train:
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            model.update_target_encoder()
         for key, value in metrics.items():
             totals[key] = totals.get(key, 0.0) + value
         n_batches += 1
@@ -431,24 +665,18 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_embryo_view)
     probe_stats = compute_probe_stats(train_ds)
 
-    ckpt = torch.load(args.backbone_checkpoint, map_location="cpu")
-    cfg = ckpt["config"]
-    backbone = EmbryoMaskedViewModel(
-        gene_dim=ckpt["gene_dim"],
-        context_size=cfg["context_size"],
-        model_type=cfg["model_type"],
-        d_model=cfg["d_model"],
-        n_heads=cfg["n_heads"],
-        n_layers=cfg["n_layers"],
-        head_dim=cfg["head_dim"],
-        use_pairwise_spatial_bias=cfg["pairwise_spatial_bias"],
-    )
-    backbone.load_state_dict(ckpt["model_state_dict"])
+    ckpt, cfg, backbone = load_backbone_from_checkpoint(args.backbone_checkpoint)
     model = EmbryoOneStepLatentModel(
         backbone=backbone,
         celltype_dim=len(train_ds._top_cell_type_vocab),
         d_model=cfg["d_model"],
         predict_delta=args.predict_delta,
+        prediction_space_dim=(
+            args.prediction_space_dim
+            if args.transition_geometry == "learned_prediction_space"
+            else None
+        ),
+        target_ema_decay=args.target_ema_decay,
     ).to(args.device)
     if args.freeze_backbone:
         for p in model.backbone.parameters():
@@ -461,6 +689,16 @@ def main():
         batch_size=args.batch_size,
         device=args.device,
     )
+    latent_geometry = None
+    if args.transition_geometry == "pca_whitened_delta":
+        latent_geometry = fit_dataset_latent_geometry(
+            backbone=model.backbone,
+            dataset=train_ds,
+            batch_size=args.batch_size,
+            device=args.device,
+            pca_dim=args.latent_pca_dim,
+            ridge=args.latent_whiten_ridge,
+        )
 
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
     checkpoint_dir = Path(args.checkpoint_dir)
@@ -473,27 +711,43 @@ def main():
             train_loader,
             optimizer,
             args.device,
+            args.transition_geometry,
+            args.prediction_space_weight,
+            args.prediction_space_var_weight,
+            args.prediction_space_cov_weight,
+            args.latent_decode_aux_weight,
             args.latent_weight,
             args.probe_weight,
             args.semantic_probe_weight,
             probe_stats,
             probe_bank,
+            latent_geometry,
         )
         val_metrics = run_epoch(
             model,
             val_loader,
             None,
             args.device,
+            args.transition_geometry,
+            args.prediction_space_weight,
+            args.prediction_space_var_weight,
+            args.prediction_space_cov_weight,
+            args.latent_decode_aux_weight,
             args.latent_weight,
             args.probe_weight,
             args.semantic_probe_weight,
             probe_stats,
             probe_bank,
+            latent_geometry,
         )
         history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} val_latent={val_metrics['latent']:.4f} "
+            f"val_latent_mse={val_metrics['latent_mse']:.4f} "
+            f"val_latent_dir={val_metrics['latent_dir']:.4f} "
+            f"val_space_mse={val_metrics['space_mse']:.4f} "
+            f"val_space_cos={val_metrics['space_cos']:.4f} "
             f"val_sem_founder={val_metrics['semantic_founder']:.4f} "
             f"val_sem_celltype={val_metrics['semantic_celltype']:.4f} "
             f"val_founder_r2={val_metrics['founder_r2']:.4f} val_celltype_r2={val_metrics['celltype_r2']:.4f} "
@@ -515,6 +769,14 @@ def main():
                         key: {"weight": value["weight"].cpu(), "bias": value["bias"].cpu()}
                         for key, value in probe_bank.items()
                     },
+                    "latent_geometry": (
+                        {
+                            key: value.cpu()
+                            for key, value in latent_geometry.items()
+                        }
+                        if latent_geometry is not None
+                        else None
+                    ),
                     "backbone_checkpoint": args.backbone_checkpoint,
                 },
                 checkpoint_dir / "best.pt",

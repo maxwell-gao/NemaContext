@@ -17,6 +17,7 @@ sys.path.insert(0, str(project_root))
 
 from examples.whole_organism_ar.train_embryo_one_step import (  # noqa: E402
     compute_probe_stats,
+    load_backbone_from_checkpoint,
     r2_score_torch,
 )
 from examples.whole_organism_ar.train_embryo_state import stack_view_tensor  # noqa: E402
@@ -24,10 +25,7 @@ from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
     EVENT_SUBSET_THRESHOLDS,
     resolve_event_filters,
 )
-from src.branching_flows.gene_context import (  # noqa: E402
-    EmbryoMaskedViewModel,
-    EmbryoOneStepLatentModel,
-)
+from src.branching_flows.gene_context import EmbryoOneStepLatentModel  # noqa: E402
 from src.data.gene_context_dataset import EmbryoViewDataset, collate_embryo_view  # noqa: E402
 
 
@@ -118,24 +116,14 @@ def main():
         **filters,
     )
 
-    backbone_ckpt = torch.load(ckpt["backbone_checkpoint"], map_location="cpu")
-    backbone_cfg = backbone_ckpt["config"]
-    backbone = EmbryoMaskedViewModel(
-        gene_dim=backbone_ckpt["gene_dim"],
-        context_size=backbone_cfg["context_size"],
-        model_type=backbone_cfg["model_type"],
-        d_model=backbone_cfg["d_model"],
-        n_heads=backbone_cfg["n_heads"],
-        n_layers=backbone_cfg["n_layers"],
-        head_dim=backbone_cfg["head_dim"],
-        use_pairwise_spatial_bias=backbone_cfg["pairwise_spatial_bias"],
-    )
-    backbone.load_state_dict(backbone_ckpt["model_state_dict"])
+    backbone_ckpt, backbone_cfg, backbone = load_backbone_from_checkpoint(ckpt["backbone_checkpoint"])
     model = EmbryoOneStepLatentModel(
         backbone=backbone,
         celltype_dim=ckpt["celltype_dim"],
         d_model=backbone_cfg["d_model"],
         predict_delta=config.get("predict_delta", False),
+        prediction_space_dim=config.get("prediction_space_dim"),
+        target_ema_decay=config.get("target_ema_decay", 0.99),
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(args.device)

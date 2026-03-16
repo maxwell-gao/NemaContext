@@ -69,6 +69,9 @@ class EmbryoOneStepOutput:
     pred_future_embryo_latent: torch.Tensor
     target_future_delta: torch.Tensor | None
     pred_future_delta: torch.Tensor | None
+    current_prediction_space: torch.Tensor | None
+    target_prediction_space: torch.Tensor | None
+    pred_prediction_space: torch.Tensor | None
     future_founder_composition: torch.Tensor
     future_celltype_composition: torch.Tensor
     future_lineage_depth_stats: torch.Tensor
@@ -1027,21 +1030,63 @@ class EmbryoOneStepLatentModel(nn.Module):
         celltype_dim: int,
         d_model: int = 256,
         predict_delta: bool = False,
+        prediction_space_dim: int | None = None,
+        target_ema_decay: float = 0.99,
     ):
         super().__init__()
         self.backbone = backbone
         self.predict_delta = predict_delta
-        self.predictor = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
-        )
+        self.prediction_space_dim = prediction_space_dim
+        self.target_ema_decay = target_ema_decay
+        self.use_prediction_space = prediction_space_dim is not None
+        if self.use_prediction_space:
+            self.online_projector = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, prediction_space_dim),
+            )
+            self.target_projector = copy.deepcopy(self.online_projector)
+            for param in self.target_projector.parameters():
+                param.requires_grad_(False)
+            self.predictor = nn.Sequential(
+                nn.Linear(prediction_space_dim, prediction_space_dim),
+                nn.LayerNorm(prediction_space_dim),
+                nn.GELU(),
+                nn.Linear(prediction_space_dim, prediction_space_dim),
+            )
+            self.transition_decoder = nn.Sequential(
+                nn.Linear(prediction_space_dim, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            self.target_projector.eval()
+        else:
+            self.predictor = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
         self.future_founder_head = nn.Linear(d_model, 8)
         self.future_celltype_head = nn.Linear(d_model, celltype_dim)
         self.future_depth_head = nn.Linear(d_model, 3)
         self.future_spatial_head = nn.Linear(d_model, 4)
         self.future_split_head = nn.Linear(d_model, 1)
+
+    @torch.no_grad()
+    def update_target_encoder(self):
+        if not self.use_prediction_space:
+            return
+        for target_param, online_param in zip(
+            self.target_projector.parameters(),
+            self.online_projector.parameters(),
+            strict=True,
+        ):
+            target_param.data.mul_(self.target_ema_decay).add_(
+                online_param.data, alpha=1.0 - self.target_ema_decay
+            )
 
     def forward(
         self,
@@ -1079,17 +1124,31 @@ class EmbryoOneStepLatentModel(nn.Module):
             relative_position=future_relative_position,
         )
         target_future_delta = target_future_embryo_latent - current_embryo_latent
-        pred_future_delta = self.predictor(current_embryo_latent)
-        if self.predict_delta:
-            pred_future_embryo_latent = current_embryo_latent + pred_future_delta
+        current_prediction_space = None
+        target_prediction_space = None
+        pred_prediction_space = None
+        if self.use_prediction_space:
+            current_prediction_space = self.online_projector(current_embryo_latent)
+            with torch.no_grad():
+                target_prediction_space = self.target_projector(target_future_embryo_latent)
+            pred_prediction_space = self.predictor(current_prediction_space)
+            pred_future_delta = None
+            pred_future_embryo_latent = self.transition_decoder(pred_prediction_space)
         else:
-            pred_future_embryo_latent = pred_future_delta
+            pred_future_delta = self.predictor(current_embryo_latent)
+            if self.predict_delta:
+                pred_future_embryo_latent = current_embryo_latent + pred_future_delta
+            else:
+                pred_future_embryo_latent = pred_future_delta
         return EmbryoOneStepOutput(
             current_embryo_latent=current_embryo_latent,
             target_future_embryo_latent=target_future_embryo_latent,
             pred_future_embryo_latent=pred_future_embryo_latent,
             target_future_delta=target_future_delta,
             pred_future_delta=pred_future_delta,
+            current_prediction_space=current_prediction_space,
+            target_prediction_space=target_prediction_space,
+            pred_prediction_space=pred_prediction_space,
             future_founder_composition=self.future_founder_head(pred_future_embryo_latent),
             future_celltype_composition=self.future_celltype_head(pred_future_embryo_latent),
             future_lineage_depth_stats=self.future_depth_head(pred_future_embryo_latent),
