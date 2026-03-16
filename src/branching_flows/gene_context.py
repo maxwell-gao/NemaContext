@@ -88,6 +88,18 @@ class EmbryoJEPAOutput:
     masked_future_view_mask: torch.Tensor
 
 
+@dataclass
+class EmbryoFutureSetOutput:
+    context_embryo_latent: torch.Tensor
+    future_local_latents: torch.Tensor
+    pred_future_set_latents: torch.Tensor
+    pred_future_set_genes: torch.Tensor
+    target_future_set_latents: torch.Tensor
+    target_future_set_genes: torch.Tensor
+    masked_view_mask: torch.Tensor
+    masked_future_view_mask: torch.Tensor
+
+
 class GeneContextModel(nn.Module):
     """Time-conditioned multi-cell transformer over gene states."""
 
@@ -1253,6 +1265,123 @@ class EmbryoJEPAModel(nn.Module):
             context_embryo_latent=context_embryo_latent,
             target_masked_future_latent=target_masked_future_latent,
             pred_masked_future_latent=pred_masked_future_latent,
+            masked_view_mask=masked_view_mask,
+            masked_future_view_mask=masked_future_view_mask,
+        )
+
+
+class EmbryoFutureSetModel(nn.Module):
+    """Predict a masked set of future local-view latents from current embryo context."""
+
+    def __init__(
+        self,
+        backbone: EmbryoMaskedViewModel,
+        future_slots: int,
+        d_model: int = 256,
+        gene_dim: int | None = None,
+    ):
+        super().__init__()
+        if future_slots < 1:
+            raise ValueError("future_slots must be >= 1")
+        self.backbone = backbone
+        self.future_slots = future_slots
+        self.slot_queries = nn.Parameter(torch.randn(future_slots, d_model) * 0.02)
+        self.slot_predictor = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.slot_gene_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, gene_dim or backbone.local_model.gene_dim),
+        )
+
+    @staticmethod
+    def gather_masked_future_targets(
+        future_local_latents: torch.Tensor,
+        future_genes: torch.Tensor,
+        future_valid_mask: torch.Tensor,
+        masked_future_view_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        target_latents = []
+        target_genes = []
+        for i in range(future_local_latents.shape[0]):
+            masked_idx = torch.nonzero(masked_future_view_mask[i], as_tuple=False).squeeze(-1)
+            if masked_idx.numel() == 0:
+                raise ValueError("Each sample must mask at least one future view")
+            target_latents.append(future_local_latents[i, masked_idx])
+            masked_valid = future_valid_mask[i, masked_idx]
+            masked_genes = future_genes[i, masked_idx]
+            mean_genes = (
+                (masked_genes * masked_valid.unsqueeze(-1).float()).sum(dim=1)
+                / masked_valid.sum(dim=1, keepdim=True).clamp_min(1.0)
+            )
+            target_genes.append(mean_genes)
+        return torch.stack(target_latents, dim=0), torch.stack(target_genes, dim=0)
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        future_genes: torch.Tensor,
+        future_time: torch.Tensor,
+        future_token_times: torch.Tensor,
+        future_valid_mask: torch.Tensor,
+        future_anchor_mask: torch.Tensor,
+        masked_future_view_mask: torch.Tensor,
+        masked_view_mask: torch.Tensor | None = None,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+        future_context_role: torch.Tensor | None = None,
+        future_relative_position: torch.Tensor | None = None,
+    ) -> EmbryoFutureSetOutput:
+        if masked_view_mask is None:
+            masked_view_mask = torch.zeros(
+                genes.shape[:2],
+                dtype=torch.bool,
+                device=genes.device,
+            )
+        visible_mask = ~masked_view_mask
+        context_embryo_latent, _ = self.backbone.encode_embryo_latent(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+            visible_mask=visible_mask,
+        )
+        future_local_latents = self.backbone.encode_local_views(
+            genes=future_genes,
+            time=future_time,
+            token_times=future_token_times,
+            valid_mask=future_valid_mask,
+            anchor_mask=future_anchor_mask,
+            context_role=future_context_role,
+            relative_position=future_relative_position,
+        )
+        target_future_set_latents, target_future_set_genes = self.gather_masked_future_targets(
+            future_local_latents,
+            future_genes,
+            future_valid_mask,
+            masked_future_view_mask,
+        )
+        slot_input = context_embryo_latent.unsqueeze(1) + self.slot_queries.unsqueeze(0)
+        pred_future_set_latents = self.slot_predictor(slot_input)
+        pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
+        return EmbryoFutureSetOutput(
+            context_embryo_latent=context_embryo_latent,
+            future_local_latents=future_local_latents,
+            pred_future_set_latents=pred_future_set_latents,
+            pred_future_set_genes=pred_future_set_genes,
+            target_future_set_latents=target_future_set_latents,
+            target_future_set_genes=target_future_set_genes,
             masked_view_mask=masked_view_mask,
             masked_future_view_mask=masked_future_view_mask,
         )

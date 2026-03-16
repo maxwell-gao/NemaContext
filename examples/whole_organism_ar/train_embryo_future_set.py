@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""Train embryo-level masked future local-view set prediction."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from examples.whole_organism_ar.train_embryo_state import stack_view_tensor  # noqa: E402
+from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
+    EVENT_SUBSET_THRESHOLDS,
+    resolve_event_filters,
+)
+from src.branching_flows.emergent_loss import sinkhorn_divergence  # noqa: E402
+from src.branching_flows.gene_context import (  # noqa: E402
+    EmbryoFutureSetModel,
+    EmbryoMaskedViewModel,
+)
+from src.data.gene_context_dataset import EmbryoViewDataset, collate_embryo_view  # noqa: E402
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Train embryo masked future local-view set prediction.")
+    p.add_argument("--model_type", choices=["multi_cell", "single_cell"], default="multi_cell")
+    p.add_argument("--backbone_checkpoint", default=None)
+    p.add_argument("--freeze_backbone", action="store_true", default=True)
+    p.add_argument("--no_freeze_backbone", dest="freeze_backbone", action="store_false")
+    p.add_argument("--h5ad_path", default="dataset/processed/nema_extended_large2025.h5ad")
+    p.add_argument("--n_hvg", type=int, default=256)
+    p.add_argument("--context_size", type=int, default=256)
+    p.add_argument("--global_context_size", type=int, default=32)
+    p.add_argument("--dt_minutes", type=float, default=40.0)
+    p.add_argument("--time_window_minutes", type=float, default=10.0)
+    p.add_argument("--samples_per_pair", type=int, default=16)
+    p.add_argument("--val_samples_per_pair", type=int, default=None)
+    p.add_argument("--views_per_embryo", type=int, default=8)
+    p.add_argument("--future_views_per_embryo", type=int, default=8)
+    p.add_argument("--top_cell_types", type=int, default=8)
+    p.add_argument("--context_mask_ratio", type=float, default=0.0)
+    p.add_argument("--future_mask_ratio", type=float, default=0.25)
+    p.add_argument("--min_cells_per_window", type=int, default=32)
+    p.add_argument("--val_fraction", type=float, default=0.2)
+    p.add_argument(
+        "--sampling_strategy",
+        choices=["random_window", "spatial_neighbors", "spatial_anchor"],
+        default="spatial_anchor",
+    )
+    p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
+    p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
+    p.add_argument("--event_subset", choices=sorted(EVENT_SUBSET_THRESHOLDS), default="none")
+    p.add_argument("--min_event_positive", type=int, default=0)
+    p.add_argument("--min_anchor_event_positive", type=int, default=0)
+    p.add_argument("--min_split_positive", type=int, default=0)
+    p.add_argument("--min_del_positive", type=int, default=0)
+    p.add_argument("--min_anchor_split_positive", type=int, default=0)
+    p.add_argument("--min_anchor_del_positive", type=int, default=0)
+    p.add_argument("--val_event_subset", choices=sorted(EVENT_SUBSET_THRESHOLDS), default="none")
+    p.add_argument("--val_min_event_positive", type=int, default=None)
+    p.add_argument("--val_min_anchor_event_positive", type=int, default=None)
+    p.add_argument("--val_min_split_positive", type=int, default=None)
+    p.add_argument("--val_min_del_positive", type=int, default=None)
+    p.add_argument("--val_min_anchor_split_positive", type=int, default=None)
+    p.add_argument("--val_min_anchor_del_positive", type=int, default=None)
+    p.add_argument("--delete_target_mode", choices=["weak", "strict"], default="strict")
+    p.add_argument("--batch_size", type=int, default=8)
+    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--d_model", type=int, default=256)
+    p.add_argument("--n_heads", type=int, default=8)
+    p.add_argument("--n_layers", type=int, default=4)
+    p.add_argument("--head_dim", type=int, default=32)
+    p.add_argument("--pairwise_spatial_bias", action="store_true")
+    p.add_argument("--latent_set_weight", type=float, default=1.0)
+    p.add_argument("--gene_set_weight", type=float, default=0.5)
+    p.add_argument("--mean_latent_weight", type=float, default=0.25)
+    p.add_argument("--sinkhorn_blur", type=float, default=0.05)
+    p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
+    p.add_argument("--checkpoint_dir", default="checkpoints_embryo_future_set")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    return p.parse_args()
+
+
+def build_mask(
+    batch_size: int,
+    n_views: int,
+    mask_ratio: float,
+    device: torch.device,
+    allow_empty: bool = False,
+) -> torch.Tensor:
+    if n_views < 1:
+        raise ValueError("n_views must be >= 1")
+    if allow_empty and mask_ratio <= 0.0:
+        return torch.zeros(batch_size, n_views, dtype=torch.bool, device=device)
+    min_mask = 0 if allow_empty else 1
+    max_mask = max(0, n_views - 1) if allow_empty else max(1, n_views - 1)
+    n_mask = int(round(mask_ratio * n_views))
+    n_mask = max(min_mask, min(max_mask, n_mask))
+    if not allow_empty and n_mask == 0:
+        n_mask = 1
+    mask = torch.zeros(batch_size, n_views, dtype=torch.bool, device=device)
+    for i in range(batch_size):
+        perm = torch.randperm(n_views, device=device)
+        if n_mask > 0:
+            mask[i, perm[:n_mask]] = True
+    return mask
+
+
+def load_backbone(args) -> tuple[EmbryoMaskedViewModel, dict | None]:
+    if args.backbone_checkpoint is None:
+        backbone = EmbryoMaskedViewModel(
+            gene_dim=args.n_hvg,
+            context_size=args.context_size,
+            model_type=args.model_type,
+            d_model=args.d_model,
+            n_heads=args.n_heads,
+            n_layers=args.n_layers,
+            head_dim=args.head_dim,
+            use_pairwise_spatial_bias=args.pairwise_spatial_bias,
+        )
+        return backbone, None
+
+    ckpt = torch.load(args.backbone_checkpoint, map_location="cpu")
+    cfg = ckpt["config"]
+    backbone = EmbryoMaskedViewModel(
+        gene_dim=ckpt["gene_dim"],
+        context_size=cfg["context_size"],
+        model_type=cfg["model_type"],
+        d_model=cfg["d_model"],
+        n_heads=cfg["n_heads"],
+        n_layers=cfg["n_layers"],
+        head_dim=cfg["head_dim"],
+        use_pairwise_spatial_bias=cfg["pairwise_spatial_bias"],
+    )
+    state_dict = ckpt["model_state_dict"]
+    if any(key.startswith("online_backbone.") for key in state_dict):
+        state_dict = {
+            key.removeprefix("online_backbone."): value
+            for key, value in state_dict.items()
+            if key.startswith("online_backbone.")
+        }
+    backbone.load_state_dict(state_dict)
+    return backbone, ckpt
+
+
+def compute_metrics(
+    model: EmbryoFutureSetModel,
+    batch: dict[str, torch.Tensor],
+    context_mask_ratio: float,
+    future_mask_ratio: float,
+    latent_set_weight: float,
+    gene_set_weight: float,
+    mean_latent_weight: float,
+    sinkhorn_blur: float,
+    gene_sinkhorn_blur: float,
+):
+    n_views = int(batch["views_per_embryo"][0].item())
+    genes = stack_view_tensor(batch, "genes", n_views)
+    context_role = stack_view_tensor(batch, "context_role", n_views)
+    relative_position = stack_view_tensor(batch, "relative_position", n_views)
+    token_times = stack_view_tensor(batch, "token_times", n_views)
+    valid_mask = stack_view_tensor(batch, "valid_mask", n_views)
+    anchor_mask = stack_view_tensor(batch, "anchor_mask", n_views)
+    time = stack_view_tensor(batch, "time", n_views)
+
+    n_future_views = int(batch["future_views_per_embryo"][0].item())
+    future_genes = stack_view_tensor(batch, "genes", n_future_views, prefix_template="future_view_{i}_")
+    future_context_role = stack_view_tensor(
+        batch,
+        "context_role",
+        n_future_views,
+        prefix_template="future_view_{i}_",
+    )
+    future_relative_position = stack_view_tensor(
+        batch,
+        "relative_position",
+        n_future_views,
+        prefix_template="future_view_{i}_",
+    )
+    future_token_times = stack_view_tensor(batch, "token_times", n_future_views, prefix_template="future_view_{i}_")
+    future_valid_mask = stack_view_tensor(batch, "valid_mask", n_future_views, prefix_template="future_view_{i}_")
+    future_anchor_mask = stack_view_tensor(batch, "anchor_mask", n_future_views, prefix_template="future_view_{i}_")
+    future_time = stack_view_tensor(batch, "time", n_future_views, prefix_template="future_view_{i}_")
+
+    masked_view_mask = build_mask(
+        genes.shape[0],
+        n_views,
+        context_mask_ratio,
+        genes.device,
+        allow_empty=True,
+    )
+    masked_future_view_mask = build_mask(
+        genes.shape[0],
+        n_future_views,
+        future_mask_ratio,
+        genes.device,
+        allow_empty=False,
+    )
+    future_slots = int(masked_future_view_mask[0].sum().item())
+    if future_slots != model.future_slots:
+        raise ValueError(
+            f"Mask ratio produced {future_slots} future slots, but model expects {model.future_slots}"
+        )
+
+    out = model(
+        genes=genes,
+        time=time,
+        token_times=token_times,
+        valid_mask=valid_mask,
+        anchor_mask=anchor_mask,
+        future_genes=future_genes,
+        future_time=future_time,
+        future_token_times=future_token_times,
+        future_valid_mask=future_valid_mask,
+        future_anchor_mask=future_anchor_mask,
+        masked_future_view_mask=masked_future_view_mask,
+        masked_view_mask=masked_view_mask,
+        context_role=context_role,
+        relative_position=relative_position,
+        future_context_role=future_context_role,
+        future_relative_position=future_relative_position,
+    )
+
+    latent_set_loss = sinkhorn_divergence(
+        out.pred_future_set_latents,
+        out.target_future_set_latents.detach(),
+        blur=sinkhorn_blur,
+    )
+    gene_set_loss = sinkhorn_divergence(
+        out.pred_future_set_genes,
+        out.target_future_set_genes.detach(),
+        blur=gene_sinkhorn_blur,
+    )
+    mean_latent_loss = (
+        1.0
+        - F.cosine_similarity(
+            out.pred_future_set_latents.mean(dim=1),
+            out.target_future_set_latents.detach().mean(dim=1),
+            dim=-1,
+        )
+    ).mean()
+    total = (
+        latent_set_weight * latent_set_loss
+        + gene_set_weight * gene_set_loss
+        + mean_latent_weight * mean_latent_loss
+    )
+    return total, {
+        "total": total.item(),
+        "latent_set": latent_set_loss.item(),
+        "gene_set": gene_set_loss.item(),
+        "mean_latent": mean_latent_loss.item(),
+    }
+
+
+def run_epoch(
+    model: EmbryoFutureSetModel,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer | None,
+    device: str,
+    context_mask_ratio: float,
+    future_mask_ratio: float,
+    latent_set_weight: float,
+    gene_set_weight: float,
+    mean_latent_weight: float,
+    sinkhorn_blur: float,
+    gene_sinkhorn_blur: float,
+):
+    train = optimizer is not None
+    model.train(train)
+    totals: dict[str, float] = {}
+    n_batches = 0
+    for batch in loader:
+        batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+        loss, metrics = compute_metrics(
+            model,
+            batch,
+            context_mask_ratio,
+            future_mask_ratio,
+            latent_set_weight,
+            gene_set_weight,
+            mean_latent_weight,
+            sinkhorn_blur,
+            gene_sinkhorn_blur,
+        )
+        if train:
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+        for key, value in metrics.items():
+            totals[key] = totals.get(key, 0.0) + value
+        n_batches += 1
+    return {key: value / max(1, n_batches) for key, value in totals.items()}
+
+
+def main():
+    args = parse_args()
+    torch.manual_seed(args.seed)
+    train_filters = resolve_event_filters(args)
+    val_filters = resolve_event_filters(args, prefix="val_")
+
+    train_ds = EmbryoViewDataset(
+        h5ad_path=args.h5ad_path,
+        n_hvg=args.n_hvg,
+        context_size=args.context_size,
+        global_context_size=args.global_context_size,
+        dt_minutes=args.dt_minutes,
+        time_window_minutes=args.time_window_minutes,
+        samples_per_pair=args.samples_per_pair,
+        min_cells_per_window=args.min_cells_per_window,
+        split="train",
+        val_fraction=args.val_fraction,
+        random_seed=args.seed,
+        sampling_strategy=args.sampling_strategy,
+        min_spatial_cells_per_window=args.min_spatial_cells_per_window,
+        spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
+        delete_target_mode=args.delete_target_mode,
+        views_per_embryo=args.views_per_embryo,
+        future_views_per_embryo=args.future_views_per_embryo,
+        top_cell_types=args.top_cell_types,
+        **train_filters,
+    )
+    val_ds = EmbryoViewDataset(
+        h5ad_path=args.h5ad_path,
+        n_hvg=args.n_hvg,
+        context_size=args.context_size,
+        global_context_size=args.global_context_size,
+        dt_minutes=args.dt_minutes,
+        time_window_minutes=args.time_window_minutes,
+        samples_per_pair=args.val_samples_per_pair or max(1, args.samples_per_pair // 2),
+        min_cells_per_window=args.min_cells_per_window,
+        split="val",
+        val_fraction=args.val_fraction,
+        random_seed=args.seed,
+        sampling_strategy=args.sampling_strategy,
+        min_spatial_cells_per_window=args.min_spatial_cells_per_window,
+        spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
+        delete_target_mode=args.delete_target_mode,
+        views_per_embryo=args.views_per_embryo,
+        future_views_per_embryo=args.future_views_per_embryo,
+        top_cell_types=args.top_cell_types,
+        **val_filters,
+    )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_embryo_view,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_embryo_view,
+    )
+
+    backbone, ckpt = load_backbone(args)
+    future_slots = max(
+        1,
+        min(
+            train_ds.future_views_per_embryo - 1,
+            int(round(args.future_mask_ratio * train_ds.future_views_per_embryo)),
+        ),
+    )
+    model = EmbryoFutureSetModel(
+        backbone=backbone,
+        future_slots=future_slots,
+        d_model=args.d_model if ckpt is None else int(ckpt["config"]["d_model"]),
+        gene_dim=args.n_hvg if ckpt is None else int(ckpt["gene_dim"]),
+    ).to(args.device)
+    if args.freeze_backbone:
+        for param in model.backbone.parameters():
+            param.requires_grad_(False)
+
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
+    checkpoint_dir = Path(args.checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    history = []
+    best_val = float("inf")
+    for epoch in range(1, args.epochs + 1):
+        train_metrics = run_epoch(
+            model,
+            train_loader,
+            optimizer,
+            args.device,
+            args.context_mask_ratio,
+            args.future_mask_ratio,
+            args.latent_set_weight,
+            args.gene_set_weight,
+            args.mean_latent_weight,
+            args.sinkhorn_blur,
+            args.gene_sinkhorn_blur,
+        )
+        val_metrics = run_epoch(
+            model,
+            val_loader,
+            None,
+            args.device,
+            args.context_mask_ratio,
+            args.future_mask_ratio,
+            args.latent_set_weight,
+            args.gene_set_weight,
+            args.mean_latent_weight,
+            args.sinkhorn_blur,
+            args.gene_sinkhorn_blur,
+        )
+        history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
+        print(
+            f"epoch={epoch} train_total={train_metrics['total']:.4f} "
+            f"val_total={val_metrics['total']:.4f} val_latent_set={val_metrics['latent_set']:.4f} "
+            f"val_gene_set={val_metrics['gene_set']:.4f} val_mean_latent={val_metrics['mean_latent']:.4f}"
+        )
+        if val_metrics["total"] < best_val:
+            best_val = val_metrics["total"]
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "config": vars(args),
+                    "gene_dim": args.n_hvg if ckpt is None else ckpt["gene_dim"],
+                    "backbone_checkpoint": args.backbone_checkpoint,
+                    "future_slots": future_slots,
+                },
+                checkpoint_dir / "best.pt",
+            )
+
+    with open(checkpoint_dir / "history.json", "w") as f:
+        json.dump(history, f, indent=2)
+
+
+if __name__ == "__main__":
+    main()
