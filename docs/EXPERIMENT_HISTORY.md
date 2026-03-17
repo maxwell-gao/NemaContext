@@ -1368,6 +1368,39 @@ Interpretation:
 - JEPA remains strongest as an embryo representation route, but not yet as the
   best predictive bridge to future developmental structure.
 
+### Reconstruction-Backed MAE Future-Set With Current Local Tokens
+
+We then tried to increase data utilization further by exposing the decoder to
+all visible current local-view latents rather than only a pooled current
+embryo token.
+
+What happened:
+
+- training losses improved relative to the earlier reconstruction-backed MAE
+  future-set baseline:
+  - `val_total ~0.757 -> ~0.720`
+  - `latent_set 0.210 -> 0.170`
+  - `gene_set 1.193 -> 1.158`
+- held-out predicted future-set mean-latent readability improved on some
+  slower/global probe families:
+  - founder `-0.07 -> +0.06`
+  - depth `+0.01 -> +0.35`
+- but it degraded on more future-local probe families:
+  - celltype `-0.04 -> -0.37`
+  - spatial `-0.21 -> -1.83`
+  - split `-0.27 -> -1.41`
+
+Interpretation:
+
+- this confirms that the current bottleneck is not simply "the model does not
+  see enough current data,"
+- current local detail can help with slower developmental structure,
+- but naively flattening current local tokens into the same decoder stream can
+  swamp the visible future information that is more directly useful for future
+  cell-type, spatial, and proliferative structure,
+- so the next scientific step should be selective current-state conditioning,
+  not indiscriminate scaling or more generic decoder depth.
+
 ## What This History Does Not Claim
 
 This experiment history does **not** show that we have already learned a full

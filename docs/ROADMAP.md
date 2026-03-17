@@ -228,6 +228,40 @@ Practical note for the next iteration:
 - reconstruction-backed MAE future-set completion is currently the strongest
   embryo-scale predictive contract in the repository.
 
+Current status should now be read in three layers:
+
+- Layer 1: biologically meaningful representation learning is established.
+  Embryo and patch latents are already strongly aligned with developmental
+  time and future developmental structure.
+- Layer 2: biologically meaningful prediction is partially established but not
+  finished. Reconstruction-backed MAE future-set prediction is the first
+  embryo-scale predictive route that is consistently near the right regime,
+  but held-out predicted future structure is still uneven across probe
+  families.
+- Layer 3: mechanistic or perturbation-level biology is not yet available and
+  should not be claimed without stronger data.
+
+What the newest embryo future-set result changes:
+
+- simply exposing all current local-view tokens to the decoder improves
+  founder and lineage-depth prediction,
+- but it degrades cell-type, spatial, and split prediction,
+- so the remaining bottleneck is no longer "use more data" in the abstract;
+  it is "use current-state detail selectively rather than letting it swamp
+  visible future information."
+
+This means Phase 4 should now be advanced by minimal, falsifiable predictive
+experiments rather than by broad architecture search or simple scaling.
+The next improvement to target is:
+
+- keep reconstruction-backed MAE future-set as the main contract,
+- keep future visible parts as the primary predictive context,
+- treat current local views as controlled memory rather than flat peer tokens,
+- prefer gated or cross-attentive current conditioning over more backbone
+  scaling,
+- judge progress by whether held-out predicted future-set probe families move
+  positive together rather than by a single aggregate loss.
+
 ## Phase 4: Population Dynamics
 
 Objective: turn the validated local-state encoder into a repeated population
@@ -264,6 +298,12 @@ Definition of done:
 - the next embryo-dynamics work should improve latent geometry or target
   metrics rather than re-introducing more probe co-training or more temporal
   discrimination variants.
+- the bridge from Layer 1 to Layer 2 should proceed through structured
+  future-part completion, not through single-vector future-state jumps.
+- the first clear Layer 2 success condition is that the predicted future-set
+  latent becomes broadly biology-readable on held-out founder, cell-type,
+  depth, spatial, and split probes rather than improving only one or two
+  families at a time.
 
 ## Phase 5: Whole-Embryo Rollout
 

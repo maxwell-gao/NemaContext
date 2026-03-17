@@ -1282,15 +1282,25 @@ class EmbryoFutureSetModel(nn.Module):
         n_heads: int = 4,
         decoder_layers: int = 3,
         head_dim: int = 32,
+        use_current_local_tokens: bool = False,
     ):
         super().__init__()
         if future_slots < 1:
             raise ValueError("future_slots must be >= 1")
         self.backbone = backbone
         self.future_slots = future_slots
+        self.use_current_local_tokens = use_current_local_tokens
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.slot_queries = nn.Parameter(torch.randn(future_slots, d_model) * 0.02)
-        self.token_type = nn.Embedding(3, d_model)
+        n_token_types = 4 if use_current_local_tokens else 3
+        self.token_type = nn.Embedding(n_token_types, d_model)
+        if use_current_local_tokens:
+            self.current_view_proj = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
         self.visible_future_proj = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.LayerNorm(d_model),
@@ -1369,7 +1379,7 @@ class EmbryoFutureSetModel(nn.Module):
                 device=genes.device,
             )
         visible_mask = ~masked_view_mask
-        context_embryo_latent, _ = self.backbone.encode_embryo_latent(
+        context_embryo_latent, current_local_latents = self.backbone.encode_embryo_latent(
             genes=genes,
             time=time,
             token_times=token_times,
@@ -1396,23 +1406,29 @@ class EmbryoFutureSetModel(nn.Module):
         )
         visible_future_mask = ~masked_future_view_mask
         current_token = context_embryo_latent.unsqueeze(1) + self.token_type.weight[0].view(1, 1, -1)
+        current_local_tokens = None
+        if self.use_current_local_tokens:
+            current_local_tokens = self.current_view_proj(current_local_latents)
+            current_local_tokens = current_local_tokens + self.token_type.weight[1].view(1, 1, -1)
+            current_local_tokens = current_local_tokens * visible_mask.unsqueeze(-1).float()
         visible_future_tokens = self.visible_future_proj(future_local_latents)
-        visible_future_tokens = visible_future_tokens + self.token_type.weight[1].view(1, 1, -1)
+        future_type_idx = 2 if self.use_current_local_tokens else 1
+        visible_future_tokens = visible_future_tokens + self.token_type.weight[future_type_idx].view(1, 1, -1)
         visible_future_tokens = visible_future_tokens * visible_future_mask.unsqueeze(-1).float()
         masked_slot_tokens = self.mask_token + self.slot_queries.unsqueeze(0)
-        masked_slot_tokens = masked_slot_tokens + self.token_type.weight[2].view(1, 1, -1)
-        decoder_tokens = torch.cat(
-            [current_token, visible_future_tokens, masked_slot_tokens.expand(genes.shape[0], -1, -1)],
-            dim=1,
-        )
-        decoder_mask = torch.cat(
-            [
-                torch.ones(genes.shape[0], 1, dtype=torch.bool, device=genes.device),
-                visible_future_mask,
-                torch.ones(genes.shape[0], self.future_slots, dtype=torch.bool, device=genes.device),
-            ],
-            dim=1,
-        )
+        slot_type_idx = 3 if self.use_current_local_tokens else 2
+        masked_slot_tokens = masked_slot_tokens + self.token_type.weight[slot_type_idx].view(1, 1, -1)
+        token_parts = [current_token]
+        mask_parts = [torch.ones(genes.shape[0], 1, dtype=torch.bool, device=genes.device)]
+        if current_local_tokens is not None:
+            token_parts.append(current_local_tokens)
+            mask_parts.append(visible_mask)
+        token_parts.append(visible_future_tokens)
+        mask_parts.append(visible_future_mask)
+        token_parts.append(masked_slot_tokens.expand(genes.shape[0], -1, -1))
+        mask_parts.append(torch.ones(genes.shape[0], self.future_slots, dtype=torch.bool, device=genes.device))
+        decoder_tokens = torch.cat(token_parts, dim=1)
+        decoder_mask = torch.cat(mask_parts, dim=1)
         for block in self.decoder_blocks:
             decoder_tokens = block(decoder_tokens, decoder_mask)
         decoder_tokens = self.decoder_norm(decoder_tokens)

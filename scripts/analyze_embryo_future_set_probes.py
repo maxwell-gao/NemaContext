@@ -132,6 +132,10 @@ def load_model(checkpoint_path: str, device: str):
         future_slots=int(ckpt["future_slots"]),
         d_model=int(config["d_model"] if backbone_ckpt is None else backbone_ckpt["config"]["d_model"]),
         gene_dim=int(ckpt["gene_dim"]),
+        n_heads=int(config.get("n_heads", backbone_ckpt["config"]["n_heads"] if backbone_ckpt is not None else 4)),
+        decoder_layers=int(config.get("decoder_layers", 3)),
+        head_dim=int(config.get("head_dim", backbone_ckpt["config"]["head_dim"] if backbone_ckpt is not None else 32)),
+        use_current_local_tokens=bool(config.get("use_current_local_tokens", False)),
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device)
