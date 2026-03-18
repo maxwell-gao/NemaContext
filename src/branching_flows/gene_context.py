@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass
 
 import torch
@@ -94,10 +95,26 @@ class EmbryoFutureSetOutput:
     future_local_latents: torch.Tensor
     pred_future_set_latents: torch.Tensor
     pred_future_set_genes: torch.Tensor
+    pred_future_cell_tokens: torch.Tensor | None
     target_future_set_latents: torch.Tensor
     target_future_set_genes: torch.Tensor
+    target_future_cell_tokens: torch.Tensor | None
     masked_view_mask: torch.Tensor
     masked_future_view_mask: torch.Tensor
+    current_local_token_gate: torch.Tensor | None
+
+
+@dataclass
+class LocalCellCodeOutput:
+    patch_latent: torch.Tensor
+    local_code_tokens: torch.Tensor
+    pred_cell_genes: torch.Tensor
+    pred_cell_positions: torch.Tensor
+    pred_cell_valid_logits: torch.Tensor
+    pred_cell_spatial_logits: torch.Tensor
+    pred_cell_count: torch.Tensor
+    pred_mean_gene: torch.Tensor
+    pred_patch_latent: torch.Tensor
 
 
 class GeneContextModel(nn.Module):
@@ -578,6 +595,194 @@ class SingleCellPatchSetModel(nn.Module):
             pred_patch_size=pred_patch_size,
             pred_mean_gene=pred_mean_gene,
             patch_latent=patch_latent,
+        )
+
+
+class LocalCellCodeModel(nn.Module):
+    """Local patch autoencoder with a compact cell-code bottleneck.
+
+    The target is a structured local cell state, not just genes: predicted cell
+    tokens decode gene expression, relative positions, and local cardinality.
+    """
+
+    def __init__(
+        self,
+        gene_dim: int,
+        context_size: int,
+        model_type: str = "multi_cell",
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 4,
+        head_dim: int = 32,
+        use_pairwise_spatial_bias: bool = True,
+        code_tokens: int = 8,
+    ):
+        super().__init__()
+        if code_tokens < 1:
+            raise ValueError("code_tokens must be >= 1")
+        if model_type == "single_cell":
+            self.patch_model = SingleCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_layers=n_layers,
+            )
+        else:
+            self.patch_model = MultiCellPatchSetModel(
+                gene_dim=gene_dim,
+                context_size=context_size,
+                d_model=d_model,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                head_dim=head_dim,
+                use_pairwise_spatial_bias=use_pairwise_spatial_bias,
+            )
+        self.gene_dim = gene_dim
+        self.context_size = context_size
+        self.code_tokens = code_tokens
+        attn_heads = max(1, min(n_heads, 4))
+        self.code_queries = nn.Parameter(torch.randn(code_tokens, d_model) * 0.02)
+        self.code_from_patch = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.code_query_norm = nn.LayerNorm(d_model)
+        self.code_memory_norm = nn.LayerNorm(d_model)
+        self.code_attn = nn.MultiheadAttention(d_model, attn_heads, batch_first=True)
+        self.code_ff = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        self.cell_queries = nn.Parameter(torch.randn(context_size, d_model) * 0.02)
+        self.cell_from_code = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.cell_query_norm = nn.LayerNorm(d_model)
+        self.cell_memory_norm = nn.LayerNorm(d_model)
+        self.cell_attn = nn.MultiheadAttention(d_model, attn_heads, batch_first=True)
+        self.cell_ff = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        self.cell_gene_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, gene_dim),
+        )
+        self.cell_position_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 3),
+        )
+        self.cell_valid_head = nn.Linear(d_model, 1)
+        self.cell_spatial_head = nn.Linear(d_model, 1)
+        self.mean_gene_head = nn.Linear(d_model, gene_dim)
+        self.patch_latent_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.count_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+        )
+        self._init_heads()
+
+    def _init_heads(self):
+        if self.cell_valid_head.bias is not None:
+            nn.init.constant_(self.cell_valid_head.bias, 2.0)
+        if self.cell_spatial_head.bias is not None:
+            nn.init.constant_(self.cell_spatial_head.bias, 1.0)
+        count_out = self.count_head[-1]
+        if isinstance(count_out, nn.Linear) and count_out.bias is not None:
+            nn.init.constant_(count_out.bias, 2.0)
+
+    def encode_patch(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.patch_model.encode_patch(
+            genes=genes,
+            time=time,
+            future_time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        anchor_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> LocalCellCodeOutput:
+        patch_latent, token_states = self.encode_patch(
+            genes=genes,
+            time=time,
+            token_times=token_times,
+            valid_mask=valid_mask,
+            anchor_mask=anchor_mask,
+            context_role=context_role,
+            relative_position=relative_position,
+        )
+
+        code_queries = self.code_queries.unsqueeze(0) + self.code_from_patch(patch_latent).unsqueeze(1)
+        code_updates, _ = self.code_attn(
+            query=self.code_query_norm(code_queries),
+            key=self.code_memory_norm(token_states),
+            value=token_states,
+            key_padding_mask=~valid_mask,
+            need_weights=False,
+        )
+        local_code_tokens = code_queries + code_updates
+        local_code_tokens = local_code_tokens + self.code_ff(local_code_tokens)
+
+        pooled_code = local_code_tokens.mean(dim=1)
+        cell_queries = self.cell_queries.unsqueeze(0) + self.cell_from_code(pooled_code).unsqueeze(1)
+        cell_updates, _ = self.cell_attn(
+            query=self.cell_query_norm(cell_queries),
+            key=self.cell_memory_norm(local_code_tokens),
+            value=local_code_tokens,
+            need_weights=False,
+        )
+        decoded_cells = cell_queries + cell_updates
+        decoded_cells = decoded_cells + self.cell_ff(decoded_cells)
+
+        return LocalCellCodeOutput(
+            patch_latent=patch_latent,
+            local_code_tokens=local_code_tokens,
+            pred_cell_genes=self.cell_gene_head(decoded_cells),
+            pred_cell_positions=self.cell_position_head(decoded_cells),
+            pred_cell_valid_logits=self.cell_valid_head(decoded_cells).squeeze(-1),
+            pred_cell_spatial_logits=self.cell_spatial_head(decoded_cells).squeeze(-1),
+            pred_cell_count=self.count_head(pooled_code).squeeze(-1),
+            pred_mean_gene=self.mean_gene_head(pooled_code),
+            pred_patch_latent=self.patch_latent_head(pooled_code),
         )
 
 
@@ -1283,24 +1488,62 @@ class EmbryoFutureSetModel(nn.Module):
         decoder_layers: int = 3,
         head_dim: int = 32,
         use_current_local_tokens: bool = False,
+        learn_current_token_gate: bool = True,
+        current_token_gate_init: float = 0.5,
+        current_conditioning_mode: str = "flat_tokens",
+        predict_future_cell_tokens: bool = False,
+        cell_tokens_per_view: int | None = None,
     ):
         super().__init__()
         if future_slots < 1:
             raise ValueError("future_slots must be >= 1")
+        if current_conditioning_mode not in {"flat_tokens", "cross_attention_memory"}:
+            raise ValueError("current_conditioning_mode must be 'flat_tokens' or 'cross_attention_memory'")
         self.backbone = backbone
         self.future_slots = future_slots
         self.use_current_local_tokens = use_current_local_tokens
+        self.learn_current_token_gate = learn_current_token_gate
+        self.current_conditioning_mode = current_conditioning_mode
+        self.predict_future_cell_tokens = predict_future_cell_tokens
+        self.cell_tokens_per_view = (
+            int(cell_tokens_per_view)
+            if cell_tokens_per_view is not None
+            else int(backbone.local_model.context_size)
+        )
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.slot_queries = nn.Parameter(torch.randn(future_slots, d_model) * 0.02)
         n_token_types = 4 if use_current_local_tokens else 3
         self.token_type = nn.Embedding(n_token_types, d_model)
         if use_current_local_tokens:
+            gate_init = min(max(float(current_token_gate_init), 1e-4), 1.0 - 1e-4)
             self.current_view_proj = nn.Sequential(
                 nn.Linear(d_model, d_model),
                 nn.LayerNorm(d_model),
                 nn.GELU(),
                 nn.Linear(d_model, d_model),
             )
+            if current_conditioning_mode == "cross_attention_memory":
+                self.current_memory_attn = nn.MultiheadAttention(
+                    d_model,
+                    num_heads=max(1, min(n_heads, 4)),
+                    batch_first=True,
+                )
+                self.current_memory_query_norm = nn.LayerNorm(d_model)
+                self.current_memory_key_norm = nn.LayerNorm(d_model)
+                self.current_memory_ff = nn.Sequential(
+                    nn.Linear(d_model, d_model),
+                    nn.LayerNorm(d_model),
+                    nn.GELU(),
+                    nn.Linear(d_model, d_model),
+                )
+            if learn_current_token_gate:
+                self.current_token_gate_logit = nn.Parameter(
+                    torch.tensor(math.log(gate_init / (1.0 - gate_init)), dtype=torch.float32)
+                )
+                self.register_buffer("current_token_gate_value", torch.tensor(gate_init, dtype=torch.float32))
+            else:
+                self.current_token_gate_logit = None
+                self.register_buffer("current_token_gate_value", torch.tensor(gate_init, dtype=torch.float32))
         self.visible_future_proj = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.LayerNorm(d_model),
@@ -1329,6 +1572,15 @@ class EmbryoFutureSetModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, gene_dim or backbone.local_model.gene_dim),
         )
+        if predict_future_cell_tokens:
+            self.slot_cell_gene_head = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, self.cell_tokens_per_view * (gene_dim or backbone.local_model.gene_dim)),
+            )
+        else:
+            self.slot_cell_gene_head = None
 
     @staticmethod
     def gather_masked_future_targets(
@@ -1352,6 +1604,30 @@ class EmbryoFutureSetModel(nn.Module):
             )
             target_genes.append(mean_genes)
         return torch.stack(target_latents, dim=0), torch.stack(target_genes, dim=0)
+
+    @staticmethod
+    def gather_masked_future_cell_targets(
+        future_genes: torch.Tensor,
+        future_valid_mask: torch.Tensor,
+        masked_future_view_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        target_cells = []
+        for i in range(future_genes.shape[0]):
+            masked_idx = torch.nonzero(masked_future_view_mask[i], as_tuple=False).squeeze(-1)
+            if masked_idx.numel() == 0:
+                raise ValueError("Each sample must mask at least one future view")
+            masked_genes = future_genes[i, masked_idx]
+            masked_valid = future_valid_mask[i, masked_idx]
+            masked_genes = masked_genes * masked_valid.unsqueeze(-1).float()
+            target_cells.append(masked_genes.reshape(-1, masked_genes.shape[-1]))
+        return torch.stack(target_cells, dim=0)
+
+    def get_current_local_token_gate(self) -> torch.Tensor | None:
+        if not self.use_current_local_tokens:
+            return None
+        if self.learn_current_token_gate and self.current_token_gate_logit is not None:
+            return torch.sigmoid(self.current_token_gate_logit)
+        return self.current_token_gate_value
 
     def forward(
         self,
@@ -1407,9 +1683,11 @@ class EmbryoFutureSetModel(nn.Module):
         visible_future_mask = ~masked_future_view_mask
         current_token = context_embryo_latent.unsqueeze(1) + self.token_type.weight[0].view(1, 1, -1)
         current_local_tokens = None
+        current_local_token_gate = None
         if self.use_current_local_tokens:
             current_local_tokens = self.current_view_proj(current_local_latents)
             current_local_tokens = current_local_tokens + self.token_type.weight[1].view(1, 1, -1)
+            current_local_token_gate = self.get_current_local_token_gate()
             current_local_tokens = current_local_tokens * visible_mask.unsqueeze(-1).float()
         visible_future_tokens = self.visible_future_proj(future_local_latents)
         future_type_idx = 2 if self.use_current_local_tokens else 1
@@ -1420,7 +1698,8 @@ class EmbryoFutureSetModel(nn.Module):
         masked_slot_tokens = masked_slot_tokens + self.token_type.weight[slot_type_idx].view(1, 1, -1)
         token_parts = [current_token]
         mask_parts = [torch.ones(genes.shape[0], 1, dtype=torch.bool, device=genes.device)]
-        if current_local_tokens is not None:
+        if current_local_tokens is not None and self.current_conditioning_mode == "flat_tokens":
+            current_local_tokens = current_local_tokens * current_local_token_gate.view(1, 1, 1)
             token_parts.append(current_local_tokens)
             mask_parts.append(visible_mask)
         token_parts.append(visible_future_tokens)
@@ -1432,15 +1711,44 @@ class EmbryoFutureSetModel(nn.Module):
         for block in self.decoder_blocks:
             decoder_tokens = block(decoder_tokens, decoder_mask)
         decoder_tokens = self.decoder_norm(decoder_tokens)
-        pred_future_set_latents = self.slot_predictor(decoder_tokens[:, -self.future_slots :])
+        pred_slot_tokens = decoder_tokens[:, -self.future_slots :]
+        if current_local_tokens is not None and self.current_conditioning_mode == "cross_attention_memory":
+            current_memory = self.current_memory_key_norm(current_local_tokens)
+            slot_queries = self.current_memory_query_norm(pred_slot_tokens)
+            memory_out, _ = self.current_memory_attn(
+                query=slot_queries,
+                key=current_memory,
+                value=current_memory,
+                key_padding_mask=~visible_mask,
+                need_weights=False,
+            )
+            pred_slot_tokens = pred_slot_tokens + current_local_token_gate.view(1, 1, 1) * memory_out
+            pred_slot_tokens = pred_slot_tokens + self.current_memory_ff(pred_slot_tokens)
+        pred_future_set_latents = self.slot_predictor(pred_slot_tokens)
         pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
+        pred_future_cell_tokens = None
+        target_future_cell_tokens = None
+        if self.predict_future_cell_tokens and self.slot_cell_gene_head is not None:
+            pred_future_cell_tokens = self.slot_cell_gene_head(pred_future_set_latents).view(
+                genes.shape[0],
+                self.future_slots * self.cell_tokens_per_view,
+                pred_future_set_genes.shape[-1],
+            )
+            target_future_cell_tokens = self.gather_masked_future_cell_targets(
+                future_genes,
+                future_valid_mask,
+                masked_future_view_mask,
+            )
         return EmbryoFutureSetOutput(
             context_embryo_latent=context_embryo_latent,
             future_local_latents=future_local_latents,
             pred_future_set_latents=pred_future_set_latents,
             pred_future_set_genes=pred_future_set_genes,
+            pred_future_cell_tokens=pred_future_cell_tokens,
             target_future_set_latents=target_future_set_latents,
             target_future_set_genes=target_future_set_genes,
+            target_future_cell_tokens=target_future_cell_tokens,
             masked_view_mask=masked_view_mask,
             masked_future_view_mask=masked_future_view_mask,
+            current_local_token_gate=current_local_token_gate,
         )

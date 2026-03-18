@@ -82,11 +82,23 @@ def parse_args():
     p.add_argument("--decoder_layers", type=int, default=3)
     p.add_argument("--use_current_local_tokens", action="store_true", default=True)
     p.add_argument("--no_use_current_local_tokens", dest="use_current_local_tokens", action="store_false")
+    p.add_argument(
+        "--current_conditioning_mode",
+        choices=["flat_tokens", "cross_attention_memory"],
+        default="flat_tokens",
+    )
+    p.add_argument("--learn_current_token_gate", action="store_true", default=True)
+    p.add_argument("--no_learn_current_token_gate", dest="learn_current_token_gate", action="store_false")
+    p.add_argument("--current_token_gate_init", type=float, default=0.5)
     p.add_argument("--latent_set_weight", type=float, default=1.0)
     p.add_argument("--gene_set_weight", type=float, default=0.5)
     p.add_argument("--mean_latent_weight", type=float, default=0.25)
+    p.add_argument("--cell_token_weight", type=float, default=0.0)
+    p.add_argument("--predict_future_cell_tokens", action="store_true", default=False)
+    p.add_argument("--cell_tokens_per_view", type=int, default=None)
     p.add_argument("--sinkhorn_blur", type=float, default=0.05)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
+    p.add_argument("--cell_token_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--checkpoint_dir", default="checkpoints_embryo_future_set")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -163,8 +175,10 @@ def compute_metrics(
     latent_set_weight: float,
     gene_set_weight: float,
     mean_latent_weight: float,
+    cell_token_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
+    cell_token_sinkhorn_blur: float,
 ):
     n_views = int(batch["views_per_embryo"][0].item())
     genes = stack_view_tensor(batch, "genes", n_views)
@@ -251,16 +265,26 @@ def compute_metrics(
             dim=-1,
         )
     ).mean()
+    if out.pred_future_cell_tokens is not None and out.target_future_cell_tokens is not None:
+        cell_token_loss = sinkhorn_divergence(
+            out.pred_future_cell_tokens,
+            out.target_future_cell_tokens.detach(),
+            blur=cell_token_sinkhorn_blur,
+        )
+    else:
+        cell_token_loss = torch.tensor(0.0, device=genes.device)
     total = (
         latent_set_weight * latent_set_loss
         + gene_set_weight * gene_set_loss
         + mean_latent_weight * mean_latent_loss
+        + cell_token_weight * cell_token_loss
     )
     return total, {
         "total": total.item(),
         "latent_set": latent_set_loss.item(),
         "gene_set": gene_set_loss.item(),
         "mean_latent": mean_latent_loss.item(),
+        "cell_tokens": cell_token_loss.item(),
     }
 
 
@@ -274,8 +298,10 @@ def run_epoch(
     latent_set_weight: float,
     gene_set_weight: float,
     mean_latent_weight: float,
+    cell_token_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
+    cell_token_sinkhorn_blur: float,
 ):
     train = optimizer is not None
     model.train(train)
@@ -291,8 +317,10 @@ def run_epoch(
             latent_set_weight,
             gene_set_weight,
             mean_latent_weight,
+            cell_token_weight,
             sinkhorn_blur,
             gene_sinkhorn_blur,
+            cell_token_sinkhorn_blur,
         )
         if train:
             optimizer.zero_grad()
@@ -383,6 +411,11 @@ def main():
         decoder_layers=args.decoder_layers,
         head_dim=args.head_dim if ckpt is None else int(ckpt["config"]["head_dim"]),
         use_current_local_tokens=args.use_current_local_tokens,
+        learn_current_token_gate=args.learn_current_token_gate,
+        current_token_gate_init=args.current_token_gate_init,
+        current_conditioning_mode=args.current_conditioning_mode,
+        predict_future_cell_tokens=args.predict_future_cell_tokens,
+        cell_tokens_per_view=args.cell_tokens_per_view,
     ).to(args.device)
     if args.freeze_backbone:
         for param in model.backbone.parameters():
@@ -405,8 +438,10 @@ def main():
             args.latent_set_weight,
             args.gene_set_weight,
             args.mean_latent_weight,
+            args.cell_token_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
+            args.cell_token_sinkhorn_blur,
         )
         val_metrics = run_epoch(
             model,
@@ -418,14 +453,17 @@ def main():
             args.latent_set_weight,
             args.gene_set_weight,
             args.mean_latent_weight,
+            args.cell_token_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
+            args.cell_token_sinkhorn_blur,
         )
         history.append({"epoch": epoch, "train": train_metrics, "val": val_metrics})
         print(
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} val_latent_set={val_metrics['latent_set']:.4f} "
-            f"val_gene_set={val_metrics['gene_set']:.4f} val_mean_latent={val_metrics['mean_latent']:.4f}"
+            f"val_gene_set={val_metrics['gene_set']:.4f} val_mean_latent={val_metrics['mean_latent']:.4f} "
+            f"val_cell_tokens={val_metrics['cell_tokens']:.4f}"
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
