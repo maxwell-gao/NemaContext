@@ -286,6 +286,7 @@ def test_embryo_future_set_model_forward():
     future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
     future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
     future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_split_fraction = torch.stack([batch[f"future_view_{i}_split_fraction"] for i in range(n_future_views)], dim=1)
     future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
     future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
     future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
@@ -332,6 +333,7 @@ def test_embryo_future_set_model_forward():
         future_valid_mask=future_valid_mask,
         future_anchor_mask=future_anchor_mask,
         masked_future_view_mask=masked_future_view_mask,
+        future_split_fraction=future_split_fraction,
         masked_view_mask=masked_view_mask,
         context_role=context_role,
         relative_position=relative_position,
@@ -342,9 +344,13 @@ def test_embryo_future_set_model_forward():
     assert out.future_local_latents.shape == (2, n_future_views, 64)
     assert out.pred_future_set_latents.shape == (2, 1, 64)
     assert out.pred_future_set_genes.shape == (2, 1, dataset.gene_dim)
+    assert out.pred_future_split_logits.shape == (2, 1)
+    assert out.pred_future_count_logits.shape == (2, 1)
     assert out.pred_future_local_codes.shape == (2, 1, 4, 64)
     assert out.target_future_set_latents.shape == (2, 1, 64)
     assert out.target_future_set_genes.shape == (2, 1, dataset.gene_dim)
+    assert out.target_future_split_fraction.shape == (2, 1)
+    assert out.target_future_count_ratio.shape == (2, 1)
     assert out.target_future_local_codes.shape == (2, 1, 4, 64)
     decoded = model.decode_future_local_codes(out.pred_future_local_codes)
     assert decoded.pred_cell_genes.shape == (2, 1, 8, dataset.gene_dim)
@@ -389,6 +395,7 @@ def test_embryo_future_set_model_backward_compatible_without_current_local_token
     future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
     future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
     future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_split_fraction = torch.stack([batch[f"future_view_{i}_split_fraction"] for i in range(n_future_views)], dim=1)
     future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
     future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
     future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
@@ -431,6 +438,7 @@ def test_embryo_future_set_model_backward_compatible_without_current_local_token
         future_valid_mask=future_valid_mask,
         future_anchor_mask=future_anchor_mask,
         masked_future_view_mask=masked_future_view_mask,
+        future_split_fraction=future_split_fraction,
         masked_view_mask=masked_view_mask,
         context_role=context_role,
         relative_position=relative_position,
@@ -477,6 +485,7 @@ def test_embryo_future_set_model_flat_current_tokens_still_supported():
     future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
     future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
     future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_split_fraction = torch.stack([batch[f"future_view_{i}_split_fraction"] for i in range(n_future_views)], dim=1)
     future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
     future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
     future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
@@ -520,6 +529,7 @@ def test_embryo_future_set_model_flat_current_tokens_still_supported():
         future_valid_mask=future_valid_mask,
         future_anchor_mask=future_anchor_mask,
         masked_future_view_mask=masked_future_view_mask,
+        future_split_fraction=future_split_fraction,
         masked_view_mask=masked_view_mask,
         context_role=context_role,
         relative_position=relative_position,

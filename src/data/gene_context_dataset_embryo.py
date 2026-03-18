@@ -128,6 +128,10 @@ class EmbryoViewDataset(PatchSetDataset):
             output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
             output[f"{prefix}_time"] = view["time"]
             output[f"{prefix}_indices"] = torch.from_numpy(indices.astype(np.int64))
+            output[f"{prefix}_split_fraction"] = torch.tensor(
+                self._compute_split_fraction(self.lineages[indices]),
+                dtype=torch.float32,
+            )
         for view_idx, (indices, view) in enumerate(future_views):
             prefix = f"future_view_{view_idx}"
             output[f"{prefix}_genes"] = view["genes"]
@@ -138,6 +142,10 @@ class EmbryoViewDataset(PatchSetDataset):
             output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
             output[f"{prefix}_time"] = view["time"]
             output[f"{prefix}_indices"] = torch.from_numpy(indices.astype(np.int64))
+            output[f"{prefix}_split_fraction"] = torch.tensor(
+                self._compute_split_fraction(self.lineages[indices]),
+                dtype=torch.float32,
+            )
 
         output["views_per_embryo"] = torch.tensor(self.views_per_embryo, dtype=torch.long)
         output["future_views_per_embryo"] = torch.tensor(self.future_views_per_embryo, dtype=torch.long)
@@ -198,6 +206,7 @@ def collate_embryo_view(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch
         output[f"{prefix}_valid_mask"] = collated["current_valid_mask"]
         output[f"{prefix}_anchor_mask"] = collated["current_anchor_mask"]
         output[f"{prefix}_time"] = collated["current_time"]
+        output[f"{prefix}_split_fraction"] = collated["future_split_fraction"]
 
     output["views_per_embryo"] = torch.stack([item["views_per_embryo"] for item in batch])
     output["future_views_per_embryo"] = torch.stack([item["future_views_per_embryo"] for item in batch])

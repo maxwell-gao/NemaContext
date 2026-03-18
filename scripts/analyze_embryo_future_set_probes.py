@@ -193,6 +193,12 @@ def collect_latents_and_targets(
             n_future_views,
             prefix_template="future_view_{i}_",
         )
+        future_split_fraction = stack_view_tensor(
+            batch,
+            "split_fraction",
+            n_future_views,
+            prefix_template="future_view_{i}_",
+        )
         future_token_times = stack_view_tensor(batch, "token_times", n_future_views, prefix_template="future_view_{i}_")
         future_valid_mask = stack_view_tensor(batch, "valid_mask", n_future_views, prefix_template="future_view_{i}_")
         future_anchor_mask = stack_view_tensor(batch, "anchor_mask", n_future_views, prefix_template="future_view_{i}_")
@@ -227,6 +233,7 @@ def collect_latents_and_targets(
                 future_valid_mask=future_valid_mask,
                 future_anchor_mask=future_anchor_mask,
                 masked_future_view_mask=masked_future_view_mask,
+                future_split_fraction=future_split_fraction,
                 masked_view_mask=masked_view_mask,
                 context_role=context_role,
                 relative_position=relative_position,

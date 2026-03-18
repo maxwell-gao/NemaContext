@@ -65,9 +65,13 @@ class EmbryoFutureSetOutput:
     future_local_latents: torch.Tensor
     pred_future_set_latents: torch.Tensor
     pred_future_set_genes: torch.Tensor
+    pred_future_split_logits: torch.Tensor
+    pred_future_count_logits: torch.Tensor
     pred_future_local_codes: torch.Tensor
     target_future_set_latents: torch.Tensor
     target_future_set_genes: torch.Tensor
+    target_future_split_fraction: torch.Tensor
+    target_future_count_ratio: torch.Tensor
     target_future_local_codes: torch.Tensor
     masked_view_mask: torch.Tensor
     masked_future_view_mask: torch.Tensor
@@ -149,6 +153,18 @@ class LocalCellCodeCodec(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
+        self.gene_decode_ff = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.spatial_decode_ff = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
 
         self.cell_gene_head = nn.Sequential(
             nn.Linear(d_model, d_model),
@@ -216,17 +232,20 @@ class LocalCellCodeCodec(nn.Module):
         )
         decoded_cells = cell_queries + cell_updates
         decoded_cells = decoded_cells + self.cell_ff(decoded_cells)
-        pred_cell_genes = self.cell_gene_head(decoded_cells).reshape(
+        gene_cells = decoded_cells + self.gene_decode_ff(decoded_cells)
+        spatial_cells = decoded_cells + self.spatial_decode_ff(decoded_cells)
+        pred_cell_genes = self.cell_gene_head(gene_cells).reshape(
             *leading_shape, self.context_size, self.gene_dim
         )
-        pred_cell_positions = self.cell_position_head(decoded_cells).reshape(*leading_shape, self.context_size, 3)
-        pred_cell_valid_logits = self.cell_valid_head(decoded_cells).squeeze(-1).reshape(
+        pred_cell_positions = self.cell_position_head(spatial_cells).reshape(*leading_shape, self.context_size, 3)
+        pred_cell_valid_logits = self.cell_valid_head(spatial_cells).squeeze(-1).reshape(
             *leading_shape, self.context_size
         )
-        pred_cell_spatial_logits = self.cell_spatial_head(decoded_cells).squeeze(-1).reshape(
+        pred_cell_spatial_logits = self.cell_spatial_head(spatial_cells).squeeze(-1).reshape(
             *leading_shape, self.context_size
         )
-        pred_cell_count = self.count_head(pooled_code).squeeze(-1).reshape(*leading_shape)
+        pooled_spatial = spatial_cells.mean(dim=1)
+        pred_cell_count = self.count_head(pooled_spatial).squeeze(-1).reshape(*leading_shape)
         pred_mean_gene = self.mean_gene_head(pooled_code).reshape(*leading_shape, self.gene_dim)
         pred_patch_latent = self.patch_latent_head(pooled_code).reshape(*leading_shape, flat_code_tokens.shape[-1])
         return LocalCellDecodeOutput(

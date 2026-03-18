@@ -95,12 +95,16 @@ def parse_args():
     p.add_argument("--mean_latent_weight", type=float, default=0.25)
     p.add_argument("--code_tokens", type=int, default=8)
     p.add_argument("--local_code_weight", type=float, default=0.5)
-    p.add_argument("--decoded_state_weight", type=float, default=0.5)
+    p.add_argument("--decoded_gene_weight", type=float, default=0.5)
+    p.add_argument("--decoded_spatial_weight", type=float, default=0.25)
     p.add_argument("--decoded_mean_gene_weight", type=float, default=0.1)
     p.add_argument("--decoded_count_weight", type=float, default=0.1)
+    p.add_argument("--explicit_count_weight", type=float, default=0.1)
+    p.add_argument("--explicit_split_weight", type=float, default=0.1)
     p.add_argument("--sinkhorn_blur", type=float, default=0.05)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
-    p.add_argument("--decoded_state_sinkhorn_blur", type=float, default=0.1)
+    p.add_argument("--decoded_gene_sinkhorn_blur", type=float, default=0.1)
+    p.add_argument("--decoded_spatial_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--decoder_position_weight", type=float, default=0.25)
     p.add_argument("--decoder_spatial_flag_weight", type=float, default=0.5)
     p.add_argument("--decoder_valid_gate_threshold", type=float, default=0.5)
@@ -178,20 +182,20 @@ def build_target_structured_state(
     valid_mask: torch.Tensor,
     position_weight: float,
     spatial_flag_weight: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     norm_genes = F.layer_norm(genes, (genes.shape[-1],))
     target_spatial_valid = valid_mask & (relative_position[..., 4] > 0.5)
     target_positions = relative_position[..., :3] * target_spatial_valid.unsqueeze(-1).float()
-    target_state = torch.cat(
+    target_gene_state = norm_genes * valid_mask.unsqueeze(-1).float()
+    target_spatial_state = torch.cat(
         [
-            norm_genes,
             position_weight * target_positions,
             spatial_flag_weight * target_spatial_valid.unsqueeze(-1).float(),
         ],
         dim=-1,
     )
-    target_state = target_state * valid_mask.unsqueeze(-1).float()
-    return target_state, target_spatial_valid
+    target_spatial_state = target_spatial_state * valid_mask.unsqueeze(-1).float()
+    return target_gene_state, target_spatial_state, target_spatial_valid, target_positions
 
 
 def build_pred_structured_state(
@@ -202,7 +206,7 @@ def build_pred_structured_state(
     position_weight: float,
     spatial_flag_weight: float,
     valid_gate_threshold: float,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     pred_valid_prob = torch.sigmoid(pred_valid_logits)
     if valid_gate_threshold > 0.0:
         pred_valid = F.relu(pred_valid_prob - valid_gate_threshold) / max(1e-6, 1.0 - valid_gate_threshold)
@@ -211,15 +215,16 @@ def build_pred_structured_state(
     pred_valid = pred_valid.unsqueeze(-1)
     pred_spatial = torch.sigmoid(pred_spatial_logits).unsqueeze(-1)
     norm_pred_genes = F.layer_norm(pred_genes, (pred_genes.shape[-1],))
-    pred_state = torch.cat(
+    pred_gene_state = norm_pred_genes * pred_valid
+    pred_spatial_state = torch.cat(
         [
-            norm_pred_genes,
             position_weight * (pred_positions * pred_spatial),
             spatial_flag_weight * pred_spatial,
         ],
         dim=-1,
     )
-    return pred_state * pred_valid
+    pred_spatial_state = pred_spatial_state * pred_valid
+    return pred_gene_state, pred_spatial_state, pred_valid_prob, pred_spatial.squeeze(-1)
 
 
 def compute_metrics(
@@ -231,12 +236,16 @@ def compute_metrics(
     gene_set_weight: float,
     mean_latent_weight: float,
     local_code_weight: float,
-    decoded_state_weight: float,
+    decoded_gene_weight: float,
+    decoded_spatial_weight: float,
     decoded_mean_gene_weight: float,
     decoded_count_weight: float,
+    explicit_count_weight: float,
+    explicit_split_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
-    decoded_state_sinkhorn_blur: float,
+    decoded_gene_sinkhorn_blur: float,
+    decoded_spatial_sinkhorn_blur: float,
     decoder_position_weight: float,
     decoder_spatial_flag_weight: float,
     decoder_valid_gate_threshold: float,
@@ -261,6 +270,12 @@ def compute_metrics(
     future_relative_position = stack_view_tensor(
         batch,
         "relative_position",
+        n_future_views,
+        prefix_template="future_view_{i}_",
+    )
+    future_split_fraction = stack_view_tensor(
+        batch,
+        "split_fraction",
         n_future_views,
         prefix_template="future_view_{i}_",
     )
@@ -301,6 +316,7 @@ def compute_metrics(
         future_valid_mask=future_valid_mask,
         future_anchor_mask=future_anchor_mask,
         masked_future_view_mask=masked_future_view_mask,
+        future_split_fraction=future_split_fraction,
         masked_view_mask=masked_view_mask,
         context_role=context_role,
         relative_position=relative_position,
@@ -340,14 +356,14 @@ def compute_metrics(
         future_relative_position,
         masked_future_view_mask,
     )
-    target_structured_state, _ = build_target_structured_state(
+    target_gene_state, target_spatial_state, _, _ = build_target_structured_state(
         genes=masked_future_genes,
         relative_position=masked_future_relative_position,
         valid_mask=masked_future_valid_mask,
         position_weight=decoder_position_weight,
         spatial_flag_weight=decoder_spatial_flag_weight,
     )
-    pred_structured_state = build_pred_structured_state(
+    pred_gene_state, pred_spatial_state, _, _ = build_pred_structured_state(
         pred_genes=decoded.pred_cell_genes,
         pred_positions=decoded.pred_cell_positions,
         pred_valid_logits=decoded.pred_cell_valid_logits,
@@ -356,14 +372,23 @@ def compute_metrics(
         spatial_flag_weight=decoder_spatial_flag_weight,
         valid_gate_threshold=decoder_valid_gate_threshold,
     )
-    decoded_state_loss = sinkhorn_divergence(
-        pred_structured_state.view(pred_structured_state.shape[0], -1, pred_structured_state.shape[-1]),
-        target_structured_state.detach().view(
-            target_structured_state.shape[0],
+    decoded_gene_loss = sinkhorn_divergence(
+        pred_gene_state.view(pred_gene_state.shape[0], -1, pred_gene_state.shape[-1]),
+        target_gene_state.detach().view(
+            target_gene_state.shape[0],
             -1,
-            target_structured_state.shape[-1],
+            target_gene_state.shape[-1],
         ),
-        blur=decoded_state_sinkhorn_blur,
+        blur=decoded_gene_sinkhorn_blur,
+    )
+    decoded_spatial_loss = sinkhorn_divergence(
+        pred_spatial_state.view(pred_spatial_state.shape[0], -1, pred_spatial_state.shape[-1]),
+        target_spatial_state.detach().view(
+            target_spatial_state.shape[0],
+            -1,
+            target_spatial_state.shape[-1],
+        ),
+        blur=decoded_spatial_sinkhorn_blur,
     )
     target_mean_gene = (
         (masked_future_genes * masked_future_valid_mask.unsqueeze(-1).float()).sum(dim=2)
@@ -372,14 +397,22 @@ def compute_metrics(
     target_count_ratio = masked_future_valid_mask.float().sum(dim=2) / float(masked_future_valid_mask.shape[-1])
     decoded_mean_gene_loss = F.mse_loss(decoded.pred_mean_gene, target_mean_gene)
     decoded_count_loss = F.mse_loss(torch.sigmoid(decoded.pred_cell_count), target_count_ratio)
+    explicit_count_loss = F.mse_loss(torch.sigmoid(out.pred_future_count_logits), out.target_future_count_ratio)
+    explicit_split_loss = F.mse_loss(
+        torch.sigmoid(out.pred_future_split_logits),
+        out.target_future_split_fraction,
+    )
     total = (
         latent_set_weight * latent_set_loss
         + gene_set_weight * gene_set_loss
         + mean_latent_weight * mean_latent_loss
         + local_code_weight * local_code_loss
-        + decoded_state_weight * decoded_state_loss
+        + decoded_gene_weight * decoded_gene_loss
+        + decoded_spatial_weight * decoded_spatial_loss
         + decoded_mean_gene_weight * decoded_mean_gene_loss
         + decoded_count_weight * decoded_count_loss
+        + explicit_count_weight * explicit_count_loss
+        + explicit_split_weight * explicit_split_loss
     )
     return total, {
         "total": total.item(),
@@ -387,9 +420,12 @@ def compute_metrics(
         "gene_set": gene_set_loss.item(),
         "mean_latent": mean_latent_loss.item(),
         "local_code": local_code_loss.item(),
-        "decoded_state": decoded_state_loss.item(),
+        "decoded_gene": decoded_gene_loss.item(),
+        "decoded_spatial": decoded_spatial_loss.item(),
         "decoded_mean_gene": decoded_mean_gene_loss.item(),
         "decoded_count": decoded_count_loss.item(),
+        "explicit_count": explicit_count_loss.item(),
+        "explicit_split": explicit_split_loss.item(),
     }
 
 
@@ -404,12 +440,16 @@ def run_epoch(
     gene_set_weight: float,
     mean_latent_weight: float,
     local_code_weight: float,
-    decoded_state_weight: float,
+    decoded_gene_weight: float,
+    decoded_spatial_weight: float,
     decoded_mean_gene_weight: float,
     decoded_count_weight: float,
+    explicit_count_weight: float,
+    explicit_split_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
-    decoded_state_sinkhorn_blur: float,
+    decoded_gene_sinkhorn_blur: float,
+    decoded_spatial_sinkhorn_blur: float,
     decoder_position_weight: float,
     decoder_spatial_flag_weight: float,
     decoder_valid_gate_threshold: float,
@@ -429,12 +469,16 @@ def run_epoch(
             gene_set_weight,
             mean_latent_weight,
             local_code_weight,
-            decoded_state_weight,
+            decoded_gene_weight,
+            decoded_spatial_weight,
             decoded_mean_gene_weight,
             decoded_count_weight,
+            explicit_count_weight,
+            explicit_split_weight,
             sinkhorn_blur,
             gene_sinkhorn_blur,
-            decoded_state_sinkhorn_blur,
+            decoded_gene_sinkhorn_blur,
+            decoded_spatial_sinkhorn_blur,
             decoder_position_weight,
             decoder_spatial_flag_weight,
             decoder_valid_gate_threshold,
@@ -556,12 +600,16 @@ def main():
             args.gene_set_weight,
             args.mean_latent_weight,
             args.local_code_weight,
-            args.decoded_state_weight,
+            args.decoded_gene_weight,
+            args.decoded_spatial_weight,
             args.decoded_mean_gene_weight,
             args.decoded_count_weight,
+            args.explicit_count_weight,
+            args.explicit_split_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
-            args.decoded_state_sinkhorn_blur,
+            args.decoded_gene_sinkhorn_blur,
+            args.decoded_spatial_sinkhorn_blur,
             args.decoder_position_weight,
             args.decoder_spatial_flag_weight,
             args.decoder_valid_gate_threshold,
@@ -577,12 +625,16 @@ def main():
             args.gene_set_weight,
             args.mean_latent_weight,
             args.local_code_weight,
-            args.decoded_state_weight,
+            args.decoded_gene_weight,
+            args.decoded_spatial_weight,
             args.decoded_mean_gene_weight,
             args.decoded_count_weight,
+            args.explicit_count_weight,
+            args.explicit_split_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
-            args.decoded_state_sinkhorn_blur,
+            args.decoded_gene_sinkhorn_blur,
+            args.decoded_spatial_sinkhorn_blur,
             args.decoder_position_weight,
             args.decoder_spatial_flag_weight,
             args.decoder_valid_gate_threshold,
@@ -593,7 +645,9 @@ def main():
             f"val_total={val_metrics['total']:.4f} val_latent_set={val_metrics['latent_set']:.4f} "
             f"val_gene_set={val_metrics['gene_set']:.4f} val_mean_latent={val_metrics['mean_latent']:.4f} "
             f"val_local_code={val_metrics['local_code']:.4f} "
-            f"val_decoded_state={val_metrics['decoded_state']:.4f}"
+            f"val_decoded_gene={val_metrics['decoded_gene']:.4f} "
+            f"val_decoded_spatial={val_metrics['decoded_spatial']:.4f} "
+            f"val_split={val_metrics['explicit_split']:.4f}"
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]

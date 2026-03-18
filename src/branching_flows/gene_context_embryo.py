@@ -446,6 +446,16 @@ class EmbryoFutureSetModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, gene_dim or backbone.local_model.gene_dim),
         )
+        self.slot_split_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+        )
+        self.slot_count_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+        )
         self.local_code_codec = LocalCellCodeCodec(
             gene_dim=(gene_dim or backbone.local_model.gene_dim),
             context_size=int(backbone.local_model.context_size),
@@ -464,11 +474,14 @@ class EmbryoFutureSetModel(nn.Module):
     def gather_masked_future_targets(
         future_local_latents: torch.Tensor,
         future_genes: torch.Tensor,
+        future_split_fraction: torch.Tensor,
         future_valid_mask: torch.Tensor,
         masked_future_view_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         target_latents = []
         target_genes = []
+        target_splits = []
+        target_counts = []
         for i in range(future_local_latents.shape[0]):
             masked_idx = torch.nonzero(masked_future_view_mask[i], as_tuple=False).squeeze(-1)
             if masked_idx.numel() == 0:
@@ -481,7 +494,14 @@ class EmbryoFutureSetModel(nn.Module):
                 / masked_valid.sum(dim=1, keepdim=True).clamp_min(1.0)
             )
             target_genes.append(mean_genes)
-        return torch.stack(target_latents, dim=0), torch.stack(target_genes, dim=0)
+            target_splits.append(future_split_fraction[i, masked_idx])
+            target_counts.append(masked_valid.float().mean(dim=1))
+        return (
+            torch.stack(target_latents, dim=0),
+            torch.stack(target_genes, dim=0),
+            torch.stack(target_splits, dim=0),
+            torch.stack(target_counts, dim=0),
+        )
 
     @staticmethod
     def gather_masked_future_view_tensor(
@@ -545,6 +565,7 @@ class EmbryoFutureSetModel(nn.Module):
         future_valid_mask: torch.Tensor,
         future_anchor_mask: torch.Tensor,
         masked_future_view_mask: torch.Tensor,
+        future_split_fraction: torch.Tensor,
         masked_view_mask: torch.Tensor | None = None,
         context_role: torch.Tensor | None = None,
         relative_position: torch.Tensor | None = None,
@@ -577,9 +598,15 @@ class EmbryoFutureSetModel(nn.Module):
             context_role=future_context_role,
             relative_position=future_relative_position,
         )
-        target_future_set_latents, target_future_set_genes = self.gather_masked_future_targets(
+        (
+            target_future_set_latents,
+            target_future_set_genes,
+            target_future_split_fraction,
+            target_future_count_ratio,
+        ) = self.gather_masked_future_targets(
             future_local_latents,
             future_genes,
+            future_split_fraction,
             future_valid_mask,
             masked_future_view_mask,
         )
@@ -631,6 +658,8 @@ class EmbryoFutureSetModel(nn.Module):
             pred_slot_tokens = pred_slot_tokens + self.current_memory_ff(pred_slot_tokens)
         pred_future_set_latents = self.slot_predictor(pred_slot_tokens)
         pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
+        pred_future_split_logits = self.slot_split_head(pred_slot_tokens).squeeze(-1)
+        pred_future_count_logits = self.slot_count_head(pred_slot_tokens).squeeze(-1)
         pred_future_local_codes = self.slot_code_head(pred_slot_tokens).view(
             genes.shape[0],
             self.future_slots,
@@ -649,9 +678,13 @@ class EmbryoFutureSetModel(nn.Module):
             future_local_latents=future_local_latents,
             pred_future_set_latents=pred_future_set_latents,
             pred_future_set_genes=pred_future_set_genes,
+            pred_future_split_logits=pred_future_split_logits,
+            pred_future_count_logits=pred_future_count_logits,
             pred_future_local_codes=pred_future_local_codes,
             target_future_set_latents=target_future_set_latents,
             target_future_set_genes=target_future_set_genes,
+            target_future_split_fraction=target_future_split_fraction,
+            target_future_count_ratio=target_future_count_ratio,
             target_future_local_codes=target_future_local_codes,
             masked_view_mask=masked_view_mask,
             masked_future_view_mask=masked_future_view_mask,
