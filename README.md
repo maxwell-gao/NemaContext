@@ -130,20 +130,8 @@ uv run python examples/whole_organism_ar/train_embryo_masked_views.py \
   --pairwise_spatial_bias \
   --epochs 10
 
-# 7) Train embryo one-step latent prediction on top of the best embryo backbone
-uv run python examples/whole_organism_ar/train_embryo_one_step.py \
-  --backbone_checkpoint checkpoints_embryo_masked_views/best.pt \
-  --context_size 256 \
-  --global_context_size 32 \
-  --dt_minutes 40 \
-  --views_per_embryo 8 \
-  --future_views_per_embryo 8 \
-  --samples_per_pair 16 \
-  --freeze_backbone \
-  --epochs 10
-
-# 7b) Train the strongest current embryo predictive route:
-# reconstruction-backed MAE future-set completion
+# 7) Train the strongest current embryo predictive route:
+# end-to-end reconstruction-backed MAE future-set completion
 uv run python examples/whole_organism_ar/train_embryo_future_set.py \
   --backbone_checkpoint checkpoints_embryo_masked_views/best.pt \
   --context_size 256 \
@@ -154,18 +142,6 @@ uv run python examples/whole_organism_ar/train_embryo_future_set.py \
   --samples_per_pair 16 \
   --pairwise_spatial_bias \
   --freeze_backbone \
-  --epochs 10
-
-# 7c) Train the minimal embryo JEPA objective on the same embryo-view interface
-uv run python examples/whole_organism_ar/train_embryo_jepa.py \
-  --init_checkpoint checkpoints_embryo_masked_views/best.pt \
-  --context_size 256 \
-  --global_context_size 32 \
-  --dt_minutes 40 \
-  --views_per_embryo 8 \
-  --future_views_per_embryo 8 \
-  --samples_per_pair 16 \
-  --pairwise_spatial_bias \
   --epochs 10
 
 # 8) Historical token-level baseline remains available for diagnosis
@@ -186,8 +162,9 @@ Whole-organism autoregressive rollout remains in the repository as the intended
 destination of the current line of work, but the active evidence path still
 starts with smaller real-data update problems before rollout claims.
 The current embryo-scale step is masked multi-view reconstruction with masked
-future views, followed by latent-first embryo one-step prediction, not more
-patch-level contrastive tuning and not direct embryo summary regression.
+future views, followed by end-to-end reconstruction-backed MAE future-set
+completion with an internal pred-x local-code bottleneck, not direct embryo
+summary regression and not global one-step latent jumps.
 Current embryo one-step diagnosis is also sharper than before:
 the future latent target is stable under view resampling and permutation,
 but the latent geometry is too concentrated for cosine alone to enforce

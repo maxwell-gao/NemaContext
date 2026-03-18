@@ -39,11 +39,8 @@ Current active scripts now split into two levels:
 - `train_embryo_masked_views.py`: active embryo-level self-supervised route via
   masked current and masked future local views of the same embryo state.
 - `train_embryo_future_set.py`: strongest current embryo predictive route via
-  reconstruction-backed MAE-style masked future local-view set completion.
-- `train_embryo_one_step.py`: latent-first embryo one-step dynamics baseline on
-  top of the best masked-future embryo backbone.
-- `train_embryo_jepa.py`: minimal embryo JEPA objective over visible current
-  views and masked future-view targets.
+  end-to-end reconstruction-backed MAE-style masked future local-view set
+  completion with an internal pred-x local-code bottleneck.
 
 Current biological milestone:
 
@@ -61,11 +58,6 @@ Current biological milestone:
   MAE-style future-set completion:
   current context plus visible future parts predict masked future local-view
   sets more reliably than direct global one-step latent prediction.
-- a minimal embryo JEPA route now exists on the same embryo-view contract; the
-  first instability was traced to per-batch target whitening, and the
-  stabilized layer-normalized version now trains normally in smoke tests.
-- a first embryo one-step latent dynamics baseline now exists and already
-  learns future embryo latents well, but direct joint probe heads remain weak.
 - later diagnostics now show that the future embryo latent target itself is
   stable under view resampling and permutation; the main remaining problem is
   that cosine-only one-step dynamics do not preserve the biology-readable

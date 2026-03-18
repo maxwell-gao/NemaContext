@@ -34,8 +34,6 @@ Recommended current entry points:
 - `train_masked_state_views.py`
 - `train_embryo_masked_views.py`
 - `train_embryo_future_set.py`
-- `train_embryo_one_step.py`
-- `train_embryo_jepa.py`
 - `train_gene_context.py`
 - `evaluate_gene_context.py`
 - `train_gene_single_cell.py`
