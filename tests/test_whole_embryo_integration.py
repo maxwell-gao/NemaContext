@@ -476,6 +476,16 @@ def test_local_cell_code_model_forward():
         use_pairwise_spatial_bias=True,
         code_tokens=4,
     )
+    patch_latent, local_code_tokens = model.encode_local_code(
+        genes=batch["current_genes"],
+        time=batch["current_time"],
+        token_times=batch["current_token_times"],
+        valid_mask=batch["current_valid_mask"],
+        anchor_mask=batch["current_anchor_mask"],
+        context_role=batch["current_context_role"],
+        relative_position=batch["current_relative_position"],
+    )
+    decoded = model.decode_local_code(local_code_tokens)
     out = model(
         genes=batch["current_genes"],
         time=batch["current_time"],
@@ -486,6 +496,11 @@ def test_local_cell_code_model_forward():
         relative_position=batch["current_relative_position"],
     )
 
+    assert patch_latent.shape == (2, 64)
+    assert local_code_tokens.shape == (2, 4, 64)
+    assert decoded.pred_cell_genes.shape == (2, 8, dataset.gene_dim)
+    assert decoded.pred_cell_positions.shape == (2, 8, 3)
+    assert decoded.pred_cell_count.shape == (2,)
     assert out.patch_latent.shape == (2, 64)
     assert out.local_code_tokens.shape == (2, 4, 64)
     assert out.pred_cell_genes.shape == (2, 8, dataset.gene_dim)
@@ -721,6 +736,17 @@ def test_embryo_future_set_model_forward():
         head_dim=16,
         use_pairwise_spatial_bias=True,
     )
+    local_code_model = LocalCellCodeModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+        code_tokens=4,
+    )
     model = EmbryoFutureSetModel(
         backbone=backbone,
         future_slots=1,
@@ -730,8 +756,8 @@ def test_embryo_future_set_model_forward():
         learn_current_token_gate=True,
         current_token_gate_init=0.5,
         current_conditioning_mode="cross_attention_memory",
-        predict_future_cell_tokens=True,
-        cell_tokens_per_view=8,
+        local_code_model=local_code_model,
+        predict_future_local_codes=True,
     )
     masked_view_mask = torch.tensor(
         [[False, True, False], [False, False, False]],
@@ -763,12 +789,15 @@ def test_embryo_future_set_model_forward():
     assert out.future_local_latents.shape == (2, n_future_views, 64)
     assert out.pred_future_set_latents.shape == (2, 1, 64)
     assert out.pred_future_set_genes.shape == (2, 1, dataset.gene_dim)
-    assert out.pred_future_cell_tokens is not None
-    assert out.pred_future_cell_tokens.shape == (2, 8, dataset.gene_dim)
+    assert out.pred_future_local_codes is not None
+    assert out.pred_future_local_codes.shape == (2, 1, 4, 64)
     assert out.target_future_set_latents.shape == (2, 1, 64)
     assert out.target_future_set_genes.shape == (2, 1, dataset.gene_dim)
-    assert out.target_future_cell_tokens is not None
-    assert out.target_future_cell_tokens.shape == (2, 8, dataset.gene_dim)
+    assert out.target_future_local_codes is not None
+    assert out.target_future_local_codes.shape == (2, 1, 4, 64)
+    decoded = model.decode_future_local_codes(out.pred_future_local_codes)
+    assert decoded.pred_cell_genes.shape == (2, 1, 8, dataset.gene_dim)
+    assert decoded.pred_cell_positions.shape == (2, 1, 8, 3)
     assert out.current_local_token_gate is not None
     assert 0.0 < float(out.current_local_token_gate.item()) < 1.0
 
