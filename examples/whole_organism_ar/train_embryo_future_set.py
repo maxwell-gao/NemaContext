@@ -24,7 +24,6 @@ from src.branching_flows.emergent_loss import sinkhorn_divergence  # noqa: E402
 from src.branching_flows.gene_context import (  # noqa: E402
     EmbryoFutureSetModel,
     EmbryoMaskedViewModel,
-    LocalCellCodeModel,
 )
 from src.data.gene_context_dataset import EmbryoViewDataset, collate_embryo_view  # noqa: E402
 
@@ -33,7 +32,6 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train embryo masked future local-view set prediction.")
     p.add_argument("--model_type", choices=["multi_cell", "single_cell"], default="multi_cell")
     p.add_argument("--backbone_checkpoint", default=None)
-    p.add_argument("--local_code_checkpoint", default=None)
     p.add_argument("--freeze_backbone", action="store_true", default=True)
     p.add_argument("--no_freeze_backbone", dest="freeze_backbone", action="store_false")
     p.add_argument("--h5ad_path", default="dataset/processed/nema_extended_large2025.h5ad")
@@ -95,18 +93,14 @@ def parse_args():
     p.add_argument("--latent_set_weight", type=float, default=1.0)
     p.add_argument("--gene_set_weight", type=float, default=0.5)
     p.add_argument("--mean_latent_weight", type=float, default=0.25)
-    p.add_argument("--predict_future_local_codes", action="store_true", default=False)
+    p.add_argument("--code_tokens", type=int, default=8)
     p.add_argument("--local_code_weight", type=float, default=0.5)
     p.add_argument("--decoded_state_weight", type=float, default=0.5)
     p.add_argument("--decoded_mean_gene_weight", type=float, default=0.1)
     p.add_argument("--decoded_count_weight", type=float, default=0.1)
-    p.add_argument("--cell_token_weight", type=float, default=0.0)
-    p.add_argument("--predict_future_cell_tokens", action="store_true", default=False)
-    p.add_argument("--cell_tokens_per_view", type=int, default=None)
     p.add_argument("--sinkhorn_blur", type=float, default=0.05)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--decoded_state_sinkhorn_blur", type=float, default=0.1)
-    p.add_argument("--cell_token_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--decoder_position_weight", type=float, default=0.25)
     p.add_argument("--decoder_spatial_flag_weight", type=float, default=0.5)
     p.add_argument("--decoder_valid_gate_threshold", type=float, default=0.5)
@@ -178,26 +172,6 @@ def load_backbone(args) -> tuple[EmbryoMaskedViewModel, dict | None]:
     return backbone, ckpt
 
 
-def load_local_code_model(args) -> tuple[LocalCellCodeModel | None, dict | None]:
-    if args.local_code_checkpoint is None:
-        return None, None
-    ckpt = torch.load(args.local_code_checkpoint, map_location="cpu")
-    cfg = ckpt["config"]
-    model = LocalCellCodeModel(
-        gene_dim=ckpt["gene_dim"],
-        context_size=int(cfg["context_size"]),
-        model_type=str(ckpt.get("model_type", cfg["model_type"])),
-        d_model=int(cfg["d_model"]),
-        n_heads=int(cfg["n_heads"]),
-        n_layers=int(cfg["n_layers"]),
-        head_dim=int(cfg["head_dim"]),
-        use_pairwise_spatial_bias=bool(cfg["pairwise_spatial_bias"]),
-        code_tokens=int(cfg["code_tokens"]),
-    )
-    model.load_state_dict(ckpt["model_state_dict"])
-    return model, ckpt
-
-
 def build_target_structured_state(
     genes: torch.Tensor,
     relative_position: torch.Tensor,
@@ -256,16 +230,13 @@ def compute_metrics(
     latent_set_weight: float,
     gene_set_weight: float,
     mean_latent_weight: float,
-    predict_future_local_codes: bool,
     local_code_weight: float,
     decoded_state_weight: float,
     decoded_mean_gene_weight: float,
     decoded_count_weight: float,
-    cell_token_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
     decoded_state_sinkhorn_blur: float,
-    cell_token_sinkhorn_blur: float,
     decoder_position_weight: float,
     decoder_spatial_flag_weight: float,
     decoder_valid_gate_threshold: float,
@@ -355,69 +326,52 @@ def compute_metrics(
             dim=-1,
         )
     ).mean()
-    if out.pred_future_cell_tokens is not None and out.target_future_cell_tokens is not None:
-        cell_token_loss = sinkhorn_divergence(
-            out.pred_future_cell_tokens,
-            out.target_future_cell_tokens.detach(),
-            blur=cell_token_sinkhorn_blur,
-        )
-    else:
-        cell_token_loss = torch.tensor(0.0, device=genes.device)
-    local_code_loss = torch.tensor(0.0, device=genes.device)
-    decoded_state_loss = torch.tensor(0.0, device=genes.device)
-    decoded_mean_gene_loss = torch.tensor(0.0, device=genes.device)
-    decoded_count_loss = torch.tensor(0.0, device=genes.device)
-    if (
-        predict_future_local_codes
-        and out.pred_future_local_codes is not None
-        and out.target_future_local_codes is not None
-    ):
-        local_code_loss = F.mse_loss(
-            out.pred_future_local_codes,
-            out.target_future_local_codes.detach(),
-        )
-        decoded = model.decode_future_local_codes(out.pred_future_local_codes)
-        masked_future_genes = model.gather_masked_future_view_tensor(future_genes, masked_future_view_mask)
-        masked_future_valid_mask = model.gather_masked_future_view_tensor(
-            future_valid_mask,
-            masked_future_view_mask,
-        )
-        masked_future_relative_position = model.gather_masked_future_view_tensor(
-            future_relative_position,
-            masked_future_view_mask,
-        )
-        target_structured_state, _ = build_target_structured_state(
-            genes=masked_future_genes,
-            relative_position=masked_future_relative_position,
-            valid_mask=masked_future_valid_mask,
-            position_weight=decoder_position_weight,
-            spatial_flag_weight=decoder_spatial_flag_weight,
-        )
-        pred_structured_state = build_pred_structured_state(
-            pred_genes=decoded.pred_cell_genes,
-            pred_positions=decoded.pred_cell_positions,
-            pred_valid_logits=decoded.pred_cell_valid_logits,
-            pred_spatial_logits=decoded.pred_cell_spatial_logits,
-            position_weight=decoder_position_weight,
-            spatial_flag_weight=decoder_spatial_flag_weight,
-            valid_gate_threshold=decoder_valid_gate_threshold,
-        )
-        decoded_state_loss = sinkhorn_divergence(
-            pred_structured_state.view(pred_structured_state.shape[0], -1, pred_structured_state.shape[-1]),
-            target_structured_state.detach().view(
-                target_structured_state.shape[0],
-                -1,
-                target_structured_state.shape[-1],
-            ),
-            blur=decoded_state_sinkhorn_blur,
-        )
-        target_mean_gene = (
-            (masked_future_genes * masked_future_valid_mask.unsqueeze(-1).float()).sum(dim=2)
-            / masked_future_valid_mask.sum(dim=2, keepdim=True).clamp_min(1.0)
-        )
-        target_count_ratio = masked_future_valid_mask.float().sum(dim=2) / float(masked_future_valid_mask.shape[-1])
-        decoded_mean_gene_loss = F.mse_loss(decoded.pred_mean_gene, target_mean_gene)
-        decoded_count_loss = F.mse_loss(torch.sigmoid(decoded.pred_cell_count), target_count_ratio)
+    local_code_loss = F.mse_loss(
+        out.pred_future_local_codes,
+        out.target_future_local_codes.detach(),
+    )
+    decoded = model.decode_future_local_codes(out.pred_future_local_codes)
+    masked_future_genes = model.gather_masked_future_view_tensor(future_genes, masked_future_view_mask)
+    masked_future_valid_mask = model.gather_masked_future_view_tensor(
+        future_valid_mask,
+        masked_future_view_mask,
+    )
+    masked_future_relative_position = model.gather_masked_future_view_tensor(
+        future_relative_position,
+        masked_future_view_mask,
+    )
+    target_structured_state, _ = build_target_structured_state(
+        genes=masked_future_genes,
+        relative_position=masked_future_relative_position,
+        valid_mask=masked_future_valid_mask,
+        position_weight=decoder_position_weight,
+        spatial_flag_weight=decoder_spatial_flag_weight,
+    )
+    pred_structured_state = build_pred_structured_state(
+        pred_genes=decoded.pred_cell_genes,
+        pred_positions=decoded.pred_cell_positions,
+        pred_valid_logits=decoded.pred_cell_valid_logits,
+        pred_spatial_logits=decoded.pred_cell_spatial_logits,
+        position_weight=decoder_position_weight,
+        spatial_flag_weight=decoder_spatial_flag_weight,
+        valid_gate_threshold=decoder_valid_gate_threshold,
+    )
+    decoded_state_loss = sinkhorn_divergence(
+        pred_structured_state.view(pred_structured_state.shape[0], -1, pred_structured_state.shape[-1]),
+        target_structured_state.detach().view(
+            target_structured_state.shape[0],
+            -1,
+            target_structured_state.shape[-1],
+        ),
+        blur=decoded_state_sinkhorn_blur,
+    )
+    target_mean_gene = (
+        (masked_future_genes * masked_future_valid_mask.unsqueeze(-1).float()).sum(dim=2)
+        / masked_future_valid_mask.sum(dim=2, keepdim=True).clamp_min(1.0)
+    )
+    target_count_ratio = masked_future_valid_mask.float().sum(dim=2) / float(masked_future_valid_mask.shape[-1])
+    decoded_mean_gene_loss = F.mse_loss(decoded.pred_mean_gene, target_mean_gene)
+    decoded_count_loss = F.mse_loss(torch.sigmoid(decoded.pred_cell_count), target_count_ratio)
     total = (
         latent_set_weight * latent_set_loss
         + gene_set_weight * gene_set_loss
@@ -426,7 +380,6 @@ def compute_metrics(
         + decoded_state_weight * decoded_state_loss
         + decoded_mean_gene_weight * decoded_mean_gene_loss
         + decoded_count_weight * decoded_count_loss
-        + cell_token_weight * cell_token_loss
     )
     return total, {
         "total": total.item(),
@@ -437,7 +390,6 @@ def compute_metrics(
         "decoded_state": decoded_state_loss.item(),
         "decoded_mean_gene": decoded_mean_gene_loss.item(),
         "decoded_count": decoded_count_loss.item(),
-        "cell_tokens": cell_token_loss.item(),
     }
 
 
@@ -451,16 +403,13 @@ def run_epoch(
     latent_set_weight: float,
     gene_set_weight: float,
     mean_latent_weight: float,
-    predict_future_local_codes: bool,
     local_code_weight: float,
     decoded_state_weight: float,
     decoded_mean_gene_weight: float,
     decoded_count_weight: float,
-    cell_token_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
     decoded_state_sinkhorn_blur: float,
-    cell_token_sinkhorn_blur: float,
     decoder_position_weight: float,
     decoder_spatial_flag_weight: float,
     decoder_valid_gate_threshold: float,
@@ -479,16 +428,13 @@ def run_epoch(
             latent_set_weight,
             gene_set_weight,
             mean_latent_weight,
-            predict_future_local_codes,
             local_code_weight,
             decoded_state_weight,
             decoded_mean_gene_weight,
             decoded_count_weight,
-            cell_token_weight,
             sinkhorn_blur,
             gene_sinkhorn_blur,
             decoded_state_sinkhorn_blur,
-            cell_token_sinkhorn_blur,
             decoder_position_weight,
             decoder_spatial_flag_weight,
             decoder_valid_gate_threshold,
@@ -566,14 +512,7 @@ def main():
     )
 
     backbone, ckpt = load_backbone(args)
-    local_code_model, local_code_ckpt = load_local_code_model(args)
     outer_gene_dim = args.n_hvg if ckpt is None else int(ckpt["gene_dim"])
-    if local_code_model is not None and local_code_model.gene_dim != outer_gene_dim:
-        raise ValueError(
-            f"Local code checkpoint gene_dim={local_code_model.gene_dim} does not match "
-            f"future-set gene_dim={outer_gene_dim}"
-        )
-    predict_future_local_codes = args.predict_future_local_codes or args.local_code_checkpoint is not None
     future_slots = max(
         1,
         min(
@@ -593,17 +532,10 @@ def main():
         learn_current_token_gate=args.learn_current_token_gate,
         current_token_gate_init=args.current_token_gate_init,
         current_conditioning_mode=args.current_conditioning_mode,
-        local_code_model=local_code_model,
-        predict_future_local_codes=predict_future_local_codes,
-        predict_future_cell_tokens=args.predict_future_cell_tokens,
-        cell_tokens_per_view=args.cell_tokens_per_view,
+        code_tokens=args.code_tokens,
     ).to(args.device)
     if args.freeze_backbone:
         for param in model.backbone.parameters():
-            param.requires_grad_(False)
-    if model.local_code_model is not None:
-        model.local_code_model.eval()
-        for param in model.local_code_model.parameters():
             param.requires_grad_(False)
 
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
@@ -623,16 +555,13 @@ def main():
             args.latent_set_weight,
             args.gene_set_weight,
             args.mean_latent_weight,
-            predict_future_local_codes,
             args.local_code_weight,
             args.decoded_state_weight,
             args.decoded_mean_gene_weight,
             args.decoded_count_weight,
-            args.cell_token_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
             args.decoded_state_sinkhorn_blur,
-            args.cell_token_sinkhorn_blur,
             args.decoder_position_weight,
             args.decoder_spatial_flag_weight,
             args.decoder_valid_gate_threshold,
@@ -647,16 +576,13 @@ def main():
             args.latent_set_weight,
             args.gene_set_weight,
             args.mean_latent_weight,
-            predict_future_local_codes,
             args.local_code_weight,
             args.decoded_state_weight,
             args.decoded_mean_gene_weight,
             args.decoded_count_weight,
-            args.cell_token_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
             args.decoded_state_sinkhorn_blur,
-            args.cell_token_sinkhorn_blur,
             args.decoder_position_weight,
             args.decoder_spatial_flag_weight,
             args.decoder_valid_gate_threshold,
@@ -667,8 +593,7 @@ def main():
             f"val_total={val_metrics['total']:.4f} val_latent_set={val_metrics['latent_set']:.4f} "
             f"val_gene_set={val_metrics['gene_set']:.4f} val_mean_latent={val_metrics['mean_latent']:.4f} "
             f"val_local_code={val_metrics['local_code']:.4f} "
-            f"val_decoded_state={val_metrics['decoded_state']:.4f} "
-            f"val_cell_tokens={val_metrics['cell_tokens']:.4f}"
+            f"val_decoded_state={val_metrics['decoded_state']:.4f}"
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
@@ -678,8 +603,6 @@ def main():
                     "config": vars(args),
                     "gene_dim": args.n_hvg if ckpt is None else ckpt["gene_dim"],
                     "backbone_checkpoint": args.backbone_checkpoint,
-                    "local_code_checkpoint": args.local_code_checkpoint,
-                    "local_code_config": None if local_code_ckpt is None else local_code_ckpt["config"],
                     "future_slots": future_slots,
                 },
                 checkpoint_dir / "best.pt",

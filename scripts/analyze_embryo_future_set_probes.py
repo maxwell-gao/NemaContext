@@ -139,10 +139,7 @@ def load_model(checkpoint_path: str, device: str):
         learn_current_token_gate=bool(config.get("learn_current_token_gate", True)),
         current_token_gate_init=float(config.get("current_token_gate_init", 0.5)),
         current_conditioning_mode=str(config.get("current_conditioning_mode", "flat_tokens")),
-        predict_future_cell_tokens=bool(config.get("predict_future_cell_tokens", False)),
-        cell_tokens_per_view=(
-            None if config.get("cell_tokens_per_view", None) is None else int(config.get("cell_tokens_per_view"))
-        ),
+        code_tokens=int(config.get("code_tokens", 8)),
     )
     model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.to(device)

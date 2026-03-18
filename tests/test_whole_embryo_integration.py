@@ -736,17 +736,6 @@ def test_embryo_future_set_model_forward():
         head_dim=16,
         use_pairwise_spatial_bias=True,
     )
-    local_code_model = LocalCellCodeModel(
-        gene_dim=dataset.gene_dim,
-        context_size=8,
-        model_type="multi_cell",
-        d_model=64,
-        n_heads=4,
-        n_layers=2,
-        head_dim=16,
-        use_pairwise_spatial_bias=True,
-        code_tokens=4,
-    )
     model = EmbryoFutureSetModel(
         backbone=backbone,
         future_slots=1,
@@ -756,8 +745,7 @@ def test_embryo_future_set_model_forward():
         learn_current_token_gate=True,
         current_token_gate_init=0.5,
         current_conditioning_mode="cross_attention_memory",
-        local_code_model=local_code_model,
-        predict_future_local_codes=True,
+        code_tokens=4,
     )
     masked_view_mask = torch.tensor(
         [[False, True, False], [False, False, False]],
@@ -789,11 +777,9 @@ def test_embryo_future_set_model_forward():
     assert out.future_local_latents.shape == (2, n_future_views, 64)
     assert out.pred_future_set_latents.shape == (2, 1, 64)
     assert out.pred_future_set_genes.shape == (2, 1, dataset.gene_dim)
-    assert out.pred_future_local_codes is not None
     assert out.pred_future_local_codes.shape == (2, 1, 4, 64)
     assert out.target_future_set_latents.shape == (2, 1, 64)
     assert out.target_future_set_genes.shape == (2, 1, dataset.gene_dim)
-    assert out.target_future_local_codes is not None
     assert out.target_future_local_codes.shape == (2, 1, 4, 64)
     decoded = model.decode_future_local_codes(out.pred_future_local_codes)
     assert decoded.pred_cell_genes.shape == (2, 1, 8, dataset.gene_dim)
@@ -887,7 +873,6 @@ def test_embryo_future_set_model_backward_compatible_without_current_local_token
         future_relative_position=future_relative_position,
     )
     assert out.pred_future_set_latents.shape == (2, 1, 64)
-    assert out.pred_future_cell_tokens is None
     assert out.current_local_token_gate is None
 
 
@@ -978,7 +963,6 @@ def test_embryo_future_set_model_flat_current_tokens_still_supported():
     )
     assert out.pred_future_set_latents.shape == (2, 1, 64)
     assert out.current_local_token_gate is not None
-    assert out.pred_future_cell_tokens is None
 
 
 def test_embryo_future_probe_bank_shapes():
