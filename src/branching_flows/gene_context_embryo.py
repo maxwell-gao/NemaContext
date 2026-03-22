@@ -446,15 +446,63 @@ class EmbryoFutureSetModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, gene_dim or backbone.local_model.gene_dim),
         )
+        self.slot_mass_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+        )
         self.slot_split_head = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
             nn.GELU(),
             nn.Linear(d_model // 2, 1),
         )
-        self.slot_count_head = nn.Sequential(
+        self.slot_survival_head = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
             nn.GELU(),
             nn.Linear(d_model // 2, 1),
+        )
+        self.slot_split_count_head = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+        )
+        self.branch_feature_proj = nn.Sequential(
+            nn.Linear(4, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.future_set_readout_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.future_set_weight_proj = nn.Sequential(
+            nn.Linear(1, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.future_set_readout_seed = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.future_set_readout_attn = nn.MultiheadAttention(
+            d_model,
+            num_heads=max(1, min(n_heads, 4)),
+            batch_first=True,
+        )
+        self.future_set_readout_query_norm = nn.LayerNorm(d_model)
+        self.future_set_readout_key_norm = nn.LayerNorm(d_model)
+        self.future_set_readout_ff = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.future_set_readout_out = nn.Sequential(
+            nn.Linear(2 * d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
         )
         self.local_code_codec = LocalCellCodeCodec(
             gene_dim=(gene_dim or backbone.local_model.gene_dim),
@@ -477,11 +525,14 @@ class EmbryoFutureSetModel(nn.Module):
         future_split_fraction: torch.Tensor,
         future_valid_mask: torch.Tensor,
         masked_future_view_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        split_count_scale: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         target_latents = []
         target_genes = []
+        target_mass = []
         target_splits = []
-        target_counts = []
+        target_survival = []
+        target_split_counts = []
         for i in range(future_local_latents.shape[0]):
             masked_idx = torch.nonzero(masked_future_view_mask[i], as_tuple=False).squeeze(-1)
             if masked_idx.numel() == 0:
@@ -494,13 +545,19 @@ class EmbryoFutureSetModel(nn.Module):
                 / masked_valid.sum(dim=1, keepdim=True).clamp_min(1.0)
             )
             target_genes.append(mean_genes)
-            target_splits.append(future_split_fraction[i, masked_idx])
-            target_counts.append(masked_valid.float().mean(dim=1))
+            mass = masked_valid.float().mean(dim=1)
+            target_mass.append(mass)
+            split_fraction = future_split_fraction[i, masked_idx]
+            target_splits.append(split_fraction)
+            target_survival.append((mass > 0).float())
+            target_split_counts.append(split_fraction * mass * split_count_scale)
         return (
             torch.stack(target_latents, dim=0),
             torch.stack(target_genes, dim=0),
+            torch.stack(target_mass, dim=0),
             torch.stack(target_splits, dim=0),
-            torch.stack(target_counts, dim=0),
+            torch.stack(target_survival, dim=0),
+            torch.stack(target_split_counts, dim=0),
         )
 
     @staticmethod
@@ -522,6 +579,32 @@ class EmbryoFutureSetModel(nn.Module):
         if self.learn_current_token_gate and self.current_token_gate_logit is not None:
             return torch.sigmoid(self.current_token_gate_logit)
         return self.current_token_gate_value
+
+    @staticmethod
+    def weighted_pool(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        norm = weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        return (values * weights.unsqueeze(-1)).sum(dim=1) / norm
+
+    def pool_future_set(self, values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        base_pool = self.weighted_pool(values, weights)
+        weight_features = self.future_set_weight_proj(weights.unsqueeze(-1))
+        memory = values * weights.unsqueeze(-1) + weight_features
+        key_padding_mask = weights <= 1e-6
+        if key_padding_mask.all(dim=1).any():
+            key_padding_mask = key_padding_mask.clone()
+            key_padding_mask[key_padding_mask.all(dim=1), 0] = False
+        readout_token = self.future_set_readout_token.expand(values.shape[0], -1, -1)
+        readout_token = readout_token + self.future_set_readout_seed(base_pool).unsqueeze(1)
+        readout_update, _ = self.future_set_readout_attn(
+            query=self.future_set_readout_query_norm(readout_token),
+            key=self.future_set_readout_key_norm(memory),
+            value=memory,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )
+        readout_token = readout_token + readout_update
+        readout_token = readout_token + self.future_set_readout_ff(readout_token)
+        return self.future_set_readout_out(torch.cat([base_pool, readout_token.squeeze(1)], dim=-1))
 
     def encode_masked_future_local_codes(
         self,
@@ -601,14 +684,17 @@ class EmbryoFutureSetModel(nn.Module):
         (
             target_future_set_latents,
             target_future_set_genes,
+            target_future_mass,
             target_future_split_fraction,
-            target_future_count_ratio,
+            target_future_survival,
+            target_future_split_count,
         ) = self.gather_masked_future_targets(
             future_local_latents,
             future_genes,
             future_split_fraction,
             future_valid_mask,
             masked_future_view_mask,
+            split_count_scale=float(self.local_code_codec.context_size),
         )
         visible_future_mask = ~masked_future_view_mask
         current_token = context_embryo_latent.unsqueeze(1) + self.token_type.weight[0].view(1, 1, -1)
@@ -656,16 +742,34 @@ class EmbryoFutureSetModel(nn.Module):
             )
             pred_slot_tokens = pred_slot_tokens + current_local_token_gate.view(1, 1, 1) * memory_out
             pred_slot_tokens = pred_slot_tokens + self.current_memory_ff(pred_slot_tokens)
+        pred_future_mass = torch.sigmoid(self.slot_mass_head(pred_slot_tokens).squeeze(-1))
+        pred_future_split_logits = self.slot_split_head(pred_slot_tokens).squeeze(-1)
+        pred_future_survival_logits = self.slot_survival_head(pred_slot_tokens).squeeze(-1)
+        pred_future_split_count = torch.nn.functional.softplus(
+            self.slot_split_count_head(pred_slot_tokens).squeeze(-1)
+        )
+        branch_features = torch.stack(
+            [
+                pred_future_mass,
+                torch.sigmoid(pred_future_survival_logits),
+                torch.sigmoid(pred_future_split_logits),
+                pred_future_split_count / max(1.0, float(self.local_code_codec.context_size)),
+            ],
+            dim=-1,
+        )
+        pred_slot_tokens = pred_slot_tokens + self.branch_feature_proj(branch_features)
         pred_future_set_latents = self.slot_predictor(pred_slot_tokens)
         pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
-        pred_future_split_logits = self.slot_split_head(pred_slot_tokens).squeeze(-1)
-        pred_future_count_logits = self.slot_count_head(pred_slot_tokens).squeeze(-1)
         pred_future_local_codes = self.slot_code_head(pred_slot_tokens).view(
             genes.shape[0],
             self.future_slots,
             self.code_tokens,
             pred_slot_tokens.shape[-1],
         )
+        pred_future_weights = pred_future_mass * torch.sigmoid(pred_future_survival_logits)
+        target_future_weights = target_future_mass * target_future_survival
+        pred_future_set_pooled_latent = self.pool_future_set(pred_future_set_latents, pred_future_weights)
+        target_future_set_pooled_latent = self.pool_future_set(target_future_set_latents, target_future_weights)
         with torch.no_grad():
             target_future_local_codes = self.encode_masked_future_local_codes(
                 future_local_latents=future_local_latents,
@@ -677,14 +781,20 @@ class EmbryoFutureSetModel(nn.Module):
             context_embryo_latent=context_embryo_latent,
             future_local_latents=future_local_latents,
             pred_future_set_latents=pred_future_set_latents,
+            pred_future_set_pooled_latent=pred_future_set_pooled_latent,
             pred_future_set_genes=pred_future_set_genes,
+            pred_future_mass=pred_future_mass,
             pred_future_split_logits=pred_future_split_logits,
-            pred_future_count_logits=pred_future_count_logits,
+            pred_future_survival_logits=pred_future_survival_logits,
+            pred_future_split_count=pred_future_split_count,
             pred_future_local_codes=pred_future_local_codes,
             target_future_set_latents=target_future_set_latents,
+            target_future_set_pooled_latent=target_future_set_pooled_latent,
             target_future_set_genes=target_future_set_genes,
+            target_future_mass=target_future_mass,
             target_future_split_fraction=target_future_split_fraction,
-            target_future_count_ratio=target_future_count_ratio,
+            target_future_survival=target_future_survival,
+            target_future_split_count=target_future_split_count,
             target_future_local_codes=target_future_local_codes,
             masked_view_mask=masked_view_mask,
             masked_future_view_mask=masked_future_view_mask,

@@ -241,8 +241,8 @@ def collect_latents_and_targets(
                 future_relative_position=future_relative_position,
             )
 
-        true_latents.append(out.target_future_set_latents.mean(dim=1).cpu().numpy())
-        pred_latents.append(out.pred_future_set_latents.mean(dim=1).cpu().numpy())
+        true_latents.append(out.target_future_set_pooled_latent.cpu().numpy())
+        pred_latents.append(out.pred_future_set_pooled_latent.cpu().numpy())
         targets["founder"].append(batch["future_founder_composition"].cpu().numpy())
         targets["celltype"].append(batch["future_celltype_composition"].cpu().numpy())
         targets["depth"].append(batch["future_lineage_depth_stats"].cpu().numpy())
@@ -271,8 +271,8 @@ def collect_latents_and_targets(
                 (
                     1.0
                     - torch.nn.functional.cosine_similarity(
-                        out.pred_future_set_latents.mean(dim=1),
-                        out.target_future_set_latents.mean(dim=1),
+                        out.pred_future_set_pooled_latent,
+                        out.target_future_set_pooled_latent,
                         dim=-1,
                     )
                 )

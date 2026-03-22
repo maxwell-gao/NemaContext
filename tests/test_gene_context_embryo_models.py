@@ -343,15 +343,24 @@ def test_embryo_future_set_model_forward():
     assert out.context_embryo_latent.shape == (2, 64)
     assert out.future_local_latents.shape == (2, n_future_views, 64)
     assert out.pred_future_set_latents.shape == (2, 1, 64)
+    assert out.pred_future_set_pooled_latent.shape == (2, 64)
     assert out.pred_future_set_genes.shape == (2, 1, dataset.gene_dim)
+    assert out.pred_future_mass.shape == (2, 1)
     assert out.pred_future_split_logits.shape == (2, 1)
-    assert out.pred_future_count_logits.shape == (2, 1)
+    assert out.pred_future_survival_logits.shape == (2, 1)
+    assert out.pred_future_split_count.shape == (2, 1)
     assert out.pred_future_local_codes.shape == (2, 1, 4, 64)
     assert out.target_future_set_latents.shape == (2, 1, 64)
+    assert out.target_future_set_pooled_latent.shape == (2, 64)
     assert out.target_future_set_genes.shape == (2, 1, dataset.gene_dim)
+    assert out.target_future_mass.shape == (2, 1)
     assert out.target_future_split_fraction.shape == (2, 1)
-    assert out.target_future_count_ratio.shape == (2, 1)
+    assert out.target_future_survival.shape == (2, 1)
+    assert out.target_future_split_count.shape == (2, 1)
     assert out.target_future_local_codes.shape == (2, 1, 4, 64)
+    zero_weight_pooled = model.pool_future_set(out.pred_future_set_latents.detach(), torch.zeros(2, 1))
+    assert zero_weight_pooled.shape == (2, 64)
+    assert torch.isfinite(zero_weight_pooled).all()
     decoded = model.decode_future_local_codes(out.pred_future_local_codes)
     assert decoded.pred_cell_genes.shape == (2, 1, 8, dataset.gene_dim)
     assert decoded.pred_cell_positions.shape == (2, 1, 8, 3)
@@ -446,6 +455,7 @@ def test_embryo_future_set_model_backward_compatible_without_current_local_token
         future_relative_position=future_relative_position,
     )
     assert out.pred_future_set_latents.shape == (2, 1, 64)
+    assert out.pred_future_set_pooled_latent.shape == (2, 64)
     assert out.current_local_token_gate is None
 
 
@@ -537,4 +547,5 @@ def test_embryo_future_set_model_flat_current_tokens_still_supported():
         future_relative_position=future_relative_position,
     )
     assert out.pred_future_set_latents.shape == (2, 1, 64)
+    assert out.pred_future_set_pooled_latent.shape == (2, 64)
     assert out.current_local_token_gate is not None

@@ -101,6 +101,8 @@ def parse_args():
     p.add_argument("--decoded_count_weight", type=float, default=0.1)
     p.add_argument("--explicit_count_weight", type=float, default=0.1)
     p.add_argument("--explicit_split_weight", type=float, default=0.1)
+    p.add_argument("--survival_weight", type=float, default=0.05)
+    p.add_argument("--split_count_weight", type=float, default=0.05)
     p.add_argument("--sinkhorn_blur", type=float, default=0.05)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--decoded_gene_sinkhorn_blur", type=float, default=0.1)
@@ -242,6 +244,8 @@ def compute_metrics(
     decoded_count_weight: float,
     explicit_count_weight: float,
     explicit_split_weight: float,
+    survival_weight: float,
+    split_count_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
     decoded_gene_sinkhorn_blur: float,
@@ -337,8 +341,8 @@ def compute_metrics(
     mean_latent_loss = (
         1.0
         - F.cosine_similarity(
-            out.pred_future_set_latents.mean(dim=1),
-            out.target_future_set_latents.detach().mean(dim=1),
+            out.pred_future_set_pooled_latent,
+            out.target_future_set_pooled_latent.detach(),
             dim=-1,
         )
     ).mean()
@@ -397,11 +401,16 @@ def compute_metrics(
     target_count_ratio = masked_future_valid_mask.float().sum(dim=2) / float(masked_future_valid_mask.shape[-1])
     decoded_mean_gene_loss = F.mse_loss(decoded.pred_mean_gene, target_mean_gene)
     decoded_count_loss = F.mse_loss(torch.sigmoid(decoded.pred_cell_count), target_count_ratio)
-    explicit_count_loss = F.mse_loss(torch.sigmoid(out.pred_future_count_logits), out.target_future_count_ratio)
+    explicit_count_loss = F.mse_loss(out.pred_future_mass, out.target_future_mass)
     explicit_split_loss = F.mse_loss(
         torch.sigmoid(out.pred_future_split_logits),
         out.target_future_split_fraction,
     )
+    survival_loss = F.binary_cross_entropy_with_logits(
+        out.pred_future_survival_logits,
+        out.target_future_survival,
+    )
+    split_count_loss = F.mse_loss(out.pred_future_split_count, out.target_future_split_count)
     total = (
         latent_set_weight * latent_set_loss
         + gene_set_weight * gene_set_loss
@@ -413,6 +422,8 @@ def compute_metrics(
         + decoded_count_weight * decoded_count_loss
         + explicit_count_weight * explicit_count_loss
         + explicit_split_weight * explicit_split_loss
+        + survival_weight * survival_loss
+        + split_count_weight * split_count_loss
     )
     return total, {
         "total": total.item(),
@@ -426,6 +437,8 @@ def compute_metrics(
         "decoded_count": decoded_count_loss.item(),
         "explicit_count": explicit_count_loss.item(),
         "explicit_split": explicit_split_loss.item(),
+        "survival": survival_loss.item(),
+        "split_count": split_count_loss.item(),
     }
 
 
@@ -446,6 +459,8 @@ def run_epoch(
     decoded_count_weight: float,
     explicit_count_weight: float,
     explicit_split_weight: float,
+    survival_weight: float,
+    split_count_weight: float,
     sinkhorn_blur: float,
     gene_sinkhorn_blur: float,
     decoded_gene_sinkhorn_blur: float,
@@ -475,6 +490,8 @@ def run_epoch(
             decoded_count_weight,
             explicit_count_weight,
             explicit_split_weight,
+            survival_weight,
+            split_count_weight,
             sinkhorn_blur,
             gene_sinkhorn_blur,
             decoded_gene_sinkhorn_blur,
@@ -606,6 +623,8 @@ def main():
             args.decoded_count_weight,
             args.explicit_count_weight,
             args.explicit_split_weight,
+            args.survival_weight,
+            args.split_count_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
             args.decoded_gene_sinkhorn_blur,
@@ -631,6 +650,8 @@ def main():
             args.decoded_count_weight,
             args.explicit_count_weight,
             args.explicit_split_weight,
+            args.survival_weight,
+            args.split_count_weight,
             args.sinkhorn_blur,
             args.gene_sinkhorn_blur,
             args.decoded_gene_sinkhorn_blur,
@@ -647,7 +668,8 @@ def main():
             f"val_local_code={val_metrics['local_code']:.4f} "
             f"val_decoded_gene={val_metrics['decoded_gene']:.4f} "
             f"val_decoded_spatial={val_metrics['decoded_spatial']:.4f} "
-            f"val_split={val_metrics['explicit_split']:.4f}"
+            f"val_split={val_metrics['explicit_split']:.4f} "
+            f"val_survival={val_metrics['survival']:.4f}"
         )
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]

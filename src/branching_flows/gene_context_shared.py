@@ -64,14 +64,20 @@ class EmbryoFutureSetOutput:
     context_embryo_latent: torch.Tensor
     future_local_latents: torch.Tensor
     pred_future_set_latents: torch.Tensor
+    pred_future_set_pooled_latent: torch.Tensor
     pred_future_set_genes: torch.Tensor
+    pred_future_mass: torch.Tensor
     pred_future_split_logits: torch.Tensor
-    pred_future_count_logits: torch.Tensor
+    pred_future_survival_logits: torch.Tensor
+    pred_future_split_count: torch.Tensor
     pred_future_local_codes: torch.Tensor
     target_future_set_latents: torch.Tensor
+    target_future_set_pooled_latent: torch.Tensor
     target_future_set_genes: torch.Tensor
+    target_future_mass: torch.Tensor
     target_future_split_fraction: torch.Tensor
-    target_future_count_ratio: torch.Tensor
+    target_future_survival: torch.Tensor
+    target_future_split_count: torch.Tensor
     target_future_local_codes: torch.Tensor
     masked_view_mask: torch.Tensor
     masked_future_view_mask: torch.Tensor
