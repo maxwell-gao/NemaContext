@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 @dataclass
@@ -64,6 +65,7 @@ class EmbryoFutureSetOutput:
     context_embryo_latent: torch.Tensor
     future_local_latents: torch.Tensor
     pred_future_set_latents: torch.Tensor
+    pred_future_set_raw_pooled_latent: torch.Tensor
     pred_future_set_pooled_latent: torch.Tensor
     pred_future_set_genes: torch.Tensor
     pred_future_mass: torch.Tensor
@@ -72,6 +74,7 @@ class EmbryoFutureSetOutput:
     pred_future_split_count: torch.Tensor
     pred_future_local_codes: torch.Tensor
     target_future_set_latents: torch.Tensor
+    target_future_set_raw_pooled_latent: torch.Tensor
     target_future_set_pooled_latent: torch.Tensor
     target_future_set_genes: torch.Tensor
     target_future_mass: torch.Tensor
@@ -106,6 +109,39 @@ class LocalCellCodeOutput:
     pred_cell_count: torch.Tensor
     pred_mean_gene: torch.Tensor
     pred_patch_latent: torch.Tensor
+
+
+class PooledLatentCanonicalizer(nn.Module):
+    """Fixed canonical basis for pooled future-set latents."""
+
+    def __init__(
+        self,
+        dim: int,
+        mean: torch.Tensor | None = None,
+        transform: torch.Tensor | None = None,
+        mode: str = "identity",
+    ):
+        super().__init__()
+        if dim < 1:
+            raise ValueError("dim must be >= 1")
+        if mode not in {"identity", "diag_standardize", "pca_whiten"}:
+            raise ValueError("mode must be one of: identity, diag_standardize, pca_whiten")
+        mean_tensor = torch.zeros(dim, dtype=torch.float32) if mean is None else mean.detach().float().view(dim)
+        transform_tensor = (
+            torch.eye(dim, dtype=torch.float32)
+            if transform is None
+            else transform.detach().float().view(dim, dim)
+        )
+        self.dim = int(dim)
+        self.mode = mode
+        self.register_buffer("mean", mean_tensor)
+        self.register_buffer("transform", transform_tensor)
+
+    def forward(self, pooled_latent: torch.Tensor) -> torch.Tensor:
+        return F.linear(pooled_latent - self.mean, self.transform)
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, mode={self.mode!r}"
 
 
 class LocalCellCodeCodec(nn.Module):
@@ -254,6 +290,40 @@ class LocalCellCodeCodec(nn.Module):
         pred_cell_count = self.count_head(pooled_spatial).squeeze(-1).reshape(*leading_shape)
         pred_mean_gene = self.mean_gene_head(pooled_code).reshape(*leading_shape, self.gene_dim)
         pred_patch_latent = self.patch_latent_head(pooled_code).reshape(*leading_shape, flat_code_tokens.shape[-1])
+        return LocalCellDecodeOutput(
+            pred_cell_genes=pred_cell_genes,
+            pred_cell_positions=pred_cell_positions,
+            pred_cell_valid_logits=pred_cell_valid_logits,
+            pred_cell_spatial_logits=pred_cell_spatial_logits,
+            pred_cell_count=pred_cell_count,
+            pred_mean_gene=pred_mean_gene,
+            pred_patch_latent=pred_patch_latent,
+        )
+
+    def decode_token_states(self, token_states: torch.Tensor) -> LocalCellDecodeOutput:
+        leading_shape = token_states.shape[:-2]
+        flat_token_states = token_states.reshape(-1, token_states.shape[-2], token_states.shape[-1])
+        pooled_state = flat_token_states.mean(dim=1)
+        gene_cells = flat_token_states + self.gene_decode_ff(flat_token_states)
+        spatial_cells = flat_token_states + self.spatial_decode_ff(flat_token_states)
+        pred_cell_genes = self.cell_gene_head(gene_cells).reshape(
+            *leading_shape, flat_token_states.shape[1], self.gene_dim
+        )
+        pred_cell_positions = self.cell_position_head(spatial_cells).reshape(
+            *leading_shape, flat_token_states.shape[1], 3
+        )
+        pred_cell_valid_logits = self.cell_valid_head(spatial_cells).squeeze(-1).reshape(
+            *leading_shape, flat_token_states.shape[1]
+        )
+        pred_cell_spatial_logits = self.cell_spatial_head(spatial_cells).squeeze(-1).reshape(
+            *leading_shape, flat_token_states.shape[1]
+        )
+        pooled_spatial = spatial_cells.mean(dim=1)
+        pred_cell_count = self.count_head(pooled_spatial).squeeze(-1).reshape(*leading_shape)
+        pred_mean_gene = self.mean_gene_head(pooled_state).reshape(*leading_shape, self.gene_dim)
+        pred_patch_latent = self.patch_latent_head(pooled_state).reshape(
+            *leading_shape, flat_token_states.shape[-1]
+        )
         return LocalCellDecodeOutput(
             pred_cell_genes=pred_cell_genes,
             pred_cell_positions=pred_cell_positions,

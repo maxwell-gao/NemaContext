@@ -15,6 +15,7 @@ from .gene_context_shared import (
     EmbryoStateOutput,
     LocalCellCodeCodec,
     LocalCellDecodeOutput,
+    PooledLatentCanonicalizer,
 )
 
 
@@ -372,6 +373,8 @@ class EmbryoFutureSetModel(nn.Module):
         current_token_gate_init: float = 0.5,
         current_conditioning_mode: str = "flat_tokens",
         code_tokens: int = 8,
+        predict_dense_future_tokens: bool = False,
+        pooled_latent_canonicalizer: PooledLatentCanonicalizer | None = None,
     ):
         super().__init__()
         if future_slots < 1:
@@ -384,6 +387,7 @@ class EmbryoFutureSetModel(nn.Module):
         self.learn_current_token_gate = learn_current_token_gate
         self.current_conditioning_mode = current_conditioning_mode
         self.code_tokens = int(code_tokens)
+        self.predict_dense_future_tokens = bool(predict_dense_future_tokens)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.slot_queries = nn.Parameter(torch.randn(future_slots, d_model) * 0.02)
         n_token_types = 4 if use_current_local_tokens else 3
@@ -472,38 +476,7 @@ class EmbryoFutureSetModel(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
-        self.future_set_readout_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
-        self.future_set_weight_proj = nn.Sequential(
-            nn.Linear(1, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
-        )
-        self.future_set_readout_seed = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
-        )
-        self.future_set_readout_attn = nn.MultiheadAttention(
-            d_model,
-            num_heads=max(1, min(n_heads, 4)),
-            batch_first=True,
-        )
-        self.future_set_readout_query_norm = nn.LayerNorm(d_model)
-        self.future_set_readout_key_norm = nn.LayerNorm(d_model)
-        self.future_set_readout_ff = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
-        )
-        self.future_set_readout_out = nn.Sequential(
-            nn.Linear(2 * d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
-        )
+        self.pooled_latent_canonicalizer = pooled_latent_canonicalizer or PooledLatentCanonicalizer(d_model)
         self.local_code_codec = LocalCellCodeCodec(
             gene_dim=(gene_dim or backbone.local_model.gene_dim),
             context_size=int(backbone.local_model.context_size),
@@ -511,12 +484,30 @@ class EmbryoFutureSetModel(nn.Module):
             n_heads=n_heads,
             code_tokens=self.code_tokens,
         )
-        self.slot_code_head = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, self.code_tokens * d_model),
-        )
+        if self.predict_dense_future_tokens:
+            self.future_token_queries = nn.Parameter(
+                torch.randn(self.local_code_codec.context_size, d_model) * 0.02
+            )
+            self.slot_token_state_seed = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            self.slot_token_state_ff = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            self.slot_code_head = None
+        else:
+            self.slot_code_head = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.LayerNorm(d_model),
+                nn.GELU(),
+                nn.Linear(d_model, self.code_tokens * d_model),
+            )
 
     @staticmethod
     def gather_masked_future_targets(
@@ -586,25 +577,7 @@ class EmbryoFutureSetModel(nn.Module):
         return (values * weights.unsqueeze(-1)).sum(dim=1) / norm
 
     def pool_future_set(self, values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        base_pool = self.weighted_pool(values, weights)
-        weight_features = self.future_set_weight_proj(weights.unsqueeze(-1))
-        memory = values * weights.unsqueeze(-1) + weight_features
-        key_padding_mask = weights <= 1e-6
-        if key_padding_mask.all(dim=1).any():
-            key_padding_mask = key_padding_mask.clone()
-            key_padding_mask[key_padding_mask.all(dim=1), 0] = False
-        readout_token = self.future_set_readout_token.expand(values.shape[0], -1, -1)
-        readout_token = readout_token + self.future_set_readout_seed(base_pool).unsqueeze(1)
-        readout_update, _ = self.future_set_readout_attn(
-            query=self.future_set_readout_query_norm(readout_token),
-            key=self.future_set_readout_key_norm(memory),
-            value=memory,
-            key_padding_mask=key_padding_mask,
-            need_weights=False,
-        )
-        readout_token = readout_token + readout_update
-        readout_token = readout_token + self.future_set_readout_ff(readout_token)
-        return self.future_set_readout_out(torch.cat([base_pool, readout_token.squeeze(1)], dim=-1))
+        return self.weighted_pool(values, weights)
 
     def encode_masked_future_local_codes(
         self,
@@ -633,6 +606,8 @@ class EmbryoFutureSetModel(nn.Module):
         return local_codes.view(batch_size, n_slots, self.code_tokens, -1)
 
     def decode_future_local_codes(self, local_codes: torch.Tensor) -> LocalCellDecodeOutput:
+        if self.predict_dense_future_tokens and local_codes.shape[-2] == self.local_code_codec.context_size:
+            return self.local_code_codec.decode_token_states(local_codes)
         return self.local_code_codec.decode(local_codes)
 
     def forward(
@@ -760,27 +735,52 @@ class EmbryoFutureSetModel(nn.Module):
         pred_slot_tokens = pred_slot_tokens + self.branch_feature_proj(branch_features)
         pred_future_set_latents = self.slot_predictor(pred_slot_tokens)
         pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
-        pred_future_local_codes = self.slot_code_head(pred_slot_tokens).view(
-            genes.shape[0],
-            self.future_slots,
-            self.code_tokens,
-            pred_slot_tokens.shape[-1],
-        )
+        if self.predict_dense_future_tokens:
+            token_seed = self.slot_token_state_seed(pred_slot_tokens).unsqueeze(2)
+            future_token_queries = self.future_token_queries.view(
+                1,
+                1,
+                self.local_code_codec.context_size,
+                pred_slot_tokens.shape[-1],
+            )
+            pred_future_local_codes = future_token_queries + token_seed
+            pred_future_local_codes = pred_future_local_codes + self.slot_token_state_ff(pred_future_local_codes)
+        else:
+            pred_future_local_codes = self.slot_code_head(pred_slot_tokens).view(
+                genes.shape[0],
+                self.future_slots,
+                self.code_tokens,
+                pred_slot_tokens.shape[-1],
+            )
         pred_future_weights = pred_future_mass * torch.sigmoid(pred_future_survival_logits)
         target_future_weights = target_future_mass * target_future_survival
-        pred_future_set_pooled_latent = self.pool_future_set(pred_future_set_latents, pred_future_weights)
-        target_future_set_pooled_latent = self.pool_future_set(target_future_set_latents, target_future_weights)
+        pred_future_set_raw_pooled_latent = self.pool_future_set(pred_future_set_latents, pred_future_weights)
+        target_future_set_raw_pooled_latent = self.pool_future_set(target_future_set_latents, target_future_weights)
+        pred_future_set_pooled_latent = self.pooled_latent_canonicalizer(pred_future_set_raw_pooled_latent)
+        target_future_set_pooled_latent = self.pooled_latent_canonicalizer(target_future_set_raw_pooled_latent)
         with torch.no_grad():
-            target_future_local_codes = self.encode_masked_future_local_codes(
-                future_local_latents=future_local_latents,
-                future_token_states=future_local_token_states,
-                future_valid_mask=future_valid_mask,
-                masked_future_view_mask=masked_future_view_mask,
-            )
+            if self.predict_dense_future_tokens:
+                target_future_local_codes = self.gather_masked_future_view_tensor(
+                    future_local_token_states,
+                    masked_future_view_mask,
+                )
+                target_future_valid_mask = self.gather_masked_future_view_tensor(
+                    future_valid_mask,
+                    masked_future_view_mask,
+                )
+                target_future_local_codes = target_future_local_codes * target_future_valid_mask.unsqueeze(-1).float()
+            else:
+                target_future_local_codes = self.encode_masked_future_local_codes(
+                    future_local_latents=future_local_latents,
+                    future_token_states=future_local_token_states,
+                    future_valid_mask=future_valid_mask,
+                    masked_future_view_mask=masked_future_view_mask,
+                )
         return EmbryoFutureSetOutput(
             context_embryo_latent=context_embryo_latent,
             future_local_latents=future_local_latents,
             pred_future_set_latents=pred_future_set_latents,
+            pred_future_set_raw_pooled_latent=pred_future_set_raw_pooled_latent,
             pred_future_set_pooled_latent=pred_future_set_pooled_latent,
             pred_future_set_genes=pred_future_set_genes,
             pred_future_mass=pred_future_mass,
@@ -789,6 +789,7 @@ class EmbryoFutureSetModel(nn.Module):
             pred_future_split_count=pred_future_split_count,
             pred_future_local_codes=pred_future_local_codes,
             target_future_set_latents=target_future_set_latents,
+            target_future_set_raw_pooled_latent=target_future_set_raw_pooled_latent,
             target_future_set_pooled_latent=target_future_set_pooled_latent,
             target_future_set_genes=target_future_set_genes,
             target_future_mass=target_future_mass,

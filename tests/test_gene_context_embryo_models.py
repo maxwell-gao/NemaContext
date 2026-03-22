@@ -16,6 +16,7 @@ from src.branching_flows.gene_context import (  # noqa: E402
     EmbryoMaskedViewModel,
     EmbryoStateModel,
     LocalCellCodeModel,
+    PooledLatentCanonicalizer,
 )
 from src.data.gene_context_dataset import (  # noqa: E402
     EmbryoViewDataset,
@@ -343,7 +344,13 @@ def test_embryo_future_set_model_forward():
     assert out.context_embryo_latent.shape == (2, 64)
     assert out.future_local_latents.shape == (2, n_future_views, 64)
     assert out.pred_future_set_latents.shape == (2, 1, 64)
+    assert out.pred_future_set_raw_pooled_latent.shape == (2, 64)
     assert out.pred_future_set_pooled_latent.shape == (2, 64)
+    assert torch.allclose(
+        out.pred_future_set_raw_pooled_latent,
+        out.pred_future_set_pooled_latent,
+        atol=1e-5,
+    )
     assert out.pred_future_set_genes.shape == (2, 1, dataset.gene_dim)
     assert out.pred_future_mass.shape == (2, 1)
     assert out.pred_future_split_logits.shape == (2, 1)
@@ -351,7 +358,13 @@ def test_embryo_future_set_model_forward():
     assert out.pred_future_split_count.shape == (2, 1)
     assert out.pred_future_local_codes.shape == (2, 1, 4, 64)
     assert out.target_future_set_latents.shape == (2, 1, 64)
+    assert out.target_future_set_raw_pooled_latent.shape == (2, 64)
     assert out.target_future_set_pooled_latent.shape == (2, 64)
+    assert torch.allclose(
+        out.target_future_set_raw_pooled_latent,
+        out.target_future_set_pooled_latent,
+        atol=1e-5,
+    )
     assert out.target_future_set_genes.shape == (2, 1, dataset.gene_dim)
     assert out.target_future_mass.shape == (2, 1)
     assert out.target_future_split_fraction.shape == (2, 1)
@@ -366,6 +379,19 @@ def test_embryo_future_set_model_forward():
     assert decoded.pred_cell_positions.shape == (2, 1, 8, 3)
     assert out.current_local_token_gate is not None
     assert 0.0 < float(out.current_local_token_gate.item()) < 1.0
+
+
+def test_pooled_latent_canonicalizer_applies_fixed_linear_basis():
+    canonicalizer = PooledLatentCanonicalizer(
+        dim=2,
+        mean=torch.tensor([1.0, -1.0]),
+        transform=torch.tensor([[2.0, 0.0], [0.0, 0.5]]),
+        mode="diag_standardize",
+    )
+    x = torch.tensor([[3.0, 3.0], [1.0, -1.0]])
+    y = canonicalizer(x)
+    expected = torch.tensor([[4.0, 2.0], [0.0, 0.0]])
+    assert torch.allclose(y, expected)
 
 
 def test_embryo_future_set_model_backward_compatible_without_current_local_tokens():
@@ -457,6 +483,100 @@ def test_embryo_future_set_model_backward_compatible_without_current_local_token
     assert out.pred_future_set_latents.shape == (2, 1, 64)
     assert out.pred_future_set_pooled_latent.shape == (2, 64)
     assert out.current_local_token_gate is None
+
+
+def test_embryo_future_set_model_supports_dense_future_token_prediction():
+    """Future-set model should support direct masked future token-state prediction without code bottleneck."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = EmbryoViewDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=2,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=2,
+        views_per_embryo=3,
+        future_views_per_embryo=3,
+        top_cell_types=4,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient embryo-view samples")
+
+    batch = collate_embryo_view([dataset[0], dataset[1]])
+    n_views = int(batch["views_per_embryo"][0].item())
+    n_future_views = int(batch["future_views_per_embryo"][0].item())
+    genes = torch.stack([batch[f"view_{i}_genes"] for i in range(n_views)], dim=1)
+    context_role = torch.stack([batch[f"view_{i}_context_role"] for i in range(n_views)], dim=1)
+    relative_position = torch.stack([batch[f"view_{i}_relative_position"] for i in range(n_views)], dim=1)
+    token_times = torch.stack([batch[f"view_{i}_token_times"] for i in range(n_views)], dim=1)
+    valid_mask = torch.stack([batch[f"view_{i}_valid_mask"] for i in range(n_views)], dim=1)
+    anchor_mask = torch.stack([batch[f"view_{i}_anchor_mask"] for i in range(n_views)], dim=1)
+    time = torch.stack([batch[f"view_{i}_time"] for i in range(n_views)], dim=1)
+    future_genes = torch.stack([batch[f"future_view_{i}_genes"] for i in range(n_future_views)], dim=1)
+    future_context_role = torch.stack([batch[f"future_view_{i}_context_role"] for i in range(n_future_views)], dim=1)
+    future_relative_position = torch.stack([batch[f"future_view_{i}_relative_position"] for i in range(n_future_views)], dim=1)
+    future_split_fraction = torch.stack([batch[f"future_view_{i}_split_fraction"] for i in range(n_future_views)], dim=1)
+    future_token_times = torch.stack([batch[f"future_view_{i}_token_times"] for i in range(n_future_views)], dim=1)
+    future_valid_mask = torch.stack([batch[f"future_view_{i}_valid_mask"] for i in range(n_future_views)], dim=1)
+    future_anchor_mask = torch.stack([batch[f"future_view_{i}_anchor_mask"] for i in range(n_future_views)], dim=1)
+    future_time = torch.stack([batch[f"future_view_{i}_time"] for i in range(n_future_views)], dim=1)
+
+    backbone = EmbryoMaskedViewModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        model_type="multi_cell",
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+        use_pairwise_spatial_bias=True,
+    )
+    model = EmbryoFutureSetModel(
+        backbone=backbone,
+        future_slots=1,
+        d_model=64,
+        gene_dim=dataset.gene_dim,
+        use_current_local_tokens=True,
+        learn_current_token_gate=True,
+        current_token_gate_init=0.5,
+        current_conditioning_mode="flat_tokens",
+        code_tokens=4,
+        predict_dense_future_tokens=True,
+    )
+    masked_future_view_mask = torch.tensor(
+        [[False, True, False], [True, False, False]],
+        dtype=torch.bool,
+    )
+    out = model(
+        genes=genes,
+        time=time,
+        token_times=token_times,
+        valid_mask=valid_mask,
+        anchor_mask=anchor_mask,
+        future_genes=future_genes,
+        future_time=future_time,
+        future_token_times=future_token_times,
+        future_valid_mask=future_valid_mask,
+        future_anchor_mask=future_anchor_mask,
+        masked_future_view_mask=masked_future_view_mask,
+        future_split_fraction=future_split_fraction,
+        masked_view_mask=None,
+        context_role=context_role,
+        relative_position=relative_position,
+        future_context_role=future_context_role,
+        future_relative_position=future_relative_position,
+    )
+    assert out.pred_future_local_codes.shape == (2, 1, 8, 64)
+    assert out.target_future_local_codes.shape == (2, 1, 8, 64)
+    decoded = model.decode_future_local_codes(out.pred_future_local_codes)
+    assert decoded.pred_cell_genes.shape == (2, 1, 8, dataset.gene_dim)
+    assert decoded.pred_cell_positions.shape == (2, 1, 8, 3)
 
 
 def test_embryo_future_set_model_flat_current_tokens_still_supported():

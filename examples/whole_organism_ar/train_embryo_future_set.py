@@ -24,6 +24,7 @@ from src.branching_flows.emergent_loss import sinkhorn_divergence  # noqa: E402
 from src.branching_flows.gene_context import (  # noqa: E402
     EmbryoFutureSetModel,
     EmbryoMaskedViewModel,
+    PooledLatentCanonicalizer,
 )
 from src.data.gene_context_dataset import EmbryoViewDataset, collate_embryo_view  # noqa: E402
 
@@ -93,7 +94,12 @@ def parse_args():
     p.add_argument("--latent_set_weight", type=float, default=1.0)
     p.add_argument("--gene_set_weight", type=float, default=0.5)
     p.add_argument("--mean_latent_weight", type=float, default=0.25)
+    p.add_argument("--pooled_canonicalizer_path", default=None)
+    p.add_argument("--pooled_align_weight", type=float, default=0.0)
+    p.add_argument("--pooled_var_weight", type=float, default=0.0)
+    p.add_argument("--pooled_cov_weight", type=float, default=0.0)
     p.add_argument("--code_tokens", type=int, default=8)
+    p.add_argument("--predict_dense_future_tokens", action="store_true")
     p.add_argument("--local_code_weight", type=float, default=0.5)
     p.add_argument("--decoded_gene_weight", type=float, default=0.5)
     p.add_argument("--decoded_spatial_weight", type=float, default=0.25)
@@ -178,6 +184,33 @@ def load_backbone(args) -> tuple[EmbryoMaskedViewModel, dict | None]:
     return backbone, ckpt
 
 
+def load_pooled_canonicalizer(path: str | None, d_model: int) -> PooledLatentCanonicalizer:
+    canonicalizer = PooledLatentCanonicalizer(d_model)
+    if path is None:
+        return canonicalizer
+    payload = torch.load(path, map_location="cpu")
+    state_dict = payload.get("canonicalizer_state_dict", payload.get("state_dict", payload))
+    canonicalizer.load_state_dict(state_dict)
+    return canonicalizer
+
+
+def pooled_variance_covariance_losses(
+    pooled_latent: torch.Tensor,
+    target_std: float = 1.0,
+    eps: float = 1e-4,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if pooled_latent.shape[0] < 2:
+        zero = pooled_latent.new_zeros(())
+        return zero, zero
+    centered = pooled_latent - pooled_latent.mean(dim=0, keepdim=True)
+    std = torch.sqrt(centered.var(dim=0, unbiased=False) + eps)
+    var_loss = torch.relu(target_std - std).mean()
+    cov = centered.T @ centered / max(1, pooled_latent.shape[0] - 1)
+    off_diag = cov - torch.diag_embed(torch.diagonal(cov))
+    cov_loss = off_diag.pow(2).mean()
+    return var_loss, cov_loss
+
+
 def build_target_structured_state(
     genes: torch.Tensor,
     relative_position: torch.Tensor,
@@ -237,6 +270,9 @@ def compute_metrics(
     latent_set_weight: float,
     gene_set_weight: float,
     mean_latent_weight: float,
+    pooled_align_weight: float,
+    pooled_var_weight: float,
+    pooled_cov_weight: float,
     local_code_weight: float,
     decoded_gene_weight: float,
     decoded_spatial_weight: float,
@@ -346,10 +382,26 @@ def compute_metrics(
             dim=-1,
         )
     ).mean()
-    local_code_loss = F.mse_loss(
-        out.pred_future_local_codes,
-        out.target_future_local_codes.detach(),
+    if model.predict_dense_future_tokens:
+        masked_future_valid_mask = model.gather_masked_future_view_tensor(
+            future_valid_mask,
+            masked_future_view_mask,
+        )
+        token_mask = masked_future_valid_mask.unsqueeze(-1).float()
+        local_code_loss = F.mse_loss(
+            out.pred_future_local_codes * token_mask,
+            out.target_future_local_codes.detach(),
+        )
+    else:
+        local_code_loss = F.mse_loss(
+            out.pred_future_local_codes,
+            out.target_future_local_codes.detach(),
+        )
+    pooled_align_loss = F.mse_loss(
+        out.pred_future_set_pooled_latent,
+        out.target_future_set_pooled_latent.detach(),
     )
+    pooled_var_loss, pooled_cov_loss = pooled_variance_covariance_losses(out.pred_future_set_pooled_latent)
     decoded = model.decode_future_local_codes(out.pred_future_local_codes)
     masked_future_genes = model.gather_masked_future_view_tensor(future_genes, masked_future_view_mask)
     masked_future_valid_mask = model.gather_masked_future_view_tensor(
@@ -415,6 +467,9 @@ def compute_metrics(
         latent_set_weight * latent_set_loss
         + gene_set_weight * gene_set_loss
         + mean_latent_weight * mean_latent_loss
+        + pooled_align_weight * pooled_align_loss
+        + pooled_var_weight * pooled_var_loss
+        + pooled_cov_weight * pooled_cov_loss
         + local_code_weight * local_code_loss
         + decoded_gene_weight * decoded_gene_loss
         + decoded_spatial_weight * decoded_spatial_loss
@@ -430,6 +485,9 @@ def compute_metrics(
         "latent_set": latent_set_loss.item(),
         "gene_set": gene_set_loss.item(),
         "mean_latent": mean_latent_loss.item(),
+        "pooled_align": pooled_align_loss.item(),
+        "pooled_var": pooled_var_loss.item(),
+        "pooled_cov": pooled_cov_loss.item(),
         "local_code": local_code_loss.item(),
         "decoded_gene": decoded_gene_loss.item(),
         "decoded_spatial": decoded_spatial_loss.item(),
@@ -452,6 +510,9 @@ def run_epoch(
     latent_set_weight: float,
     gene_set_weight: float,
     mean_latent_weight: float,
+    pooled_align_weight: float,
+    pooled_var_weight: float,
+    pooled_cov_weight: float,
     local_code_weight: float,
     decoded_gene_weight: float,
     decoded_spatial_weight: float,
@@ -483,6 +544,9 @@ def run_epoch(
             latent_set_weight,
             gene_set_weight,
             mean_latent_weight,
+            pooled_align_weight,
+            pooled_var_weight,
+            pooled_cov_weight,
             local_code_weight,
             decoded_gene_weight,
             decoded_spatial_weight,
@@ -514,6 +578,11 @@ def run_epoch(
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
+    if (
+        args.pooled_canonicalizer_path is None
+        and (args.pooled_align_weight > 0.0 or args.pooled_var_weight > 0.0 or args.pooled_cov_weight > 0.0)
+    ):
+        raise ValueError("pooled canonicalizer path is required when pooled latent alignment regularization is enabled")
     train_filters = resolve_event_filters(args)
     val_filters = resolve_event_filters(args, prefix="val_")
 
@@ -581,6 +650,10 @@ def main():
             int(round(args.future_mask_ratio * train_ds.future_views_per_embryo)),
         ),
     )
+    pooled_canonicalizer = load_pooled_canonicalizer(
+        args.pooled_canonicalizer_path,
+        args.d_model if ckpt is None else int(ckpt["config"]["d_model"]),
+    )
     model = EmbryoFutureSetModel(
         backbone=backbone,
         future_slots=future_slots,
@@ -594,6 +667,8 @@ def main():
         current_token_gate_init=args.current_token_gate_init,
         current_conditioning_mode=args.current_conditioning_mode,
         code_tokens=args.code_tokens,
+        predict_dense_future_tokens=args.predict_dense_future_tokens,
+        pooled_latent_canonicalizer=pooled_canonicalizer,
     ).to(args.device)
     if args.freeze_backbone:
         for param in model.backbone.parameters():
@@ -616,6 +691,9 @@ def main():
             args.latent_set_weight,
             args.gene_set_weight,
             args.mean_latent_weight,
+            args.pooled_align_weight,
+            args.pooled_var_weight,
+            args.pooled_cov_weight,
             args.local_code_weight,
             args.decoded_gene_weight,
             args.decoded_spatial_weight,
@@ -643,6 +721,9 @@ def main():
             args.latent_set_weight,
             args.gene_set_weight,
             args.mean_latent_weight,
+            args.pooled_align_weight,
+            args.pooled_var_weight,
+            args.pooled_cov_weight,
             args.local_code_weight,
             args.decoded_gene_weight,
             args.decoded_spatial_weight,
@@ -665,6 +746,9 @@ def main():
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} val_latent_set={val_metrics['latent_set']:.4f} "
             f"val_gene_set={val_metrics['gene_set']:.4f} val_mean_latent={val_metrics['mean_latent']:.4f} "
+            f"val_pooled_align={val_metrics['pooled_align']:.4f} "
+            f"val_pooled_var={val_metrics['pooled_var']:.4f} "
+            f"val_pooled_cov={val_metrics['pooled_cov']:.4f} "
             f"val_local_code={val_metrics['local_code']:.4f} "
             f"val_decoded_gene={val_metrics['decoded_gene']:.4f} "
             f"val_decoded_spatial={val_metrics['decoded_spatial']:.4f} "

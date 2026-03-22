@@ -194,6 +194,7 @@ def load_model(checkpoint_path: str, device: str):
         current_token_gate_init=float(config.get("current_token_gate_init", 0.5)),
         current_conditioning_mode=str(config.get("current_conditioning_mode", "flat_tokens")),
         code_tokens=int(config.get("code_tokens", 8)),
+        predict_dense_future_tokens=bool(config.get("predict_dense_future_tokens", False)),
     )
     model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.to(device)
