@@ -13,6 +13,7 @@ from .gene_context_shared import (
     EmbryoFutureSetOutput,
     EmbryoMaskedOutput,
     EmbryoStateOutput,
+    FrozenLinearTokenReadout,
     LocalCellCodeCodec,
     LocalCellDecodeOutput,
     PooledLatentCanonicalizer,
@@ -374,13 +375,17 @@ class EmbryoFutureSetModel(nn.Module):
         current_conditioning_mode: str = "flat_tokens",
         code_tokens: int = 8,
         predict_dense_future_tokens: bool = False,
+        strict_token_jepa: bool = False,
         pooled_latent_canonicalizer: PooledLatentCanonicalizer | None = None,
+        token_readout_anchor: FrozenLinearTokenReadout | None = None,
     ):
         super().__init__()
         if future_slots < 1:
             raise ValueError("future_slots must be >= 1")
         if current_conditioning_mode not in {"flat_tokens", "cross_attention_memory"}:
             raise ValueError("current_conditioning_mode must be 'flat_tokens' or 'cross_attention_memory'")
+        if strict_token_jepa and not predict_dense_future_tokens:
+            raise ValueError("strict_token_jepa requires predict_dense_future_tokens=True")
         self.backbone = backbone
         self.future_slots = future_slots
         self.use_current_local_tokens = use_current_local_tokens
@@ -388,6 +393,7 @@ class EmbryoFutureSetModel(nn.Module):
         self.current_conditioning_mode = current_conditioning_mode
         self.code_tokens = int(code_tokens)
         self.predict_dense_future_tokens = bool(predict_dense_future_tokens)
+        self.strict_token_jepa = bool(strict_token_jepa)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.slot_queries = nn.Parameter(torch.randn(future_slots, d_model) * 0.02)
         n_token_types = 4 if use_current_local_tokens else 3
@@ -477,6 +483,7 @@ class EmbryoFutureSetModel(nn.Module):
             nn.Linear(d_model, d_model),
         )
         self.pooled_latent_canonicalizer = pooled_latent_canonicalizer or PooledLatentCanonicalizer(d_model)
+        self.token_readout_anchor = token_readout_anchor
         self.local_code_codec = LocalCellCodeCodec(
             gene_dim=(gene_dim or backbone.local_model.gene_dim),
             context_size=int(backbone.local_model.context_size),
@@ -485,23 +492,41 @@ class EmbryoFutureSetModel(nn.Module):
             code_tokens=self.code_tokens,
         )
         if self.predict_dense_future_tokens:
-            self.future_token_queries = nn.Parameter(
-                torch.randn(self.local_code_codec.context_size, d_model) * 0.02
-            )
-            self.slot_token_state_seed = nn.Sequential(
-                nn.Linear(d_model, d_model),
-                nn.LayerNorm(d_model),
-                nn.GELU(),
-                nn.Linear(d_model, d_model),
-            )
-            self.slot_token_state_ff = nn.Sequential(
-                nn.Linear(d_model, d_model),
-                nn.LayerNorm(d_model),
-                nn.GELU(),
-                nn.Linear(d_model, d_model),
-            )
+            if self.strict_token_jepa:
+                self.future_token_queries = nn.Parameter(
+                    torch.randn(self.future_slots, self.local_code_codec.context_size, d_model) * 0.02
+                )
+                self.token_state_predictor = nn.Sequential(
+                    nn.Linear(d_model, d_model),
+                    nn.LayerNorm(d_model),
+                    nn.GELU(),
+                    nn.Linear(d_model, d_model),
+                )
+                self.slot_token_state_seed = None
+                self.slot_token_state_ff = None
+            else:
+                self.future_token_queries = nn.Parameter(
+                    torch.randn(self.local_code_codec.context_size, d_model) * 0.02
+                )
+                self.slot_token_state_seed = nn.Sequential(
+                    nn.Linear(d_model, d_model),
+                    nn.LayerNorm(d_model),
+                    nn.GELU(),
+                    nn.Linear(d_model, d_model),
+                )
+                self.slot_token_state_ff = nn.Sequential(
+                    nn.Linear(d_model, d_model),
+                    nn.LayerNorm(d_model),
+                    nn.GELU(),
+                    nn.Linear(d_model, d_model),
+                )
+                self.token_state_predictor = None
             self.slot_code_head = None
         else:
+            self.future_token_queries = None
+            self.slot_token_state_seed = None
+            self.slot_token_state_ff = None
+            self.token_state_predictor = None
             self.slot_code_head = nn.Sequential(
                 nn.Linear(d_model, d_model),
                 nn.LayerNorm(d_model),
@@ -671,6 +696,12 @@ class EmbryoFutureSetModel(nn.Module):
             masked_future_view_mask,
             split_count_scale=float(self.local_code_codec.context_size),
         )
+        masked_future_valid_mask = None
+        if self.predict_dense_future_tokens:
+            masked_future_valid_mask = self.gather_masked_future_view_tensor(
+                future_valid_mask,
+                masked_future_view_mask,
+            )
         visible_future_mask = ~masked_future_view_mask
         current_token = context_embryo_latent.unsqueeze(1) + self.token_type.weight[0].view(1, 1, -1)
         current_local_tokens = None
@@ -686,9 +717,7 @@ class EmbryoFutureSetModel(nn.Module):
             1, 1, -1
         )
         visible_future_tokens = visible_future_tokens * visible_future_mask.unsqueeze(-1).float()
-        masked_slot_tokens = self.mask_token + self.slot_queries.unsqueeze(0)
         slot_type_idx = 3 if self.use_current_local_tokens else 2
-        masked_slot_tokens = masked_slot_tokens + self.token_type.weight[slot_type_idx].view(1, 1, -1)
         token_parts = [current_token]
         mask_parts = [torch.ones(genes.shape[0], 1, dtype=torch.bool, device=genes.device)]
         if current_local_tokens is not None and self.current_conditioning_mode == "flat_tokens":
@@ -697,78 +726,135 @@ class EmbryoFutureSetModel(nn.Module):
             mask_parts.append(visible_mask)
         token_parts.append(visible_future_tokens)
         mask_parts.append(visible_future_mask)
-        token_parts.append(masked_slot_tokens.expand(genes.shape[0], -1, -1))
-        mask_parts.append(torch.ones(genes.shape[0], self.future_slots, dtype=torch.bool, device=genes.device))
+        if self.predict_dense_future_tokens and self.strict_token_jepa:
+            masked_token_queries = self.future_token_queries.unsqueeze(0).expand(genes.shape[0], -1, -1, -1)
+            masked_token_queries = masked_token_queries + self.slot_queries.unsqueeze(0).unsqueeze(2)
+            masked_token_queries = masked_token_queries + self.token_type.weight[slot_type_idx].view(1, 1, 1, -1)
+            token_parts.append(masked_token_queries.view(genes.shape[0], -1, masked_token_queries.shape[-1]))
+            mask_parts.append(
+                torch.ones(
+                    genes.shape[0],
+                    self.future_slots * self.local_code_codec.context_size,
+                    dtype=torch.bool,
+                    device=genes.device,
+                )
+            )
+        else:
+            masked_slot_tokens = self.mask_token + self.slot_queries.unsqueeze(0)
+            masked_slot_tokens = masked_slot_tokens + self.token_type.weight[slot_type_idx].view(1, 1, -1)
+            token_parts.append(masked_slot_tokens.expand(genes.shape[0], -1, -1))
+            mask_parts.append(torch.ones(genes.shape[0], self.future_slots, dtype=torch.bool, device=genes.device))
         decoder_tokens = torch.cat(token_parts, dim=1)
         decoder_mask = torch.cat(mask_parts, dim=1)
         for block in self.decoder_blocks:
             decoder_tokens = block(decoder_tokens, decoder_mask)
         decoder_tokens = self.decoder_norm(decoder_tokens)
-        pred_slot_tokens = decoder_tokens[:, -self.future_slots :]
-        if current_local_tokens is not None and self.current_conditioning_mode == "cross_attention_memory":
-            current_memory = self.current_memory_key_norm(current_local_tokens)
-            slot_queries = self.current_memory_query_norm(pred_slot_tokens)
-            memory_out, _ = self.current_memory_attn(
-                query=slot_queries,
-                key=current_memory,
-                value=current_memory,
-                key_padding_mask=~visible_mask,
-                need_weights=False,
+        if self.predict_dense_future_tokens and self.strict_token_jepa:
+            pred_future_local_codes = decoder_tokens[:, -self.future_slots * self.local_code_codec.context_size :]
+            pred_future_local_codes = pred_future_local_codes.view(
+                genes.shape[0],
+                self.future_slots,
+                self.local_code_codec.context_size,
+                decoder_tokens.shape[-1],
             )
-            pred_slot_tokens = pred_slot_tokens + current_local_token_gate.view(1, 1, 1) * memory_out
-            pred_slot_tokens = pred_slot_tokens + self.current_memory_ff(pred_slot_tokens)
+            if current_local_tokens is not None and self.current_conditioning_mode == "cross_attention_memory":
+                current_memory = self.current_memory_key_norm(current_local_tokens)
+                flat_queries = pred_future_local_codes.view(
+                    genes.shape[0], self.future_slots * self.local_code_codec.context_size, -1
+                )
+                token_queries = self.current_memory_query_norm(flat_queries)
+                memory_out, _ = self.current_memory_attn(
+                    query=token_queries,
+                    key=current_memory,
+                    value=current_memory,
+                    key_padding_mask=~visible_mask,
+                    need_weights=False,
+                )
+                flat_queries = flat_queries + current_local_token_gate.view(1, 1, 1) * memory_out
+                flat_queries = flat_queries + self.current_memory_ff(flat_queries)
+                pred_future_local_codes = flat_queries.view(
+                    genes.shape[0],
+                    self.future_slots,
+                    self.local_code_codec.context_size,
+                    decoder_tokens.shape[-1],
+                )
+            pred_future_local_codes = self.token_state_predictor(pred_future_local_codes)
+            pred_slot_tokens = pred_future_local_codes.mean(dim=2)
+        else:
+            pred_slot_tokens = decoder_tokens[:, -self.future_slots :]
+            if current_local_tokens is not None and self.current_conditioning_mode == "cross_attention_memory":
+                current_memory = self.current_memory_key_norm(current_local_tokens)
+                slot_queries = self.current_memory_query_norm(pred_slot_tokens)
+                memory_out, _ = self.current_memory_attn(
+                    query=slot_queries,
+                    key=current_memory,
+                    value=current_memory,
+                    key_padding_mask=~visible_mask,
+                    need_weights=False,
+                )
+                pred_slot_tokens = pred_slot_tokens + current_local_token_gate.view(1, 1, 1) * memory_out
+                pred_slot_tokens = pred_slot_tokens + self.current_memory_ff(pred_slot_tokens)
+            pred_future_mass = torch.sigmoid(self.slot_mass_head(pred_slot_tokens).squeeze(-1))
+            pred_future_split_logits = self.slot_split_head(pred_slot_tokens).squeeze(-1)
+            pred_future_survival_logits = self.slot_survival_head(pred_slot_tokens).squeeze(-1)
+            pred_future_split_count = torch.nn.functional.softplus(
+                self.slot_split_count_head(pred_slot_tokens).squeeze(-1)
+            )
+            branch_features = torch.stack(
+                [
+                    pred_future_mass,
+                    torch.sigmoid(pred_future_survival_logits),
+                    torch.sigmoid(pred_future_split_logits),
+                    pred_future_split_count / max(1.0, float(self.local_code_codec.context_size)),
+                ],
+                dim=-1,
+            )
+            pred_slot_tokens = pred_slot_tokens + self.branch_feature_proj(branch_features)
+            if self.predict_dense_future_tokens:
+                token_seed = self.slot_token_state_seed(pred_slot_tokens).unsqueeze(2)
+                future_token_queries = self.future_token_queries.view(
+                    1,
+                    1,
+                    self.local_code_codec.context_size,
+                    pred_slot_tokens.shape[-1],
+                )
+                pred_future_local_codes = future_token_queries + token_seed
+                pred_future_local_codes = pred_future_local_codes + self.slot_token_state_ff(pred_future_local_codes)
+            else:
+                pred_future_local_codes = self.slot_code_head(pred_slot_tokens).view(
+                    genes.shape[0],
+                    self.future_slots,
+                    self.code_tokens,
+                    pred_slot_tokens.shape[-1],
+                )
         pred_future_mass = torch.sigmoid(self.slot_mass_head(pred_slot_tokens).squeeze(-1))
         pred_future_split_logits = self.slot_split_head(pred_slot_tokens).squeeze(-1)
         pred_future_survival_logits = self.slot_survival_head(pred_slot_tokens).squeeze(-1)
         pred_future_split_count = torch.nn.functional.softplus(
             self.slot_split_count_head(pred_slot_tokens).squeeze(-1)
         )
-        branch_features = torch.stack(
-            [
-                pred_future_mass,
-                torch.sigmoid(pred_future_survival_logits),
-                torch.sigmoid(pred_future_split_logits),
-                pred_future_split_count / max(1.0, float(self.local_code_codec.context_size)),
-            ],
-            dim=-1,
-        )
-        pred_slot_tokens = pred_slot_tokens + self.branch_feature_proj(branch_features)
         pred_future_set_latents = self.slot_predictor(pred_slot_tokens)
         pred_future_set_genes = self.slot_gene_head(pred_future_set_latents)
-        if self.predict_dense_future_tokens:
-            token_seed = self.slot_token_state_seed(pred_slot_tokens).unsqueeze(2)
-            future_token_queries = self.future_token_queries.view(
-                1,
-                1,
-                self.local_code_codec.context_size,
-                pred_slot_tokens.shape[-1],
-            )
-            pred_future_local_codes = future_token_queries + token_seed
-            pred_future_local_codes = pred_future_local_codes + self.slot_token_state_ff(pred_future_local_codes)
-        else:
-            pred_future_local_codes = self.slot_code_head(pred_slot_tokens).view(
-                genes.shape[0],
-                self.future_slots,
-                self.code_tokens,
-                pred_slot_tokens.shape[-1],
-            )
         pred_future_weights = pred_future_mass * torch.sigmoid(pred_future_survival_logits)
         target_future_weights = target_future_mass * target_future_survival
         pred_future_set_raw_pooled_latent = self.pool_future_set(pred_future_set_latents, pred_future_weights)
         target_future_set_raw_pooled_latent = self.pool_future_set(target_future_set_latents, target_future_weights)
-        pred_future_set_pooled_latent = self.pooled_latent_canonicalizer(pred_future_set_raw_pooled_latent)
-        target_future_set_pooled_latent = self.pooled_latent_canonicalizer(target_future_set_raw_pooled_latent)
+        if self.token_readout_anchor is not None and self.predict_dense_future_tokens and masked_future_valid_mask is not None:
+            pred_future_set_pooled_latent = self.token_readout_anchor(
+                pred_future_local_codes,
+                masked_future_valid_mask,
+            )
+            target_future_set_pooled_latent = self.pooled_latent_canonicalizer(target_future_set_raw_pooled_latent)
+        else:
+            pred_future_set_pooled_latent = self.pooled_latent_canonicalizer(pred_future_set_raw_pooled_latent)
+            target_future_set_pooled_latent = self.pooled_latent_canonicalizer(target_future_set_raw_pooled_latent)
         with torch.no_grad():
             if self.predict_dense_future_tokens:
                 target_future_local_codes = self.gather_masked_future_view_tensor(
                     future_local_token_states,
                     masked_future_view_mask,
                 )
-                target_future_valid_mask = self.gather_masked_future_view_tensor(
-                    future_valid_mask,
-                    masked_future_view_mask,
-                )
-                target_future_local_codes = target_future_local_codes * target_future_valid_mask.unsqueeze(-1).float()
+                target_future_local_codes = target_future_local_codes * masked_future_valid_mask.unsqueeze(-1).float()
             else:
                 target_future_local_codes = self.encode_masked_future_local_codes(
                     future_local_latents=future_local_latents,

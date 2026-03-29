@@ -15,6 +15,7 @@ from .gene_context_embryo import (
 )
 from .gene_context_patch import (
     GeneContextModel,
+    JiTGenePatchModel,
     LocalCellCodeModel,
     MultiCellPatchSetModel,
     MultiPatchSetModel,
@@ -25,12 +26,15 @@ from .gene_context_shared import (
     EmbryoFutureSetOutput,
     EmbryoMaskedOutput,
     EmbryoStateOutput,
+    FrozenLinearTokenReadout,
     GeneContextOutput,
+    JiTGenePatchOutput,
     LocalCellCodeCodec,
     LocalCellCodeOutput,
     LocalCellDecodeOutput,
     MultiPatchSetOutput,
     PatchSetOutput,
+    PooledLatentCanonicalizer,
 )
 
 __all__ = [
@@ -40,8 +44,11 @@ __all__ = [
     "EmbryoMaskedViewModel",
     "EmbryoStateModel",
     "EmbryoStateOutput",
+    "FrozenLinearTokenReadout",
     "GeneContextModel",
     "GeneContextOutput",
+    "JiTGenePatchModel",
+    "JiTGenePatchOutput",
     "LocalCellCodeCodec",
     "LocalCellCodeModel",
     "LocalCellCodeOutput",
@@ -50,6 +57,7 @@ __all__ = [
     "MultiPatchSetModel",
     "MultiPatchSetOutput",
     "PatchSetOutput",
+    "PooledLatentCanonicalizer",
     "SingleCellGeneTimeModel",
     "SingleCellPatchSetModel",
 ]

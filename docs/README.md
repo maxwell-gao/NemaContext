@@ -11,7 +11,7 @@ This repo is organized around one primary objective:
 - `docs/GENE_CONTEXT_BASELINE.md`: biological interpretation of the active local developmental prediction baselines, including the patch-set pretext task and the multi-view transition.
 - `docs/EXPERIMENT_HISTORY.md`: chronological record of the main context-validation, patch-set, multi-patch, and representation-learning transition experiments.
 - `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`: whole-embryo architecture as the intended destination of the current line of work.
-- `docs/REPO_STRUCTURE.md`: current repository layout and what each area is for.
+- `docs/DESIGN_DECISIONS_GENE_CONTEXT_WORLD_MODEL.md`: detailed scientific and architectural reasoning behind the recent embryo future-set, latent world-model, alignment, gene-first, and JiT-style design decisions.
 
 ## Historical Work
 
@@ -28,7 +28,8 @@ If you want the current project logic in the right order, read:
 2. `docs/GENE_CONTEXT_BASELINE.md`
 3. `docs/EXPERIMENT_HISTORY.md`
 4. `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
-5. `docs/REPO_STRUCTURE.md`
+5. `docs/DESIGN_DECISIONS_GENE_CONTEXT_WORLD_MODEL.md`
+6. `docs/REPO_STRUCTURE.md`
 
 Current active scripts now split into two levels:
 

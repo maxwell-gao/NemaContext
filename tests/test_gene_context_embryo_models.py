@@ -15,6 +15,7 @@ from src.branching_flows.gene_context import (  # noqa: E402
     EmbryoFutureSetModel,
     EmbryoMaskedViewModel,
     EmbryoStateModel,
+    FrozenLinearTokenReadout,
     LocalCellCodeModel,
     PooledLatentCanonicalizer,
 )
@@ -486,7 +487,7 @@ def test_embryo_future_set_model_backward_compatible_without_current_local_token
 
 
 def test_embryo_future_set_model_supports_dense_future_token_prediction():
-    """Future-set model should support direct masked future token-state prediction without code bottleneck."""
+    """Future-set model should support strict token-JEPA prediction without a single-slot token bottleneck."""
     h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
     if not h5ad_path.exists():
         pytest.skip("Processed gene-context dataset not available")
@@ -548,6 +549,8 @@ def test_embryo_future_set_model_supports_dense_future_token_prediction():
         current_conditioning_mode="flat_tokens",
         code_tokens=4,
         predict_dense_future_tokens=True,
+        strict_token_jepa=True,
+        token_readout_anchor=FrozenLinearTokenReadout(64),
     )
     masked_future_view_mask = torch.tensor(
         [[False, True, False], [True, False, False]],
@@ -572,8 +575,12 @@ def test_embryo_future_set_model_supports_dense_future_token_prediction():
         future_context_role=future_context_role,
         future_relative_position=future_relative_position,
     )
+    assert model.future_token_queries.shape == (1, 8, 64)
     assert out.pred_future_local_codes.shape == (2, 1, 8, 64)
     assert out.target_future_local_codes.shape == (2, 1, 8, 64)
+    assert out.pred_future_set_latents.shape == (2, 1, 64)
+    assert out.pred_future_set_pooled_latent.shape == (2, 64)
+    assert torch.isfinite(out.pred_future_set_pooled_latent).all()
     decoded = model.decode_future_local_codes(out.pred_future_local_codes)
     assert decoded.pred_cell_genes.shape == (2, 1, 8, dataset.gene_dim)
     assert decoded.pred_cell_positions.shape == (2, 1, 8, 3)

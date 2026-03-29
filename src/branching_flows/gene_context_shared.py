@@ -25,6 +25,13 @@ class PatchSetOutput:
 
 
 @dataclass
+class JiTGenePatchOutput:
+    pred_future_genes: torch.Tensor
+    pred_future_token_states: torch.Tensor
+    pred_mean_gene: torch.Tensor
+
+
+@dataclass
 class MultiPatchSetOutput:
     pred_future_genes: torch.Tensor
     pred_patch_size: torch.Tensor
@@ -142,6 +149,46 @@ class PooledLatentCanonicalizer(nn.Module):
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, mode={self.mode!r}"
+
+
+class FrozenLinearTokenReadout(nn.Module):
+    """Frozen linear readout from dense token states into pooled latent space."""
+
+    def __init__(
+        self,
+        dim: int,
+        weight: torch.Tensor | None = None,
+        bias: torch.Tensor | None = None,
+    ):
+        super().__init__()
+        if dim < 1:
+            raise ValueError("dim must be >= 1")
+        weight_tensor = (
+            torch.eye(dim, dtype=torch.float32)
+            if weight is None
+            else weight.detach().float().view(dim, dim)
+        )
+        bias_tensor = torch.zeros(dim, dtype=torch.float32) if bias is None else bias.detach().float().view(dim)
+        self.dim = int(dim)
+        self.register_buffer("weight", weight_tensor)
+        self.register_buffer("bias", bias_tensor)
+
+    @staticmethod
+    def pool_token_states(token_states: torch.Tensor, valid_mask: torch.Tensor | None = None) -> torch.Tensor:
+        if valid_mask is None:
+            valid = torch.ones(token_states.shape[:-1], dtype=token_states.dtype, device=token_states.device)
+        else:
+            valid = valid_mask.float()
+        pooled = (token_states * valid.unsqueeze(-1)).sum(dim=(1, 2))
+        norm = valid.sum(dim=(1, 2), keepdim=False).clamp_min(1.0).unsqueeze(-1)
+        return pooled / norm
+
+    def forward(self, token_states: torch.Tensor, valid_mask: torch.Tensor | None = None) -> torch.Tensor:
+        pooled = self.pool_token_states(token_states, valid_mask)
+        return F.linear(pooled, self.weight, self.bias)
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}"
 
 
 class LocalCellCodeCodec(nn.Module):

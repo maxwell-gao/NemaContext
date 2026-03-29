@@ -13,11 +13,16 @@ sys.path.insert(0, str(project_root))
 
 from src.branching_flows.gene_context import (  # noqa: E402
     GeneContextModel,
+    JiTGenePatchModel,
     SingleCellGeneTimeModel,
 )
 from src.data.gene_context_dataset import (  # noqa: E402
     GeneContextDataset,
+    PatchSetDataset,
+    TemporalPatchSetDataset,
     collate_gene_context,
+    collate_history_patch_set,
+    collate_patch_set,
 )
 
 
@@ -208,3 +213,95 @@ def test_matched_local_patch_supervision_masks_only_matched_local_tokens():
     assert matched_local.numel() > 0
     assert supervision_mask[matched_local].all()
     assert not torch.any(match_type[matched_local] == GeneContextDataset.MATCH_UNSUPERVISED)
+
+
+def test_jit_gene_patch_model_forward():
+    """JiT-style gene patch model should directly predict future clean gene tokens."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = PatchSetDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=0,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient patch-set samples")
+
+    batch = collate_patch_set([dataset[0], dataset[1]])
+    model = JiTGenePatchModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+    )
+    out = model(
+        genes=batch["current_genes"],
+        time=batch["current_time"],
+        future_time=batch["future_time"],
+        token_times=batch["current_token_times"],
+        valid_mask=batch["current_valid_mask"],
+        context_role=batch["current_context_role"],
+        relative_position=batch["current_relative_position"],
+    )
+    assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
+    assert out.pred_future_token_states.shape == (2, 8, 64)
+    assert out.pred_mean_gene.shape == (2, dataset.gene_dim)
+
+
+def test_temporal_jit_gene_patch_model_forward():
+    """JiT-style gene patch model should accept multiple historical patches as one long sequence."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = TemporalPatchSetDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=0,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        history_patches=3,
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient temporal patch-set samples")
+
+    batch = collate_history_patch_set([dataset[0], dataset[1]])
+    history_genes = torch.stack([batch[f"history_patch_{i}_genes"] for i in range(3)], dim=1)
+    history_context_role = torch.stack([batch[f"history_patch_{i}_context_role"] for i in range(3)], dim=1)
+    history_relative_position = torch.stack([batch[f"history_patch_{i}_relative_position"] for i in range(3)], dim=1)
+    history_token_times = torch.stack([batch[f"history_patch_{i}_token_times"] for i in range(3)], dim=1)
+    history_valid_mask = torch.stack([batch[f"history_patch_{i}_valid_mask"] for i in range(3)], dim=1)
+
+    model = JiTGenePatchModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        head_dim=16,
+    )
+    out = model(
+        genes=history_genes.flatten(1, 2),
+        time=batch["history_patch_2_time"],
+        future_time=batch["future_time"],
+        token_times=history_token_times.flatten(1, 2),
+        valid_mask=history_valid_mask.flatten(1, 2),
+        context_role=history_context_role.flatten(1, 2),
+        relative_position=history_relative_position.flatten(1, 2),
+    )
+    assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
+    assert out.pred_future_token_states.shape == (2, 8, 64)

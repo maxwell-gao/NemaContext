@@ -18,6 +18,7 @@ sys.path.insert(0, str(project_root))
 from examples.whole_organism_ar.train_embryo_future_set import (  # noqa: E402
     build_mask,
     load_backbone,
+    load_token_readout_anchor,
 )
 from examples.whole_organism_ar.train_embryo_state import stack_view_tensor  # noqa: E402
 from examples.whole_organism_ar.train_gene_context import (  # noqa: E402
@@ -195,6 +196,11 @@ def load_model(checkpoint_path: str, device: str):
         current_conditioning_mode=str(config.get("current_conditioning_mode", "flat_tokens")),
         code_tokens=int(config.get("code_tokens", 8)),
         predict_dense_future_tokens=bool(config.get("predict_dense_future_tokens", False)),
+        strict_token_jepa=bool(config.get("strict_token_jepa", False)),
+        token_readout_anchor=load_token_readout_anchor(
+            config.get("token_readout_anchor_path"),
+            int(config["d_model"] if backbone_ckpt is None else backbone_ckpt["config"]["d_model"]),
+        ),
     )
     model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.to(device)

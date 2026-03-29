@@ -130,6 +130,96 @@ class PatchSetDataset(GeneContextDataset):
         }
 
 
+class TemporalPatchSetDataset(PatchSetDataset):
+    """History-patch to next-patch dataset for video-like gene prediction."""
+
+    def __init__(
+        self,
+        *args,
+        history_patches: int = 4,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        if history_patches < 1:
+            raise ValueError("history_patches must be >= 1")
+        self.history_patches = history_patches
+        self._filter_history_time_pairs()
+
+    def _history_centers(self, current_center: float) -> list[float]:
+        return [
+            float(current_center - self.dt_minutes * offset)
+            for offset in range(self.history_patches - 1, -1, -1)
+        ]
+
+    def _window_has_enough_cells(self, window_indices: np.ndarray) -> bool:
+        if len(window_indices) < self.min_cells_per_window:
+            return False
+        if self.sampling_strategy in {"spatial_neighbors", "spatial_anchor"}:
+            spatial = np.intersect1d(
+                window_indices,
+                np.flatnonzero(self.valid_spatial),
+                assume_unique=False,
+            )
+            if len(spatial) < self.min_spatial_cells_per_window:
+                return False
+        return True
+
+    def _filter_history_time_pairs(self):
+        filtered = []
+        for pair in self.time_pairs:
+            centers = self._history_centers(pair.current_center)
+            valid = True
+            for center in centers:
+                window_indices = self._get_window_indices(center)
+                if not self._window_has_enough_cells(window_indices):
+                    valid = False
+                    break
+            if valid:
+                filtered.append(pair)
+        self.time_pairs = filtered
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        pair = self.time_pairs[idx % len(self.time_pairs)]
+        rng = np.random.default_rng(self.random_seed + idx)
+        output: dict[str, torch.Tensor] = {}
+
+        history_centers = self._history_centers(pair.current_center)
+        for patch_idx, center in enumerate(history_centers):
+            window_indices = self._get_window_indices(center)
+            indices, roles, relpos = self._select_patch_from_indices(window_indices, rng)
+            view = self._build_patch_view(indices, roles, relpos, center)
+            prefix = f"history_patch_{patch_idx}"
+            output[f"{prefix}_genes"] = view["genes"]
+            output[f"{prefix}_context_role"] = view["context_role"]
+            output[f"{prefix}_relative_position"] = view["relative_position"]
+            output[f"{prefix}_token_times"] = view["token_times"]
+            output[f"{prefix}_valid_mask"] = view["valid_mask"]
+            output[f"{prefix}_anchor_mask"] = view["anchor_mask"]
+            output[f"{prefix}_time"] = view["time"]
+
+        future_indices, future_roles, future_relpos = self._select_patch_from_indices(
+            pair.future_indices,
+            rng,
+        )
+        future_view = self._build_patch_view(
+            future_indices,
+            future_roles,
+            future_relpos,
+            pair.future_center,
+        )
+        future_valid = future_view["valid_mask"]
+        output["future_genes"] = future_view["genes"]
+        output["future_context_role"] = future_view["context_role"]
+        output["future_relative_position"] = future_view["relative_position"]
+        output["future_token_times"] = future_view["token_times"]
+        output["future_valid_mask"] = future_view["valid_mask"]
+        output["future_anchor_mask"] = future_view["anchor_mask"]
+        output["future_time"] = future_view["time"]
+        output["future_mean_gene"] = future_view["genes"][future_valid].mean(dim=0)
+        output["history_patches"] = torch.tensor(self.history_patches, dtype=torch.long)
+        return output
+
+
 def collate_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     current_max_len = max(item["current_genes"].shape[0] for item in batch)
     future_max_len = max(item["future_genes"].shape[0] for item in batch)
@@ -178,6 +268,91 @@ def collate_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.T
         output["current_split_fraction"][i] = item["current_split_fraction"]
         output["future_split_fraction"][i] = item["future_split_fraction"]
 
+    return output
+
+
+def collate_history_patch_set(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+    first = batch[0]
+    history_prefixes = sorted(
+        {
+            key.rsplit("_", 1)[0]
+            for key in first
+            if key.startswith("history_patch_") and key.endswith("_genes")
+        }
+    )
+
+    def _collate_view(prefix: str) -> dict[str, torch.Tensor]:
+        return collate_patch_set(
+            [
+                {
+                    "current_genes": item[f"{prefix}_genes"],
+                    "current_context_role": item[f"{prefix}_context_role"],
+                    "current_relative_position": item[f"{prefix}_relative_position"],
+                    "current_token_times": item[f"{prefix}_token_times"],
+                    "current_valid_mask": item[f"{prefix}_valid_mask"],
+                    "current_anchor_mask": item[f"{prefix}_anchor_mask"],
+                    "current_time": item[f"{prefix}_time"],
+                    "future_genes": item[f"{prefix}_genes"],
+                    "future_context_role": item[f"{prefix}_context_role"],
+                    "future_relative_position": item[f"{prefix}_relative_position"],
+                    "future_token_times": item[f"{prefix}_token_times"],
+                    "future_valid_mask": item[f"{prefix}_valid_mask"],
+                    "future_anchor_mask": item[f"{prefix}_anchor_mask"],
+                    "future_time": item[f"{prefix}_time"],
+                    "future_mean_gene": item[f"{prefix}_genes"].mean(dim=0),
+                    "future_patch_size": torch.tensor(float(item[f"{prefix}_valid_mask"].sum().item())),
+                    "current_split_fraction": torch.tensor(0.0),
+                    "future_split_fraction": torch.tensor(0.0),
+                }
+                for item in batch
+            ]
+        )
+
+    output: dict[str, torch.Tensor] = {}
+    for prefix in history_prefixes:
+        collated = _collate_view(prefix)
+        output[f"{prefix}_genes"] = collated["current_genes"]
+        output[f"{prefix}_context_role"] = collated["current_context_role"]
+        output[f"{prefix}_relative_position"] = collated["current_relative_position"]
+        output[f"{prefix}_token_times"] = collated["current_token_times"]
+        output[f"{prefix}_valid_mask"] = collated["current_valid_mask"]
+        output[f"{prefix}_anchor_mask"] = collated["current_anchor_mask"]
+        output[f"{prefix}_time"] = collated["current_time"]
+
+    future_batch = collate_patch_set(
+        [
+            {
+                "current_genes": item["future_genes"],
+                "current_context_role": item["future_context_role"],
+                "current_relative_position": item["future_relative_position"],
+                "current_token_times": item["future_token_times"],
+                "current_valid_mask": item["future_valid_mask"],
+                "current_anchor_mask": item["future_anchor_mask"],
+                "current_time": item["future_time"],
+                "future_genes": item["future_genes"],
+                "future_context_role": item["future_context_role"],
+                "future_relative_position": item["future_relative_position"],
+                "future_token_times": item["future_token_times"],
+                "future_valid_mask": item["future_valid_mask"],
+                "future_anchor_mask": item["future_anchor_mask"],
+                "future_time": item["future_time"],
+                "future_mean_gene": item["future_mean_gene"],
+                "future_patch_size": torch.tensor(float(item["future_valid_mask"].sum().item())),
+                "current_split_fraction": torch.tensor(0.0),
+                "future_split_fraction": torch.tensor(0.0),
+            }
+            for item in batch
+        ]
+    )
+    output["future_genes"] = future_batch["future_genes"]
+    output["future_context_role"] = future_batch["future_context_role"]
+    output["future_relative_position"] = future_batch["future_relative_position"]
+    output["future_token_times"] = future_batch["future_token_times"]
+    output["future_valid_mask"] = future_batch["future_valid_mask"]
+    output["future_anchor_mask"] = future_batch["future_anchor_mask"]
+    output["future_time"] = future_batch["future_time"]
+    output["future_mean_gene"] = torch.stack([item["future_mean_gene"] for item in batch])
+    output["history_patches"] = torch.stack([item["history_patches"] for item in batch])
     return output
 
 

@@ -8,6 +8,7 @@ import torch.nn as nn
 from .autoregressive_model import TransformerBlockAutoregressive
 from .gene_context_shared import (
     GeneContextOutput,
+    JiTGenePatchOutput,
     LocalCellCodeCodec,
     LocalCellCodeOutput,
     MultiPatchSetOutput,
@@ -496,6 +497,113 @@ class SingleCellPatchSetModel(nn.Module):
             pred_patch_size=pred_patch_size,
             pred_mean_gene=pred_mean_gene,
             patch_latent=patch_latent,
+        )
+
+
+class JiTGenePatchModel(nn.Module):
+    """Direct gene-space future patch predictor with ViT-like query tokens."""
+
+    def __init__(
+        self,
+        gene_dim: int,
+        context_size: int,
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_layers: int = 6,
+        head_dim: int = 32,
+    ):
+        super().__init__()
+        self.gene_dim = gene_dim
+        self.context_size = context_size
+        self.d_model = d_model
+        self.gene_proj = nn.Sequential(
+            nn.Linear(gene_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.time_proj = nn.Sequential(
+            nn.Linear(2, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.token_time_proj = nn.Sequential(
+            nn.Linear(1, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.context_role_emb = nn.Embedding(4, d_model)
+        self.relative_spatial_proj = nn.Sequential(
+            nn.Linear(5, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.current_type = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.future_type = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.future_queries = nn.Parameter(torch.randn(context_size, d_model) * 0.02)
+        self.blocks = nn.ModuleList(
+            [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_layers)]
+        )
+        self.gene_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, gene_dim),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight, gain=0.1)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        future_time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> JiTGenePatchOutput:
+        batch_size = genes.shape[0]
+        current_time = torch.stack([time, future_time - time], dim=-1)
+        current_x = self.gene_proj(genes)
+        current_x = current_x + self.time_proj(current_time).unsqueeze(1)
+        current_x = current_x + self.token_time_proj(token_times.unsqueeze(-1))
+        current_x = current_x + self.current_type
+        if context_role is not None:
+            current_x = current_x + self.context_role_emb(context_role.clamp(min=0, max=3))
+        if relative_position is not None:
+            current_x = current_x + self.relative_spatial_proj(relative_position)
+
+        future_x = self.future_queries.unsqueeze(0).expand(batch_size, -1, -1)
+        future_x = future_x + self.future_type
+        future_x = future_x + self.time_proj(current_time).unsqueeze(1)
+
+        x = torch.cat([current_x, future_x], dim=1)
+        future_mask = torch.ones(
+            batch_size,
+            self.context_size,
+            dtype=valid_mask.dtype,
+            device=valid_mask.device,
+        )
+        mask = torch.cat([valid_mask, future_mask], dim=1)
+
+        for block in self.blocks:
+            x = block(x, mask)
+
+        future_states = x[:, -self.context_size :]
+        pred_future_genes = self.gene_head(future_states)
+        pred_mean_gene = pred_future_genes.mean(dim=1)
+        return JiTGenePatchOutput(
+            pred_future_genes=pred_future_genes,
+            pred_future_token_states=future_states,
+            pred_mean_gene=pred_mean_gene,
         )
 
 
