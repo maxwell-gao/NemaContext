@@ -25,52 +25,108 @@
 \titlepage
 \end{frame}
 
-\begin{frame}{Meeting Goal}
-\textbf{What I want to communicate today}
+\begin{frame}{Three Layers Of Meaning}
+\textbf{I think the recent work only makes sense if we separate three claims}
+
+\vspace{0.6em}
+\begin{columns}[T]
+\column{0.32\textwidth}
+\begin{block}{1. Representation Meaning}
+\small
+The latent or state contains real developmental information.
+
+\vspace{0.4em}
+Typical evidence:
 \begin{itemize}
-    \item The project objective is unchanged: predict developmental state transitions, eventually at whole-organism scale.
-    \item The main recent work was \textbf{not} a single successful model, but a sequence of design decisions that clarified what is and is not scientifically defensible.
-    \item The strongest current lesson is negative but useful:
-    pooled latent world-state modeling kept failing for structural reasons.
-    \item The most promising simplification now is a JiT-like route:
-    direct clean gene prediction with longer temporal patch context.
+    \item developmental time
+    \item founder
+    \item depth
+    \item future structure probes
+\end{itemize}
+\end{block}
+
+\column{0.32\textwidth}
+\begin{block}{2. Predictive Meaning}
+\small
+The \emph{predicted} future object still carries true future structure.
+
+\vspace{0.4em}
+This is stronger than representation quality:
+\begin{itemize}
+    \item not just readable true states
+    \item but readable predicted future states
+\end{itemize}
+\end{block}
+
+\column{0.32\textwidth}
+\begin{block}{3. Biological Meaning}
+\small
+The model supports mechanism-level biological interpretation.
+
+\vspace{0.4em}
+This would require:
+\begin{itemize}
+    \item stronger causal/perturbational evidence
+    \item stable biological coordinates
+    \item more than coarse readout success
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Where We Are In Those Three Layers}
+\textbf{Current position}
+\begin{itemize}
+    \item \textbf{Representation meaning: established.}
+    Broad patch and embryo latents clearly carry developmental structure.
+    \item \textbf{Predictive meaning: partially established.}
+    Reconstruction-backed embryo future-set models are near the right regime,
+    but predicted future structure is still uneven.
+    \item \textbf{Biological meaning: not yet established.}
+    We should not claim mechanism-level biology from the current models.
 \end{itemize}
 
-\vspace{0.5em}
-\textbf{Today's focus}
+\vspace{0.7em}
+\textbf{So the real question today is not}
 \begin{itemize}
-    \item what the data actually support,
-    \item what we learned from the failed world-model branches,
-    \item why gene-space prediction now looks more credible than latent repair.
+    \item ``did we learn something?''
+\end{itemize}
+
+\textbf{It is}
+\begin{itemize}
+    \item ``what kind of predictive object can support layer 2 without pretending we already have layer 3?''
 \end{itemize}
 \end{frame}
 
-\begin{frame}[shrink=10]{Project Goal And Current Reframing}
+\begin{frame}[shrink=5]{Project Goal And Current Reframing}
 \textbf{Long-term goal}
 \begin{itemize}
-    \item Predict whole-organism developmental progression from early embryo state toward later embryo state.
+    \item Predict whole-organism developmental progression.
     \item Keep transcriptomic state as the main biological variable.
 \end{itemize}
 
 \vspace{0.5em}
 \textbf{What changed}
 \begin{itemize}
-    \item I no longer think the cleanest route is ``learn a pooled embryo latent and predict that latent forward''.
-    \item The recent experiments suggest that this formulation overloaded one object with too many jobs:
-    \begin{itemize}
-        \item observation summary,
-        \item predictive state,
-        \item biological readout space,
-        \item compression mechanism.
-    \end{itemize}
-    \item The active simplification is:
-    \[
-    \text{history gene tokens} \rightarrow \text{future clean gene tokens}
-    \]
-    rather than
-    \[
-    \text{current latent} \rightarrow \text{future latent} \rightarrow \text{biology}
-    \]
+    \item I no longer trust ``predict a pooled embryo latent and decode biology later'' as the cleanest route.
+    \item That object was overloaded:
+    observation summary, predictive state, readout space, and compression.
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{Active simplification}
+\begin{center}
+\small
+\textbf{history gene tokens $\rightarrow$ future clean gene tokens}\\
+instead of current latent $\rightarrow$ future latent $\rightarrow$ biology
+\end{center}
+
+\vspace{0.3em}
+\textbf{Meeting thesis}
+\begin{itemize}
+    \item The pooled-latent route helped us reach layer 1.
+    \item It did not give a clean layer-2 predictive object.
+    \item The next move is direct gene-space prediction with longer temporal context.
 \end{itemize}
 \end{frame}
 
@@ -407,6 +463,13 @@ Strict token JEPA / alignment fixes & Fix world-model gauge directly & Confirmed
     \item Do we agree that pooled latent should be downgraded from main state object to diagnostic summary?
     \item Is direct gene-space prediction the right simplification, or should we preserve a more explicit state bottleneck?
     \item How much history should we expose before we should worry about overfitting pair-specific structure?
+    \item Should we add \textbf{BERT-style masking / denoising augmentation} on the \emph{input side}:
+    \begin{itemize}
+        \item token dropout,
+        \item whole-history-patch dropout,
+        \item partial gene-channel masking,
+    \end{itemize}
+    while keeping the target unchanged as future clean gene prediction?
     \item If we add structure back later, what biological structure is worth restoring first:
     \begin{itemize}
         \item spatial geometry,
