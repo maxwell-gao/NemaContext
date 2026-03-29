@@ -1,654 +1,429 @@
 \documentclass[aspectratio=169,11pt]{beamer}
 
-% Theme
 \usetheme{Madrid}
 \usecolortheme{whale}
 \setbeamertemplate{navigation symbols}{}
 \setbeamertemplate{footline}[frame number]
 
-% Packages
-\usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{amsmath}
 \usepackage{xcolor}
-\usepackage{svg}  % For SVG support - requires inkscape
+\usepackage{array}
 
-% Colors
-\definecolor{celegans}{RGB}{76,153,0}
-\definecolor{contact}{RGB}{204,102,0}
-\definecolor{lineage}{RGB}{51,102,204}
-\definecolor{context}{RGB}{128,0,128}
+\definecolor{deepblue}{RGB}{34,74,124}
+\definecolor{deepred}{RGB}{150,40,27}
+\definecolor{deepgreen}{RGB}{33,110,57}
 
-% Title
-\title[NemaContext]{NemaContext: The Organism as Context}
-\subtitle{Flow Matching Transformers for Digital Embryogenesis}
+\title[NemaContext Update]{NemaContext Research Update}
+\subtitle{From embryo latent world models to direct gene-patch prediction}
 \author{Senquan Gao}
-\date{\today}
+\date{March 2026}
 
 \begin{document}
 
-% ============================================================
-% Title Slide
-% ============================================================
 \begin{frame}
 \titlepage
 \end{frame}
 
-% ============================================================
-% Outline
-% ============================================================
-\begin{frame}{Outline}
-\tableofcontents
-\end{frame}
-
-% ============================================================
-\section{Core Philosophy: The Organism as Context}
-% ============================================================
-
-\begin{frame}{The Central Thesis}
-\begin{center}
-\Large
-\textit{``A cell is not an island.\\
-Its identity, position, and fate are defined not by intrinsic properties alone,\\
-but by its place within the developing whole.''}
-\end{center}
-
-\vspace{1.5em}
-
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{The Name: NemaContext}
-\textbf{Nema}(tode) + \textbf{Context}
-
-The organism \textit{is} the context that gives meaning to each cell.
-\end{block}
-
-\column{0.48\textwidth}
-\begin{block}{The Computational Principle}
-\[
-\text{Cell}_i = f(\text{Cell}_i, \textcolor{context}{\text{All Other Cells}})
-\]
-Each cell's representation is computed as a function of the \textbf{entire embryo}.
-\end{block}
-\end{columns}
-\end{frame}
-
-\begin{frame}{Three Levels of Developmental Context}
-\begin{center}
-\includegraphics[width=0.7\textwidth]{figures/context_levels.pdf}
-\end{center}
-
-\begin{columns}
-\column{0.32\textwidth}
-\begin{block}{1. Lineage Context}
-\small
-\textbf{Temporal}: Where did this cell come from?
-
-The Sulston lineage = developmental memory
-\end{block}
-
-\column{0.32\textwidth}
-\begin{block}{2. Molecular Context}
-\small
-\textbf{State}: What genes is this cell expressing?
-
-Transcriptome = current functional identity
-\end{block}
-
-\column{0.32\textwidth}
-\begin{block}{3. Spatial Context}
-\small
-\textbf{Relational}: Who are this cell's neighbors?
-
-Contact graph = signaling potential
-\end{block}
-\end{columns}
+\begin{frame}{Meeting Goal}
+\textbf{What I want to communicate today}
+\begin{itemize}
+    \item The project objective is unchanged: predict developmental state transitions, eventually at whole-organism scale.
+    \item The main recent work was \textbf{not} a single successful model, but a sequence of design decisions that clarified what is and is not scientifically defensible.
+    \item The strongest current lesson is negative but useful:
+    pooled latent world-state modeling kept failing for structural reasons.
+    \item The most promising simplification now is a JiT-like route:
+    direct clean gene prediction with longer temporal patch context.
+\end{itemize}
 
 \vspace{0.5em}
-\centering
-\textcolor{red}{\textbf{The problem: Spatial context is UNKNOWN for late embryo (380--830 min)}}
-\end{frame}
-
-\begin{frame}{Why \textit{C. elegans}?}
-\begin{columns}
-\column{0.55\textwidth}
-\begin{block}{The Only Tractable System}
+\textbf{Today's focus}
 \begin{itemize}
-    \item \textbf{Invariant lineage}: 100\% deterministic divisions
-    \item \textbf{Complete connectome}: Adult wiring known
-    \item \textbf{Lineage-resolved transcriptomics}: 234K cells
-    \item \textbf{4D morphological atlas}: CShaper, WormGUIDES
-    \item \textbf{Small cell count}: 959 terminal cells
+    \item what the data actually support,
+    \item what we learned from the failed world-model branches,
+    \item why gene-space prediction now looks more credible than latent repair.
 \end{itemize}
-\end{block}
-
-\begin{block}{Digital Embryogenesis is Feasible}
-\textit{C. elegans} is the \textbf{only} organism where we can attempt to generate complete embryo trajectories.
-\end{block}
-
-\column{0.42\textwidth}
-\begin{center}
-\includegraphics[width=\textwidth]{figures/lineage_tree.pdf}
-\end{center}
-\end{columns}
 \end{frame}
 
-% ============================================================
-\section{The Temporal Coverage Gap}
-% ============================================================
-
-\begin{frame}{Data Landscape: Trimodal Integration}
-\begin{center}
-\includegraphics[width=0.8\textwidth]{figures/trimodal_integration.pdf}
-\end{center}
-
-\begin{columns}
-\column{0.32\textwidth}
-\centering
-\textbf{Transcriptome}\\
-Large et al. 2025\\
-234,888 cells\\
-0--830 min
-
-\column{0.32\textwidth}
-\centering
-\textbf{Spatial}\\
-WormGUIDES\\
-1,341 cells\\
-20--380 min
-
-\column{0.32\textwidth}
-\centering
-\textbf{Morphology}\\
-CShaper\\
-1,234 cells\\
-20--380 min
-\end{columns}
-\end{frame}
-
-\begin{frame}{The Temporal Coverage Gap}
-\begin{center}
-\includegraphics[width=0.8\textwidth]{figures/temporal_gap.pdf}
-\end{center}
-
-\begin{columns}
-\column{0.55\textwidth}
-\textbf{Problem}: For cells in the 380--830 min window, we have:
+\begin{frame}[shrink=10]{Project Goal And Current Reframing}
+\textbf{Long-term goal}
 \begin{itemize}
-    \item[\checkmark] Full transcriptome data (gene expression)
-    \item[\checkmark] Lineage identity (from Sulston tree)
-    \item[$\times$] \textcolor{red}{No spatial coordinates}
-    \item[$\times$] \textcolor{red}{No contact graph}
+    \item Predict whole-organism developmental progression from early embryo state toward later embryo state.
+    \item Keep transcriptomic state as the main biological variable.
 \end{itemize}
-
-\column{0.4\textwidth}
-\vspace{1.5em}
-\textbf{Our Question}:\\
-Can we \textbf{infer} spatial context from lineage + molecular context?
-
-\end{columns}
-\end{frame}
-
-\begin{frame}{The Contact Graph Problem}
-\begin{block}{Why Contact Graphs Matter}
-\begin{itemize}
-    \item \textbf{Notch signaling}: Requires direct cell-cell contact (GLP-1/APX-1, LIN-12/LAG-2)
-    \item \textbf{Inductive fate decisions}: Neighbors determine cell identity
-    \item \textbf{Tissue organization}: Contacts define morphogenesis
-\end{itemize}
-\end{block}
 
 \vspace{0.5em}
+\textbf{What changed}
+\begin{itemize}
+    \item I no longer think the cleanest route is ``learn a pooled embryo latent and predict that latent forward''.
+    \item The recent experiments suggest that this formulation overloaded one object with too many jobs:
+    \begin{itemize}
+        \item observation summary,
+        \item predictive state,
+        \item biological readout space,
+        \item compression mechanism.
+    \end{itemize}
+    \item The active simplification is:
+    \[
+    \text{history gene tokens} \rightarrow \text{future clean gene tokens}
+    \]
+    rather than
+    \[
+    \text{current latent} \rightarrow \text{future latent} \rightarrow \text{biology}
+    \]
+\end{itemize}
+\end{frame}
 
-\begin{block}{The Inverse Problem}
-\begin{center}
-\Large
-\textbf{Given}: Lineage + Transcriptome (what we know)\\[0.3em]
-\textbf{Infer}: Contact Graph (what we need)
-\end{center}
-\end{block}
+\begin{frame}{Data Reality}
+\textbf{Raw dataset}
+\begin{itemize}
+    \item \texttt{dataset/processed/nema\_extended\_large2025.h5ad}
+    \item 234,888 cells
+    \item 27,138 genes
+    \item 267 unique embryo times
+\end{itemize}
 
 \vspace{0.5em}
-\textbf{Hypothesis}: The organism provides sufficient context. If we know a cell's developmental history and current molecular state, we can predict its spatial relationships.
-\end{frame}
-
-% ============================================================
-\section{Why Not GNNs? The Bitter Lesson}
-% ============================================================
-
-\begin{frame}{The GNN Approach (and Why We Reject It)}
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{Standard GNN Paradigm}
+\textbf{But the effective predictive dataset is much smaller}
 \begin{itemize}
-    \item Assume graph structure is \textbf{given}
-    \item Message passing along edges
-    \item Learn node representations
+    \item Current predictive contract uses:
+    \begin{itemize}
+        \item \texttt{dt = 20 min}
+        \item \texttt{time window = 10 min}
+        \item \texttt{min cells per window = 32}
+    \end{itemize}
+    \item Under this contract:
+    \begin{itemize}
+        \item patch dataset: 31 usable time pairs total
+        \item train/val split: 25 / 6 pairs
+        \item temporal history with 4 patches: 24 total, 20 / 4 train/val pairs
+    \end{itemize}
+    \item So the true bottleneck is \textbf{independent time transitions}, not raw cell count.
 \end{itemize}
-\end{block}
-
-\begin{alertblock}{Fundamental Problem}
-GNNs require the graph as \textbf{input}.\\[0.3em]
-But the contact graph is exactly what we're trying to \textbf{predict}!\\[0.3em]
-\textcolor{red}{Chicken-and-egg problem.}
-\end{alertblock}
-
-\column{0.48\textwidth}
-\begin{center}
-\includegraphics[width=\textwidth]{figures/gnn_problem.pdf}
-\end{center}
-\end{columns}
 \end{frame}
 
-\begin{frame}{The Bitter Lesson}
-\begin{block}{Rich Sutton (2019)}
-\textit{``The biggest lesson that can be read from 70 years of AI research is that \textbf{general methods that leverage computation} are ultimately the most effective, and by a large margin.''}
-\end{block}
+\begin{frame}{What The Data Support}
+\textbf{What is justified}
+\begin{itemize}
+    \item Longer sequence context
+    \item More historical patches
+    \item Moderate transformer scale
+    \item Direct gene-space prediction
+\end{itemize}
 
 \vspace{0.5em}
-
-\begin{columns}
-\column{0.48\textwidth}
-\begin{alertblock}{GNN Approach}
+\textbf{What is not justified}
 \begin{itemize}
-    \item[\textbf{--}] Encodes \textbf{human knowledge} into architecture
-    \item[\textbf{--}] Hand-crafted graph topology
-    \item[\textbf{--}] Message passing = limited context
-    \item[\textbf{--}] Over-smoothing with depth
-    \item[\textbf{--}] Poor GPU utilization (sparse ops)
+    \item Large-capacity latent world models
+    \item Heavy gauge-fixing machinery on top of weak time-pair supervision
+    \item Overly complicated auxiliary heads that assume more temporal diversity than the data provide
 \end{itemize}
-\end{alertblock}
-
-\column{0.48\textwidth}
-\begin{exampleblock}{Transformer Approach}
-\begin{itemize}
-    \item[\textbf{+}] \textbf{Learns from data}
-    \item[\textbf{+}] No assumed topology
-    \item[\textbf{+}] Full attention = organism as context
-    \item[\textbf{+}] Scales with depth
-    \item[\textbf{+}] Excellent GPU utilization (dense ops)
-\end{itemize}
-\end{exampleblock}
-\end{columns}
-\end{frame}
-
-\begin{frame}{Transformers Embody ``Organism as Context''}
-\begin{center}
-\includegraphics[width=0.75\textwidth]{figures/transformer_context.pdf}
-\end{center}
-
-\begin{block}{The Mathematical Formalization}
-\[
-\text{Cell}_i^{\text{repr}} = \sum_{j \in \text{Embryo}} \text{Attention}(Q_i, K_j) \cdot V_j
-\]
-\textbf{Every cell's representation is computed from the entire organism.}\\
-This IS ``organism as context'' --- made computational.
-\end{block}
-\end{frame}
-
-% ============================================================
-\section{Flow Matching Transformers}
-% ============================================================
-
-\begin{frame}{Architecture Overview}
-\begin{center}
-\includegraphics[width=0.85\textwidth]{figures/architecture.pdf}
-\end{center}
-
-\begin{columns}
-\column{0.32\textwidth}
-\centering
-\textbf{Input}\\
-Cell tokens\\
-(Transcriptome + Lineage + Time)
-
-\column{0.32\textwidth}
-\centering
-\textbf{Encoder}\\
-Pairwise Transformer\\
-(Axial Attention)
-
-\column{0.32\textwidth}
-\centering
-\textbf{Output}\\
-Contact Graph\\
-(Generated via Flow Matching)
-\end{columns}
-\end{frame}
-
-\begin{frame}{Cell Tokenization}
-\begin{block}{Each Cell = One Token}
-\[
-\text{Token}_i = [\underbrace{\mathbf{e}_i^{\text{expr}}}_{\text{scGPT}} \| \underbrace{\mathbf{e}_i^{\text{lin}}}_{\text{Binary Path}} \| \underbrace{\mathbf{e}_i^{\text{time}}}_{\text{Sinusoidal}} \| \underbrace{\mathbf{e}_i^{\text{morph}}}_{\text{CShaper}}]
-\]
-\end{block}
-
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{Transcriptome Embedding}
-\begin{itemize}
-    \item scGPT foundation model (768-dim)
-    \item Or: PCA + MLP (lightweight)
-    \item Captures molecular state
-\end{itemize}
-\end{block}
-
-\begin{block}{Lineage Encoding}
-\begin{itemize}
-    \item Binary path from zygote
-    \item Example: ``ABplp'' → [0,1,0,1,0,...]
-    \item Encodes developmental history
-\end{itemize}
-\end{block}
-
-\column{0.48\textwidth}
-\begin{block}{Temporal Encoding}
-\begin{itemize}
-    \item Sinusoidal (Transformer-style)
-    \item Developmental time: 0--830 min
-    \item Captures temporal position
-\end{itemize}
-\end{block}
-
-\begin{block}{Morphology (when available)}
-\begin{itemize}
-    \item Volume, surface area, sphericity
-    \item From CShaper (early embryo)
-    \item Imputed for late embryo
-\end{itemize}
-\end{block}
-\end{columns}
-\end{frame}
-
-\begin{frame}{Flow Matching: Generative Graph Modeling}
-\begin{columns}
-\column{0.55\textwidth}
-\begin{block}{Why Flow Matching?}
-\begin{itemize}
-    \item \textbf{Generative}: Produces graphs, not just scores
-    \item \textbf{Deterministic sampling}: Faster than diffusion
-    \item \textbf{Stable training}: No score matching issues
-    \item \textbf{Structured outputs}: Natural for adjacency matrices
-\end{itemize}
-\end{block}
-
-\begin{block}{The Formulation}
-Transform noise $\mathbf{Z} \sim \mathcal{N}(0,1)$ to adjacency $\mathbf{A}$:
-\[
-\mathbf{Z} \xrightarrow{\text{Flow } \psi_t} \mathbf{A}
-\]
-Conditioned on: (transcriptome, lineage, time)
-\end{block}
-
-\column{0.42\textwidth}
-\begin{center}
-\includegraphics[width=\textwidth]{figures/flow_matching.pdf}
-\end{center}
-\end{columns}
-\end{frame}
-
-\begin{frame}{Training Objective: OT-CFM}
-\begin{block}{Optimal Transport Conditional Flow Matching}
-\begin{enumerate}
-    \item Sample random flow time $t \sim U(0,1)$
-    \item Sample noise $\mathbf{A}_0 \sim \mathcal{N}(0,1)$
-    \item Interpolate: $\mathbf{A}_t = (1-t)\mathbf{A}_0 + t\mathbf{A}_{\text{target}}$
-    \item Predict velocity: $\mathbf{v}_\theta(\mathbf{A}_t, t, \text{context})$
-    \item Loss: $\mathcal{L} = \|\mathbf{v}_\theta - (\mathbf{A}_{\text{target}} - \mathbf{A}_0)\|^2$
-\end{enumerate}
-\end{block}
 
 \vspace{0.5em}
-
-\begin{block}{Inference: Generate Contact Graph}
-\begin{enumerate}
-    \item Start from noise: $\mathbf{A}_0 \sim \mathcal{N}(0,1)$
-    \item Euler integration: $\mathbf{A}_{t+\Delta t} = \mathbf{A}_t + \mathbf{v}_\theta \cdot \Delta t$
-    \item Binarize: $\mathbf{A}_{\text{final}} = \mathbf{1}[\mathbf{A}_1 > 0.5]$
-    \item Symmetrize
-\end{enumerate}
-\end{block}
+\textbf{Practical reading}
+\begin{itemize}
+    \item Increase sequence length before increasing width/depth.
+    \item Bias toward simpler objectives in biologically meaningful coordinates.
+\end{itemize}
 \end{frame}
 
-% ============================================================
-\section{Training Strategy}
-% ============================================================
-
-\begin{frame}{Curriculum Learning}
-\begin{center}
-\includegraphics[width=0.8\textwidth]{figures/curriculum.pdf}
-\end{center}
-
-\begin{columns}
-\column{0.24\textwidth}
-\centering
-\textbf{Stage 1}\\
-4--50 cells\\
-Simple topology\\
-Fast convergence
-
-\column{0.24\textwidth}
-\centering
-\textbf{Stage 2}\\
-50--200 cells\\
-Gastrulation\\
-Cell migration
-
-\column{0.24\textwidth}
-\centering
-\textbf{Stage 3}\\
-200--500 cells\\
-Organogenesis\\
-Tissue formation
-
-\column{0.24\textwidth}
-\centering
-\textbf{Stage 4}\\
-500--1000 cells\\
-Differentiation\\
-Complex topology
-\end{columns}
-
-\vspace{0.5em}
-\centering
-\textbf{Progressive training on increasingly complex embryo stages}
-\end{frame}
-
-\begin{frame}{Temporal Extrapolation}
-\begin{block}{The Key Challenge}
-\begin{itemize}
-    \item \textbf{Training data}: Early embryo (20--380 min) with ground truth contacts
-    \item \textbf{Prediction target}: Late embryo (380--830 min) with NO ground truth
-\end{itemize}
-\end{block}
-
-\begin{block}{Our Hypothesis}
-The rules of contact formation are \textbf{learnable} and \textbf{generalizable}:
-\begin{itemize}
-    \item Cells with complementary adhesion molecules contact
-    \item Lineage proximity predicts spatial proximity (with caveats)
-    \item Morphological constraints limit possible contacts
-\end{itemize}
-These rules apply across developmental time.
-\end{block}
-
-\begin{block}{Uncertainty Quantification}
-Generate multiple samples → Compute variance → Report confidence
-\end{block}
-\end{frame}
-
-% ============================================================
-\section{Validation Strategy}
-% ============================================================
-
-\begin{frame}{Validation Without Ground Truth}
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{1. Cross-Validation (Early Embryo)}
-\begin{itemize}
-    \item Leave-one-stage-out
-    \item Train on stages 1,2,3 → Test on 4
-    \item Metrics: AUC-ROC, Average Precision
-\end{itemize}
-\end{block}
-
-\begin{block}{2. Connectome Consistency}
-\begin{itemize}
-    \item Adult synapses require prior contact
-    \item If neurons A-B synapse in adult...
-    \item ...model must predict A-B contact in embryo
-    \item \textbf{Peter's Rule}: Contact is necessary for synapse
-\end{itemize}
-\end{block}
-
-\column{0.48\textwidth}
-\begin{block}{3. Notch Signaling Logic}
-\begin{itemize}
-    \item Notch requires direct contact
-    \item Check: Predicted neighbors have L-R pairs?
-    \item GLP-1/APX-1, LIN-12/LAG-2
-    \item Known developmental inductions
-\end{itemize}
-\end{block}
-
-\begin{block}{4. Cross-Species (C. briggsae)}
-\begin{itemize}
-    \item Conserved lineage, divergent genome
-    \item Predicted patterns should be similar
-    \item Evolution validates predictions
-\end{itemize}
-\end{block}
-\end{columns}
-\end{frame}
-
-% ============================================================
-\section{Implementation \& Resources}
-% ============================================================
-
-\begin{frame}{Computational Requirements}
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{Model Size}
-\begin{tabular}{lr}
+\begin{frame}[shrink=8]{A Short Chronology Of The Recent Model Decisions}
+\footnotesize
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.25\textwidth} >{\raggedright\arraybackslash}p{0.32\textwidth} >{\raggedright\arraybackslash}p{0.33\textwidth}}
 \toprule
-Component & Parameters \\
+\textbf{Route} & \textbf{Why it was tried} & \textbf{What we learned} \\
 \midrule
-Cell Encoder & $\sim$10M \\
-Pairwise Transformer & $\sim$50M \\
-Flow Network & $\sim$30M \\
-\midrule
-\textbf{Total} & \textbf{$\sim$90M} \\
+Embryo masked multi-view state learning & Establish whether future developmental structure is present in embryo-scale representations & Yes: future structure is predictable in principle. \\
+\addlinespace[0.3em]
+Direct global future latent prediction & Treat embryo latent as a world state & Small latent loss did not imply biologically correct future state. \\
+\addlinespace[0.3em]
+Future-set completion & Avoid monolithic global latent jumps & Better than direct global latent prediction, but still uneven. \\
+\addlinespace[0.3em]
+Frozen local-code Stage A/B & Pred-x-like internal manifold target & Frozen interface mismatch hurt the outer task. \\
+\addlinespace[0.3em]
+End-to-end pred-x future-set & Keep internal bottleneck, remove frozen staging & Better than Stage A/B, but spatial/split still weak. \\
+\addlinespace[0.3em]
+Branch/mass/spatial auxiliary heads & Make geometry and branching explicit & Mostly worsened the main prediction route. \\
+\addlinespace[0.3em]
+Strict token JEPA / alignment fixes & Fix world-model gauge directly & Confirmed the diagnosis, did not produce a better mainline. \\
 \bottomrule
 \end{tabular}
-\end{block}
-
-\begin{block}{Hardware}
-\begin{itemize}
-    \item A100 80GB $\times$ 1--2 GPUs
-    \item Training: $\sim$24 hours total
-    \item Flash Attention for efficiency
-\end{itemize}
-\end{block}
-
-\column{0.48\textwidth}
-\begin{block}{Scalability}
-\begin{tabular}{lrr}
-\toprule
-Stage & Cells & Memory \\
-\midrule
-Early & 50--200 & $\sim$4 GB \\
-Mid & 200--500 & $\sim$16 GB \\
-Late & 500--1000 & $\sim$48 GB \\
-\bottomrule
-\end{tabular}
-\end{block}
-
-\begin{block}{Inference}
-\begin{itemize}
-    \item 1000-cell embryo: $\sim$30s/sample
-    \item 10 samples (uncertainty): $\sim$5 min
-    \item Batched across time points
-\end{itemize}
-\end{block}
-\end{columns}
 \end{frame}
 
-\begin{frame}{Current Progress}
-\begin{columns}
-\column{0.48\textwidth}
-\begin{block}{Completed}
-\begin{itemize}
-    \item[\checkmark] Trimodal data integration
-    \item[\checkmark] CShaper contact extraction
-    \item[\checkmark] 40\% morphology coverage (94K cells)
-    \item[\checkmark] Lineage proximity prior (28.5M edges)
-    \item[\checkmark] GPU-accelerated pipeline
-    \item[\checkmark] Unified AnnData structure
-\end{itemize}
-\end{block}
-
-\column{0.48\textwidth}
-\begin{block}{Next Steps}
-\begin{enumerate}
-    \item Implement Flow Matching Transformer
-    \item scGPT embedding integration
-    \item Curriculum training pipeline
-    \item Validation framework
-    \item Late-stage prediction
-\end{enumerate}
-\end{block}
-\end{columns}
+\begin{frame}{Best Existing Embryo Predictive Baseline}
+\textbf{The current best compromise is still the reconstruction-led \texttt{spatialtuned} future-set checkpoint}
 
 \vspace{0.5em}
-\begin{block}{Key Metrics}
-\centering
-234,888 cells | 27,138 genes | 1.85M contact edges | 28.5M proximity edges
-\end{block}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Checkpoint} & founder & celltype & depth & spatial & split \\
+\midrule
+\texttt{spatialtuned} & 0.159 & 0.450 & 0.554 & -1.019 & -1.211 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.8em}
+\textbf{Why this matters}
+\begin{itemize}
+    \item It is not the final answer.
+    \item But it is the best tradeoff we found:
+    \begin{itemize}
+        \item semantic/developmental structure remained readable,
+        \item weak spatial tether helped a bit,
+        \item more complicated repairs usually made things worse.
+    \end{itemize}
+\end{itemize}
 \end{frame}
 
-% ============================================================
-\section{Summary}
-% ============================================================
+\begin{frame}{The Core Failure Pattern}
+\textbf{Repeated latent-space failure mode}
+\begin{itemize}
+    \item Predicted future latent often contained information.
+    \item But it did \textbf{not} live in the same readable coordinate system as true future latent.
+    \item Result:
+    \begin{itemize}
+        \item self-readability could be strong,
+        \item transfer from probes trained in true space remained weak.
+    \end{itemize}
+\end{itemize}
 
-\begin{frame}{The Synthesis}
-\begin{center}
-\includegraphics[width=0.75\textwidth]{figures/synthesis.pdf}
-\end{center}
+\vspace{0.5em}
+\textbf{This is the right interpretation}
+\begin{itemize}
+    \item not ``the model learned nothing'',
+    \item but ``the model learned a future representation with the wrong gauge''.
+\end{itemize}
 
-\begin{block}{Key Insight}
-\begin{center}
-\large
-The Bitter Lesson provides the \textbf{technical} justification.\\
-``Organism as Context'' provides the \textbf{biological} justification.\\[0.5em]
-\textbf{Transformers are not an arbitrary choice ---\\
-they are the computational formalization of developmental biology.}
-\end{center}
-\end{block}
+\vspace{0.5em}
+\textbf{Why this matters}
+\begin{itemize}
+    \item It is a standard world-model state-space problem, not a biology-specific oddity.
+    \item It means better losses or auxiliary heads do not automatically fix the real issue.
+\end{itemize}
 \end{frame}
 
-\begin{frame}{The Question We Answer}
-\begin{center}
-\Large
-\textit{``Given everything we know about a cell's history (lineage)\\
-and current state (transcriptome),\\
-can we infer its spatial relationships (contacts)\\
-by understanding its place in the developing organism?''}
+\begin{frame}{What The Diagnostics Actually Showed}
+\textbf{Oracle and alignment analyses changed the interpretation}
+\begin{itemize}
+    \item Readout was not the main problem.
+    \item Object support or matching was not the main short-term problem either.
+    \item The dominant failure looked like a largely \textbf{global linear misalignment}.
+\end{itemize}
 
-\vspace{2em}
+\vspace{0.5em}
+\textbf{Representative pattern}
+\begin{itemize}
+    \item direct transfer from true-space probes to predicted space: poor
+    \item ridge-aligned transfer: almost fully recovers
+\end{itemize}
 
-\textbf{Our hypothesis: Yes.}\\[0.5em]
-\textbf{Because the organism \textit{is} the context.}
-\end{center}
+\vspace{0.5em}
+\textbf{Implication}
+\begin{itemize}
+    \item The project was spending too much effort repairing a pooled latent object that was already conceptually overloaded.
+    \item This suggested a more radical simplification:
+    avoid pooled latent as the main predictive state.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Why I No Longer Trust Pooled Latent As The Main State}
+\textbf{Pooled latent was doing too many incompatible things at once}
+\begin{itemize}
+    \item observation summary
+    \item predictive world state
+    \item biological readout space
+    \item compression bottleneck
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Consequences}
+\begin{itemize}
+    \item founder/celltype/depth were often easier to preserve
+    \item spatial and split were repeatedly the first things to break
+    \item more flexible pooling or alignment heads usually made the gauge problem worse
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Current position}
+\begin{itemize}
+    \item Pooled latent may remain a diagnostic or downstream summary.
+    \item It should no longer define the main training contract.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Gene Is Primary; Celltype Is Too Coarse}
+\textbf{This is the biological correction that matters most}
+\begin{itemize}
+    \item Gene expression is the first-order developmental variable in this project.
+    \item Celltype is a derived summary.
+    \item A model that looks good on celltype while failing on gene is not scientifically satisfying.
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{What changed operationally}
+\begin{itemize}
+    \item I moved away from celltype-first interpretation.
+    \item I rewrote evaluation toward gene-first and token/set-level thinking.
+    \item This makes the latent-world-model route look less attractive, because gene space already provides a fixed biological coordinate system.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Why JiT Became The Right Reference}
+\textbf{The most useful lesson from JiT is conceptual}
+\begin{itemize}
+    \item Directly predict clean data.
+    \item Do not force the model to predict noisy, displaced, or arbitrarily reparameterized targets if the observation space itself is meaningful.
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Translation to this project}
+\begin{itemize}
+    \item image patch $\rightarrow$ gene patch / gene token set
+    \item clean image target $\rightarrow$ clean future gene target
+    \item tokenizer-free pixel prediction $\rightarrow$ latent-free gene prediction
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{In one sentence}
+\begin{itemize}
+    \item The right simplification is not ``a better latent''.
+    \item It is ``a more direct gene-space predictive object''.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Current JiT-Like Model}
+\textbf{Current implementation}
+\begin{itemize}
+    \item Current/historical patch gene tokens enter directly.
+    \item Future query tokens are learned queries.
+    \item A bidirectional transformer processes both together.
+    \item The model directly predicts future clean genes.
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Important negative choices}
+\begin{itemize}
+    \item no pooled latent state
+    \item no local code bottleneck
+    \item no decoder tether
+    \item no latent alignment head
+    \item no hand-designed anchor ontology inside the model
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Why This Is Better Thought Of As A Video-Like Model}
+\textbf{The right analogy is no longer a latent world model}
+\begin{itemize}
+    \item Past patches behave like history frames.
+    \item Future query tokens behave like next-frame prediction queries.
+    \item The model predicts clean token content directly.
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Current temporal configuration}
+\begin{itemize}
+    \item \texttt{history\_patches = 4}
+    \item \texttt{context\_size = 32}
+    \item observed history tokens: \(4 \times 32 = 128\)
+    \item future query tokens: \(32\)
+    \item total sequence length: \(160\)
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Why this is the right scale for now}
+\begin{itemize}
+    \item It uses the data better by expanding context.
+    \item It does not assume the dataset can support a very large latent world model.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{What We Know From The Simple Gene Baseline}
+\textbf{Current local-region baseline}
+\begin{itemize}
+    \item Task: current local mean gene \(\rightarrow\) future local mean gene
+    \item Models: persistence, ridge, 2-layer MLP
+    \item Cross-validation by time pair
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Main result}
+\begin{itemize}
+    \item The task is not empty.
+    \item A small MLP beats persistence in MSE.
+    \item But independent pair count is still small enough that per-gene \(R^2\) remains unstable.
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Interpretation}
+\begin{itemize}
+    \item Direct gene prediction is worth pursuing.
+    \item We should not over-read noisy gene-level statistics from tiny pair counts.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{What I Now Believe}
+\textbf{Main claims}
+\begin{itemize}
+    \item The pooled-latent world-model route taught us a real lesson, but is probably not the right mainline.
+    \item The strongest remaining scientific simplification is:
+    \[
+    \text{history gene patches} \rightarrow \text{future clean gene patches}
+    \]
+    \item Data support longer sequence context better than much larger model capacity.
+    \item Gene-first evaluation is more defensible than celltype-first comfort.
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{What I no longer want to keep doing}
+\begin{itemize}
+    \item repairing pooled latent with more geometry tricks
+    \item inventing more auxiliary heads before fixing the predictive object
+    \item treating a derived label space as stronger evidence than gene-space prediction
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Immediate Next Steps}
+\textbf{The near-term plan is deliberately narrow}
+\begin{enumerate}
+    \item Train the longer-history JiT-like gene patch model properly.
+    \item Compare it against the short-context version under gene-space metrics.
+    \item Keep model size modest; scale sequence before scaling width/depth.
+    \item Re-introduce additional structure only if direct gene prediction clearly saturates.
+\end{enumerate}
+
+\vspace{0.7em}
+\textbf{What would count as convincing progress}
+\begin{itemize}
+    \item better future gene prediction under held-out time-pair evaluation
+    \item cleaner scaling with historical context
+    \item less dependence on complicated latent-space interpretation
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Questions For Discussion}
+\textbf{What I want feedback on}
+\begin{itemize}
+    \item Do we agree that pooled latent should be downgraded from main state object to diagnostic summary?
+    \item Is direct gene-space prediction the right simplification, or should we preserve a more explicit state bottleneck?
+    \item How much history should we expose before we should worry about overfitting pair-specific structure?
+    \item If we add structure back later, what biological structure is worth restoring first:
+    \begin{itemize}
+        \item spatial geometry,
+        \item division/branching,
+        \item or a stronger local set object?
+    \end{itemize}
+\end{itemize}
 \end{frame}
 
 \begin{frame}
 \centering
 \Huge Thank You
 
-\vspace{2em}
-\Large Questions?
+\vspace{1.5em}
+\Large Discussion
 
-\vspace{2em}
+\vspace{1.5em}
 \normalsize
 \texttt{github.com/maxwell-gao/NemaContext}
 \end{frame}
