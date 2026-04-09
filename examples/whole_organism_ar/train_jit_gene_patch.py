@@ -51,7 +51,7 @@ def parse_args():
     p.add_argument("--gene_set_weight", type=float, default=1.0)
     p.add_argument("--mean_gene_weight", type=float, default=0.2)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
-    p.add_argument("--checkpoint_dir", default="checkpoints_jit_gene_patch")
+    p.add_argument("--checkpoint_dir", default="checkpoints/jit_gene_patch")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()

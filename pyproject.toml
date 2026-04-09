@@ -5,7 +5,7 @@ description = "Modeling C. elegans Development as Token Tree Generation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "torch>=2.0.0",
+    "torch",
     "scanpy",
     "anndata",
     "geoopt",
