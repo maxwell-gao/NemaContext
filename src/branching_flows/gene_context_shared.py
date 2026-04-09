@@ -32,6 +32,14 @@ class JiTGenePatchOutput:
 
 
 @dataclass
+class GenePatchVideoOutput:
+    pred_future_genes: torch.Tensor
+    pred_future_token_states: torch.Tensor
+    pred_future_frame_latent: torch.Tensor
+    pred_mean_gene: torch.Tensor
+
+
+@dataclass
 class MultiPatchSetOutput:
     pred_future_genes: torch.Tensor
     pred_patch_size: torch.Tensor

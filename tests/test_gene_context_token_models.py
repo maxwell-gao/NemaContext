@@ -13,6 +13,7 @@ sys.path.insert(0, str(project_root))
 
 from src.branching_flows.gene_context import (  # noqa: E402
     GeneContextModel,
+    GenePatchVideoModel,
     JiTGenePatchModel,
     SingleCellGeneTimeModel,
 )
@@ -335,3 +336,69 @@ def test_local_only_spatial_anchor_patch_has_no_global_tokens():
     assert torch.all(item["future_relative_position"][:, 4] == 1.0)
     assert item["current_anchor_mask"].sum().item() == 1
     assert item["future_anchor_mask"].sum().item() == 1
+
+
+def test_gene_patch_video_model_forward():
+    """GenePatchVideoModel should predict a next-frame future patch from history frames."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = TemporalPatchSetDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=8,
+        global_context_size=0,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        history_patches=3,
+        patch_composition="local_only",
+    )
+    if len(dataset) < 2:
+        pytest.skip("Insufficient temporal patch-set samples")
+
+    batch = collate_history_patch_set([dataset[0], dataset[1]])
+
+    def _stack(field: str) -> torch.Tensor:
+        tensors = [batch[f"history_patch_{i}_{field}"] for i in range(3)]
+        max_len = max(t.shape[1] for t in tensors)
+        padded = []
+        for tensor in tensors:
+            pad_len = max_len - tensor.shape[1]
+            if pad_len == 0:
+                padded.append(tensor)
+                continue
+            if tensor.dim() == 3:
+                pad = tensor.new_zeros(tensor.shape[0], pad_len, tensor.shape[2])
+            else:
+                pad = tensor.new_zeros(tensor.shape[0], pad_len)
+            padded.append(torch.cat([tensor, pad], dim=1))
+        return torch.stack(padded, dim=1)
+
+    model = GenePatchVideoModel(
+        gene_dim=dataset.gene_dim,
+        context_size=8,
+        history_frames=3,
+        d_model=64,
+        n_heads=4,
+        n_spatial_layers=1,
+        n_temporal_layers=2,
+        n_decoder_layers=1,
+        head_dim=16,
+    )
+    out = model(
+        genes=_stack("genes"),
+        time=batch["history_patch_2_time"],
+        future_time=batch["future_time"],
+        token_times=_stack("token_times"),
+        valid_mask=_stack("valid_mask"),
+        context_role=None,
+        relative_position=None,
+    )
+    assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
+    assert out.pred_future_token_states.shape == (2, 8, 64)
+    assert out.pred_future_frame_latent.shape == (2, 64)
+    assert out.pred_mean_gene.shape == (2, dataset.gene_dim)

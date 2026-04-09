@@ -8,6 +8,7 @@ import torch.nn as nn
 from .autoregressive_model import TransformerBlockAutoregressive
 from .gene_context_shared import (
     GeneContextOutput,
+    GenePatchVideoOutput,
     JiTGenePatchOutput,
     LocalCellCodeCodec,
     LocalCellCodeOutput,
@@ -603,6 +604,159 @@ class JiTGenePatchModel(nn.Module):
         return JiTGenePatchOutput(
             pred_future_genes=pred_future_genes,
             pred_future_token_states=future_states,
+            pred_mean_gene=pred_mean_gene,
+        )
+
+
+class GenePatchVideoModel(nn.Module):
+    """End-to-end next-frame predictor over local gene patch history frames."""
+
+    def __init__(
+        self,
+        gene_dim: int,
+        context_size: int,
+        history_frames: int = 4,
+        d_model: int = 256,
+        n_heads: int = 8,
+        n_spatial_layers: int = 2,
+        n_temporal_layers: int = 4,
+        n_decoder_layers: int = 2,
+        head_dim: int = 32,
+    ):
+        super().__init__()
+        if history_frames < 1:
+            raise ValueError("history_frames must be >= 1")
+        self.gene_dim = gene_dim
+        self.context_size = context_size
+        self.history_frames = history_frames
+        self.d_model = d_model
+        self.gene_proj = nn.Sequential(
+            nn.Linear(gene_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.global_time_proj = nn.Sequential(
+            nn.Linear(2, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.token_time_proj = nn.Sequential(
+            nn.Linear(1, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.context_role_emb = nn.Embedding(4, d_model)
+        self.relative_spatial_proj = nn.Sequential(
+            nn.Linear(5, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.frame_index_emb = nn.Embedding(history_frames + 1, d_model)
+        self.history_type = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.future_type = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.future_frame_query = nn.Parameter(torch.randn(1, d_model) * 0.02)
+        self.future_token_queries = nn.Parameter(torch.randn(context_size, d_model) * 0.02)
+        self.spatial_blocks = nn.ModuleList(
+            [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_spatial_layers)]
+        )
+        self.temporal_blocks = nn.ModuleList(
+            [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_temporal_layers)]
+        )
+        self.decoder_blocks = nn.ModuleList(
+            [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_decoder_layers)]
+        )
+        self.gene_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Linear(d_model, gene_dim),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight, gain=0.1)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    @staticmethod
+    def _pool_frame(token_states: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+        mask_f = valid_mask.float().unsqueeze(-1)
+        denom = mask_f.sum(dim=1).clamp_min(1.0)
+        return (token_states * mask_f).sum(dim=1) / denom
+
+    def forward(
+        self,
+        genes: torch.Tensor,
+        time: torch.Tensor,
+        future_time: torch.Tensor,
+        token_times: torch.Tensor,
+        valid_mask: torch.Tensor,
+        context_role: torch.Tensor | None = None,
+        relative_position: torch.Tensor | None = None,
+    ) -> GenePatchVideoOutput:
+        batch_size, n_frames, patch_len, _gene_dim = genes.shape
+        if n_frames != self.history_frames:
+            raise ValueError(f"Expected {self.history_frames} history frames, got {n_frames}")
+        if patch_len > self.context_size:
+            raise ValueError(f"Patch length {patch_len} exceeds context_size={self.context_size}")
+
+        global_time = torch.stack([time, future_time - time], dim=-1)
+        global_time_emb = self.global_time_proj(global_time).view(batch_size, 1, 1, self.d_model)
+        frame_ids = torch.arange(n_frames, device=genes.device)
+        frame_emb = self.frame_index_emb(frame_ids).view(1, n_frames, 1, self.d_model)
+
+        x = self.gene_proj(genes)
+        x = x + global_time_emb
+        x = x + self.token_time_proj(token_times.unsqueeze(-1))
+        x = x + frame_emb
+        x = x + self.history_type.view(1, 1, 1, self.d_model)
+        if context_role is not None:
+            x = x + self.context_role_emb(context_role.clamp(min=0, max=3))
+        if relative_position is not None:
+            x = x + self.relative_spatial_proj(relative_position)
+
+        flat_x = x.view(batch_size * n_frames, patch_len, self.d_model)
+        flat_mask = valid_mask.view(batch_size * n_frames, patch_len)
+        for block in self.spatial_blocks:
+            flat_x = block(flat_x, flat_mask)
+        encoded_frames = flat_x.view(batch_size, n_frames, patch_len, self.d_model)
+
+        frame_latents = self._pool_frame(encoded_frames.view(batch_size * n_frames, patch_len, self.d_model), flat_mask)
+        frame_latents = frame_latents.view(batch_size, n_frames, self.d_model)
+        temporal_tokens = frame_latents + self.frame_index_emb(frame_ids).view(1, n_frames, self.d_model)
+        future_frame = self.future_frame_query.unsqueeze(0).expand(batch_size, -1, -1)
+        future_frame = future_frame + self.frame_index_emb(torch.tensor([n_frames], device=genes.device))
+        future_frame = future_frame + self.global_time_proj(global_time).unsqueeze(1)
+        future_frame = future_frame + self.future_type
+        temporal_seq = torch.cat([temporal_tokens, future_frame], dim=1)
+        temporal_mask = torch.ones(batch_size, n_frames + 1, dtype=valid_mask.dtype, device=valid_mask.device)
+        for block in self.temporal_blocks:
+            temporal_seq = block(temporal_seq, temporal_mask)
+        pred_future_frame_latent = temporal_seq[:, -1]
+
+        history_tokens = encoded_frames.view(batch_size, n_frames * patch_len, self.d_model)
+        history_token_mask = valid_mask.view(batch_size, n_frames * patch_len)
+        future_tokens = self.future_token_queries[:patch_len].unsqueeze(0).expand(batch_size, -1, -1)
+        future_tokens = future_tokens + pred_future_frame_latent.unsqueeze(1)
+        future_tokens = future_tokens + self.future_type
+        decoder_tokens = torch.cat([history_tokens, future_tokens], dim=1)
+        decoder_mask = torch.cat(
+            [history_token_mask, torch.ones(batch_size, patch_len, dtype=valid_mask.dtype, device=valid_mask.device)],
+            dim=1,
+        )
+        for block in self.decoder_blocks:
+            decoder_tokens = block(decoder_tokens, decoder_mask)
+        pred_future_token_states = decoder_tokens[:, -patch_len:]
+        pred_future_genes = self.gene_head(pred_future_token_states)
+        pred_mean_gene = pred_future_genes.mean(dim=1)
+        return GenePatchVideoOutput(
+            pred_future_genes=pred_future_genes,
+            pred_future_token_states=pred_future_token_states,
+            pred_future_frame_latent=pred_future_frame_latent,
             pred_mean_gene=pred_mean_gene,
         )
 

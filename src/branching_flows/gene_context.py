@@ -15,6 +15,7 @@ from .gene_context_embryo import (
 )
 from .gene_context_patch import (
     GeneContextModel,
+    GenePatchVideoModel,
     JiTGenePatchModel,
     LocalCellCodeModel,
     MultiCellPatchSetModel,
@@ -28,6 +29,7 @@ from .gene_context_shared import (
     EmbryoStateOutput,
     FrozenLinearTokenReadout,
     GeneContextOutput,
+    GenePatchVideoOutput,
     JiTGenePatchOutput,
     LocalCellCodeCodec,
     LocalCellCodeOutput,
@@ -47,6 +49,8 @@ __all__ = [
     "FrozenLinearTokenReadout",
     "GeneContextModel",
     "GeneContextOutput",
+    "GenePatchVideoModel",
+    "GenePatchVideoOutput",
     "JiTGenePatchModel",
     "JiTGenePatchOutput",
     "LocalCellCodeCodec",
