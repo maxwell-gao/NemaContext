@@ -305,3 +305,33 @@ def test_temporal_jit_gene_patch_model_forward():
     )
     assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
     assert out.pred_future_token_states.shape == (2, 8, 64)
+
+
+def test_local_only_spatial_anchor_patch_has_no_global_tokens():
+    """Local-only patch composition should never mix in global background cells."""
+    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
+    if not h5ad_path.exists():
+        pytest.skip("Processed gene-context dataset not available")
+
+    dataset = PatchSetDataset(
+        h5ad_path=h5ad_path,
+        n_hvg=32,
+        context_size=12,
+        global_context_size=4,
+        dt_minutes=40.0,
+        samples_per_pair=2,
+        split="train",
+        sampling_strategy="spatial_anchor",
+        random_seed=0,
+        patch_composition="local_only",
+    )
+    if len(dataset) == 0:
+        pytest.skip("No patch-set samples available")
+
+    item = dataset[0]
+    assert not torch.any(item["current_context_role"] == 3)
+    assert not torch.any(item["future_context_role"] == 3)
+    assert torch.all(item["current_relative_position"][:, 4] == 1.0)
+    assert torch.all(item["future_relative_position"][:, 4] == 1.0)
+    assert item["current_anchor_mask"].sum().item() == 1
+    assert item["future_anchor_mask"].sum().item() == 1

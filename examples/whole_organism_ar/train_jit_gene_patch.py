@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a JiT-like direct gene-space patch predictor."""
+"""Train the mainline gene-patch predictor on local spatial cell groups."""
 
 from __future__ import annotations
 
@@ -31,7 +31,8 @@ def parse_args():
     p.add_argument("--n_hvg", type=int, default=256)
     p.add_argument("--context_size", type=int, default=32)
     p.add_argument("--global_context_size", type=int, default=0)
-    p.add_argument("--history_patches", type=int, default=4)
+    p.add_argument("--patch_composition", choices=["local_only", "local_global"], default="local_only")
+    p.add_argument("--history_patches", type=int, default=1)
     p.add_argument("--dt_minutes", type=float, default=40.0)
     p.add_argument("--time_window_minutes", type=float, default=10.0)
     p.add_argument("--samples_per_pair", type=int, default=16)
@@ -40,6 +41,10 @@ def parse_args():
     p.add_argument("--sampling_strategy", choices=["random_window", "spatial_neighbors", "spatial_anchor"], default="spatial_anchor")
     p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
     p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
+    p.add_argument("--use_context_role", action="store_true", default=True)
+    p.add_argument("--no_use_context_role", dest="use_context_role", action="store_false")
+    p.add_argument("--use_relative_position", action="store_true", default=True)
+    p.add_argument("--no_use_relative_position", dest="use_relative_position", action="store_false")
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -52,32 +57,21 @@ def parse_args():
     p.add_argument("--mean_gene_weight", type=float, default=0.2)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--checkpoint_dir", default="checkpoints/jit_gene_patch")
+    p.add_argument("--experiment_name", default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
 
 
+def resolve_checkpoint_dir(args) -> Path:
+    checkpoint_dir = Path(args.checkpoint_dir)
+    if args.experiment_name:
+        checkpoint_dir = checkpoint_dir / args.experiment_name
+    return checkpoint_dir
+
+
 def build_dataset(args, split: str):
-    if args.history_patches > 1:
-        return TemporalPatchSetDataset(
-            h5ad_path=args.h5ad_path,
-            n_hvg=args.n_hvg,
-            context_size=args.context_size,
-            global_context_size=args.global_context_size,
-            dt_minutes=args.dt_minutes,
-            time_window_minutes=args.time_window_minutes,
-            samples_per_pair=args.samples_per_pair,
-            min_cells_per_window=args.min_cells_per_window,
-            split=split,
-            val_fraction=args.val_fraction,
-            random_seed=args.seed,
-            sampling_strategy=args.sampling_strategy,
-            min_spatial_cells_per_window=args.min_spatial_cells_per_window,
-            spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
-            delete_target_mode="strict",
-            history_patches=args.history_patches,
-        )
-    return PatchSetDataset(
+    common = dict(
         h5ad_path=args.h5ad_path,
         n_hvg=args.n_hvg,
         context_size=args.context_size,
@@ -93,7 +87,11 @@ def build_dataset(args, split: str):
         min_spatial_cells_per_window=args.min_spatial_cells_per_window,
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size,
         delete_target_mode="strict",
+        patch_composition=args.patch_composition,
     )
+    if args.history_patches > 1:
+        return TemporalPatchSetDataset(**common, history_patches=args.history_patches)
+    return PatchSetDataset(**common)
 
 
 def _stack_history_tensor(batch: dict[str, torch.Tensor], field: str, n_patches: int) -> torch.Tensor:
@@ -111,7 +109,6 @@ def prepare_batch(batch: dict[str, torch.Tensor], device: str) -> dict[str, torc
     current_relative_position = _stack_history_tensor(batch, "relative_position", n_patches)
     current_token_times = _stack_history_tensor(batch, "token_times", n_patches)
     current_valid_mask = _stack_history_tensor(batch, "valid_mask", n_patches)
-    current_anchor_mask = _stack_history_tensor(batch, "anchor_mask", n_patches)
     current_time = batch[f"history_patch_{n_patches - 1}_time"]
 
     batch["current_genes"] = current_genes.flatten(1, 2)
@@ -119,39 +116,46 @@ def prepare_batch(batch: dict[str, torch.Tensor], device: str) -> dict[str, torc
     batch["current_relative_position"] = current_relative_position.flatten(1, 2)
     batch["current_token_times"] = current_token_times.flatten(1, 2)
     batch["current_valid_mask"] = current_valid_mask.flatten(1, 2)
-    batch["current_anchor_mask"] = current_anchor_mask.flatten(1, 2)
     batch["current_time"] = current_time
     return batch
 
 
+def build_model_inputs(batch: dict[str, torch.Tensor], args) -> dict[str, torch.Tensor | None]:
+    return {
+        "genes": batch["current_genes"],
+        "time": batch["current_time"],
+        "future_time": batch["future_time"],
+        "token_times": batch["current_token_times"],
+        "valid_mask": batch["current_valid_mask"],
+        "context_role": batch["current_context_role"] if args.use_context_role else None,
+        "relative_position": batch["current_relative_position"] if args.use_relative_position else None,
+    }
+
+
+def compute_current_mean_gene(batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    valid = batch["current_valid_mask"].unsqueeze(-1).float()
+    denom = valid.sum(dim=1).clamp_min(1.0)
+    return (batch["current_genes"] * valid).sum(dim=1) / denom
+
+
 def compute_loss(model: JiTGenePatchModel, batch: dict[str, torch.Tensor], args) -> tuple[torch.Tensor, dict[str, float]]:
-    out = model(
-        genes=batch["current_genes"],
-        time=batch["current_time"],
-        future_time=batch["future_time"],
-        token_times=batch["current_token_times"],
-        valid_mask=batch["current_valid_mask"],
-        context_role=batch["current_context_role"],
-        relative_position=batch["current_relative_position"],
-    )
-    gene_set = sinkhorn_divergence(
-        out.pred_future_genes,
-        batch["future_genes"],
-        blur=args.gene_sinkhorn_blur,
-    )
+    out = model(**build_model_inputs(batch, args))
+    gene_set = sinkhorn_divergence(out.pred_future_genes, batch["future_genes"], blur=args.gene_sinkhorn_blur)
     mean_gene = F.mse_loss(out.pred_mean_gene, batch["future_mean_gene"])
+    persistence_mean_gene = F.mse_loss(compute_current_mean_gene(batch), batch["future_mean_gene"])
     total = args.gene_set_weight * gene_set + args.mean_gene_weight * mean_gene
     return total, {
         "total": float(total.item()),
         "gene_set": float(gene_set.item()),
         "mean_gene": float(mean_gene.item()),
+        "persistence_mean_gene": float(persistence_mean_gene.item()),
     }
 
 
 def run_epoch(model, loader, args, optimizer=None):
     training = optimizer is not None
     model.train(training)
-    totals = {"total": 0.0, "gene_set": 0.0, "mean_gene": 0.0}
+    totals = {"total": 0.0, "gene_set": 0.0, "mean_gene": 0.0, "persistence_mean_gene": 0.0}
     steps = 0
     for batch in loader:
         batch = prepare_batch(batch, args.device)
@@ -190,11 +194,26 @@ def main():
     ).to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    checkpoint_dir = Path(args.checkpoint_dir)
+    checkpoint_dir = resolve_checkpoint_dir(args)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     history = []
     best_val = float("inf")
     best_path = checkpoint_dir / "best.pt"
+
+    print(
+        json.dumps(
+            {
+                "task": "gene_patch_mainline",
+                "patch_composition": args.patch_composition,
+                "use_relative_position": args.use_relative_position,
+                "use_context_role": args.use_context_role,
+                "history_patches": args.history_patches,
+                "checkpoint_dir": str(checkpoint_dir),
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
 
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(model, train_loader, args, optimizer=optimizer)
@@ -222,7 +241,8 @@ def main():
             f"epoch={epoch} train_total={train_metrics['total']:.4f} "
             f"val_total={val_metrics['total']:.4f} "
             f"val_gene_set={val_metrics['gene_set']:.4f} "
-            f"val_mean_gene={val_metrics['mean_gene']:.4f}",
+            f"val_mean_gene={val_metrics['mean_gene']:.4f} "
+            f"val_persist_mean={val_metrics['persistence_mean_gene']:.4f}",
             flush=True,
         )
 

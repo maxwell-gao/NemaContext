@@ -88,6 +88,7 @@ def build_dataset(args, split: str) -> PatchSetDataset:
         min_spatial_cells_per_window=max(args.min_spatial_cells_per_window, max(args.region_sizes)),
         spatial_neighbor_pool_size=args.spatial_neighbor_pool_size or max(args.region_sizes),
         delete_target_mode="strict",
+        patch_composition="local_only",
     )
 
 
@@ -255,7 +256,7 @@ def main():
     args = parse_args()
     metrics = {
         "task": "local_region_mean_gene_next_step",
-        "region_definition": "fixed_spatial_anchor_nearest_neighbors",
+        "region_definition": "fixed_local_only_spatial_anchor_nearest_neighbors",
         "n_hvg": args.n_hvg,
         "region_sizes": list(args.region_sizes),
         "dt_minutes": args.dt_minutes,

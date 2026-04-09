@@ -54,15 +54,24 @@ class GeneContextDataset(Dataset):
         delete_target_mode: str = "weak",
         supervision_mode: str = "anchor_only",
         local_group_size: int | None = None,
+        patch_composition: str = "local_global",
     ):
         self.h5ad_path = Path(h5ad_path)
         self.context_size = context_size
+        if patch_composition not in {"local_global", "local_only"}:
+            raise ValueError(f"Unsupported patch_composition: {patch_composition}")
+        self.patch_composition = patch_composition
         default_global = max(0, (context_size - 1) // 4)
-        self.global_context_size = min(
+        requested_global = min(
             max(0, global_context_size if global_context_size is not None else default_global),
             max(0, context_size - 1),
         )
-        self.local_context_size = max(0, context_size - 1 - self.global_context_size)
+        if self.patch_composition == "local_only":
+            self.global_context_size = 0
+            self.local_context_size = max(0, context_size - 1)
+        else:
+            self.global_context_size = requested_global
+            self.local_context_size = max(0, context_size - 1 - self.global_context_size)
         self.dt_minutes = dt_minutes
         self.time_window_minutes = time_window_minutes
         self.samples_per_pair = samples_per_pair
@@ -496,7 +505,7 @@ class GeneContextDataset(Dataset):
         local_pool = spatial_candidates[order[:pool_size]]
         if anchor not in local_pool:
             local_pool = np.concatenate([[anchor], local_pool])
-        local_pool = np.unique(local_pool)
+        local_pool = np.asarray(list(dict.fromkeys(local_pool.tolist())), dtype=np.int64)
 
         if len(local_pool) == 0:
             raise ValueError("No anchor context available")
@@ -506,35 +515,40 @@ class GeneContextDataset(Dataset):
         local_selected = sorted_local[:local_take]
 
         used = np.concatenate([[anchor], local_selected]).astype(np.int64)
-        remaining = np.setdiff1d(window_indices, used, assume_unique=False)
-
-        global_take = min(self.global_context_size, len(remaining))
-        if global_take > 0:
-            global_selected = rng.choice(remaining, size=global_take, replace=False)
-            global_selected = np.sort(global_selected.astype(np.int64))
-        else:
+        if self.patch_composition == "local_only":
             global_selected = np.empty(0, dtype=np.int64)
+            selected = used
+        else:
+            remaining = np.setdiff1d(window_indices, used, assume_unique=False)
+            global_take = min(self.global_context_size, len(remaining))
+            if global_take > 0:
+                global_selected = rng.choice(remaining, size=global_take, replace=False)
+                global_selected = np.sort(global_selected.astype(np.int64))
+            else:
+                global_selected = np.empty(0, dtype=np.int64)
 
-        selected = np.concatenate(
-            [
-                np.array([anchor], dtype=np.int64),
-                local_selected.astype(np.int64),
-                global_selected,
-            ]
-        )
+            selected = np.concatenate(
+                [
+                    np.array([anchor], dtype=np.int64),
+                    local_selected.astype(np.int64),
+                    global_selected,
+                ]
+            )
 
-        if len(selected) < self.context_size:
-            filler_pool = np.setdiff1d(window_indices, selected, assume_unique=False)
-            fill_take = min(self.context_size - len(selected), len(filler_pool))
-            if fill_take > 0:
-                filler = rng.choice(filler_pool, size=fill_take, replace=False)
-                filler = np.sort(filler.astype(np.int64))
-                global_selected = np.concatenate([global_selected, filler])
-                selected = np.concatenate([selected, filler])
+            if len(selected) < self.context_size:
+                filler_pool = np.setdiff1d(window_indices, selected, assume_unique=False)
+                fill_take = min(self.context_size - len(selected), len(filler_pool))
+                if fill_take > 0:
+                    filler = rng.choice(filler_pool, size=fill_take, replace=False)
+                    filler = np.sort(filler.astype(np.int64))
+                    global_selected = np.concatenate([global_selected, filler])
+                    selected = np.concatenate([selected, filler])
 
         context_role = np.full(len(selected), 3, dtype=np.int64)
         context_role[0] = 1
         context_role[1 : 1 + len(local_selected)] = 2
+        if self.patch_composition == "local_only":
+            context_role[1:] = 2
 
         relative_position = self._compute_relative_position(selected, anchor)
 
