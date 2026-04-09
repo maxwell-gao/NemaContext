@@ -153,6 +153,12 @@ approximation to that embryo-scale goal:
 - context validation, patch scaling, and readout repair first,
 - later promotion into larger population updates and embryo-scale rollout.
 
+For local transcriptomic patch video models trained on the current small-data regime:
+
+- do not introduce early pooled frame bottlenecks before temporal prediction,
+- keep token-level temporal pathways end-to-end whenever possible,
+- use space only to define local patch membership unless a stronger signal is demonstrated empirically.
+
 Key active classes:
 
 - `GeneContextModel` - bidirectional attention model over structured
