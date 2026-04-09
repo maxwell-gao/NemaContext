@@ -49,6 +49,8 @@ def parse_args():
     p.add_argument("--head_dim", type=int, default=32)
     p.add_argument("--gene_set_weight", type=float, default=1.0)
     p.add_argument("--mean_gene_weight", type=float, default=0.2)
+    p.add_argument("--mask_ratio", type=float, default=0.3)
+    p.add_argument("--masked_gene_weight", type=float, default=0.2)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--checkpoint_dir", default="checkpoints/gene_patch_video")
     p.add_argument("--experiment_name", default=None)
@@ -122,9 +124,32 @@ def compute_current_mean_gene(batch: dict[str, torch.Tensor]) -> torch.Tensor:
     return (current_genes * current_valid).sum(dim=1) / denom
 
 
-def compute_loss(model: GenePatchVideoModel, batch: dict[str, torch.Tensor], args):
+def sample_history_mask(valid_mask: torch.Tensor, mask_ratio: float) -> torch.Tensor:
+    if mask_ratio <= 0.0:
+        return torch.zeros_like(valid_mask, dtype=torch.bool)
+    if mask_ratio >= 1.0:
+        return valid_mask.bool()
+    rand = torch.rand_like(valid_mask.float())
+    return (rand < mask_ratio) & valid_mask.bool()
+
+
+def apply_history_mask(history_genes: torch.Tensor, history_mask: torch.Tensor) -> torch.Tensor:
+    masked_genes = history_genes.clone()
+    masked_genes[history_mask] = 0.0
+    return masked_genes
+
+
+def masked_gene_recon_loss(pred_history_genes: torch.Tensor, history_genes: torch.Tensor, history_mask: torch.Tensor) -> torch.Tensor:
+    if not history_mask.any():
+        return pred_history_genes.new_zeros(())
+    return F.mse_loss(pred_history_genes[history_mask], history_genes[history_mask])
+
+
+def compute_loss(model: GenePatchVideoModel, batch: dict[str, torch.Tensor], args, apply_mask: bool):
+    history_mask = sample_history_mask(batch["history_valid_mask"], args.mask_ratio) if apply_mask else torch.zeros_like(batch["history_valid_mask"], dtype=torch.bool)
+    input_history_genes = apply_history_mask(batch["history_genes"], history_mask) if apply_mask else batch["history_genes"]
     out = model(
-        genes=batch["history_genes"],
+        genes=input_history_genes,
         time=batch["history_time"],
         future_time=batch["future_time"],
         token_times=batch["history_token_times"],
@@ -136,12 +161,14 @@ def compute_loss(model: GenePatchVideoModel, batch: dict[str, torch.Tensor], arg
     target_mean_gene = batch["future_mean_gene"]
     gene_set = sinkhorn_divergence(out.pred_future_genes, target_future, blur=args.gene_sinkhorn_blur)
     mean_gene = F.mse_loss(out.pred_mean_gene, target_mean_gene)
+    masked_gene = masked_gene_recon_loss(out.pred_history_genes, batch["history_genes"], history_mask)
     persistence_mean_gene = F.mse_loss(compute_current_mean_gene(batch), target_mean_gene)
-    total = args.gene_set_weight * gene_set + args.mean_gene_weight * mean_gene
+    total = args.gene_set_weight * gene_set + args.mean_gene_weight * mean_gene + args.masked_gene_weight * masked_gene
     return total, {
         "total": float(total.item()),
         "gene_set": float(gene_set.item()),
         "mean_gene": float(mean_gene.item()),
+        "masked_gene": float(masked_gene.item()),
         "persistence_mean_gene": float(persistence_mean_gene.item()),
     }
 
@@ -149,11 +176,11 @@ def compute_loss(model: GenePatchVideoModel, batch: dict[str, torch.Tensor], arg
 def run_epoch(model, loader, args, optimizer=None):
     training = optimizer is not None
     model.train(training)
-    totals = {"total": 0.0, "gene_set": 0.0, "mean_gene": 0.0, "persistence_mean_gene": 0.0}
+    totals = {"total": 0.0, "gene_set": 0.0, "mean_gene": 0.0, "masked_gene": 0.0, "persistence_mean_gene": 0.0}
     steps = 0
     for batch in loader:
         batch = prepare_batch(batch, args.device)
-        loss, metrics = compute_loss(model, batch, args)
+        loss, metrics = compute_loss(model, batch, args, apply_mask=training)
         if training:
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -201,7 +228,7 @@ def main():
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
             torch.save({"model_state_dict": model.state_dict(), "config": vars(args), "gene_dim": train_ds.gene_dim, "best_val_total": best_val}, checkpoint_dir / "best.pt")
-        print(f"epoch={epoch} train_total={train_metrics['total']:.4f} val_total={val_metrics['total']:.4f} val_gene_set={val_metrics['gene_set']:.4f} val_mean_gene={val_metrics['mean_gene']:.4f} val_persist_mean={val_metrics['persistence_mean_gene']:.4f}", flush=True)
+        print(f"epoch={epoch} train_total={train_metrics['total']:.4f} val_total={val_metrics['total']:.4f} val_gene_set={val_metrics['gene_set']:.4f} val_mean_gene={val_metrics['mean_gene']:.4f} train_masked_gene={train_metrics['masked_gene']:.4f} val_masked_gene={val_metrics['masked_gene']:.4f} val_persist_mean={val_metrics['persistence_mean_gene']:.4f}", flush=True)
 
 
 if __name__ == "__main__":

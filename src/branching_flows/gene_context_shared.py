@@ -37,6 +37,7 @@ class GenePatchVideoOutput:
     pred_future_token_states: torch.Tensor
     pred_future_frame_latent: torch.Tensor
     pred_mean_gene: torch.Tensor
+    pred_history_genes: torch.Tensor
 
 
 @dataclass

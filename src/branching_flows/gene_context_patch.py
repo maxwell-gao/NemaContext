@@ -608,6 +608,46 @@ class JiTGenePatchModel(nn.Module):
         )
 
 
+class CrossAttentionRefinementBlock(nn.Module):
+    """Lightweight query-only refinement over full history memory."""
+
+    def __init__(self, d_model: int, n_heads: int):
+        super().__init__()
+        self.query_norm = nn.LayerNorm(d_model)
+        self.memory_norm = nn.LayerNorm(d_model)
+        self.self_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.mlp_norm = nn.LayerNorm(d_model)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model),
+        )
+
+    def forward(
+        self,
+        queries: torch.Tensor,
+        memory: torch.Tensor,
+        memory_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        q = self.query_norm(queries)
+        self_update, _ = self.self_attn(q, q, q, need_weights=False)
+        queries = queries + self_update
+
+        q = self.query_norm(queries)
+        m = self.memory_norm(memory)
+        cross_update, _ = self.cross_attn(
+            q,
+            m,
+            m,
+            key_padding_mask=~memory_mask.bool(),
+            need_weights=False,
+        )
+        queries = queries + cross_update
+        queries = queries + self.mlp(self.mlp_norm(queries))
+        return queries
+
+
 class GenePatchVideoModel(nn.Module):
     """End-to-end next-frame predictor over local gene patch history frames."""
 
@@ -665,7 +705,7 @@ class GenePatchVideoModel(nn.Module):
             [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_temporal_layers)]
         )
         self.refinement_blocks = nn.ModuleList(
-            [TransformerBlockAutoregressive(d_model, n_heads, head_dim) for _ in range(n_decoder_layers)]
+            [CrossAttentionRefinementBlock(d_model, n_heads) for _ in range(n_decoder_layers)]
         )
         self.gene_head = nn.Sequential(
             nn.Linear(d_model, d_model),
@@ -741,15 +781,10 @@ class GenePatchVideoModel(nn.Module):
 
         history_tokens = token_temporal.view(batch_size, n_frames * patch_len, self.d_model)
         history_token_mask = valid_mask.view(batch_size, n_frames * patch_len)
-        refinement_mask = torch.cat(
-            [history_token_mask, torch.ones(batch_size, patch_len, dtype=valid_mask.dtype, device=valid_mask.device)],
-            dim=1,
-        )
         pred_future_token_states = future_tokens
         for block in self.refinement_blocks:
-            refinement_tokens = torch.cat([history_tokens, pred_future_token_states], dim=1)
-            refinement_tokens = block(refinement_tokens, refinement_mask)
-            pred_future_token_states = refinement_tokens[:, -patch_len:]
+            pred_future_token_states = block(pred_future_token_states, history_tokens, history_token_mask)
+        pred_history_genes = self.gene_head(token_temporal)
         pred_future_genes = self.gene_head(pred_future_token_states)
         pred_mean_gene = pred_future_genes.mean(dim=1)
         return GenePatchVideoOutput(
@@ -757,6 +792,7 @@ class GenePatchVideoModel(nn.Module):
             pred_future_token_states=pred_future_token_states,
             pred_future_frame_latent=pred_future_frame_latent,
             pred_mean_gene=pred_mean_gene,
+            pred_history_genes=pred_history_genes,
         )
 
 
