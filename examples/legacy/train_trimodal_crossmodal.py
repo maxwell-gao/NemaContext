@@ -96,7 +96,7 @@ def parse_args():
     p.add_argument("--branching_time_prob", type=float, default=0.5)
 
     p.add_argument("--device", default="cpu")
-    p.add_argument("--checkpoint_dir", default="checkpoints_trimodal_crossmodal")
+    p.add_argument("--checkpoint_dir", default="checkpoints/trimodal_crossmodal")
     p.add_argument("--log_every", type=int, default=1)
     return p.parse_args()
 

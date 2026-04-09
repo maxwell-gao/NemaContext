@@ -81,12 +81,12 @@ uv run python examples/whole_organism_ar/train_patch_set.py \
 
 # 2) Evaluate the active patch-set baseline
 uv run python examples/whole_organism_ar/evaluate_patch_set.py \
-  --checkpoint checkpoints_patch_set/best.pt \
+  --checkpoint checkpoints/patch_set/best.pt \
   --output result/gene_context/evaluation_patch_set.json
 
 # 3) Compare with anchor-only ablation
 uv run python examples/whole_organism_ar/evaluate_patch_set.py \
-  --checkpoint checkpoints_patch_set/best.pt \
+  --checkpoint checkpoints/patch_set/best.pt \
   --context_ablation anchor_only \
   --output result/gene_context/evaluation_patch_set_anchor_only.json
 
@@ -133,7 +133,7 @@ uv run python examples/whole_organism_ar/train_embryo_masked_views.py \
 # 7) Train the strongest current embryo predictive route:
 # end-to-end reconstruction-backed MAE future-set completion
 uv run python examples/whole_organism_ar/train_embryo_future_set.py \
-  --backbone_checkpoint checkpoints_embryo_masked_views/best.pt \
+  --backbone_checkpoint checkpoints/embryo_masked_views/best.pt \
   --context_size 256 \
   --global_context_size 32 \
   --dt_minutes 40 \

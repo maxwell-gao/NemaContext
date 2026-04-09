@@ -29,7 +29,7 @@ from autoregressive_simulation import AutoregressiveSimulator, BranchingState, c
 def main():
     parser = argparse.ArgumentParser(description="Paired perturbation experiment")
     parser.add_argument(
-        "--checkpoint", type=str, default="checkpoints_trimodal_crossmodal/best.pt"
+        "--checkpoint", type=str, default="checkpoints/trimodal_crossmodal/best.pt"
     )
     parser.add_argument("--initial_cells", type=int, default=20)
     parser.add_argument("--dt", type=float, default=0.02)

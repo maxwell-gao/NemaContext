@@ -21,7 +21,7 @@ def main():
     print("=" * 70)
 
     # Load model
-    checkpoint = torch.load("checkpoints_autoregressive/best.pt", map_location="cpu")
+    checkpoint = torch.load("checkpoints/autoregressive/best.pt", map_location="cpu")
     model = AutoregressiveNemaModel(
         gene_dim=2000,
         spatial_dim=3,

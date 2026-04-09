@@ -325,7 +325,7 @@ def main():
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints_trimodal_crossmodal/best.pt",
+        default="checkpoints/trimodal_crossmodal/best.pt",
         help="Path to model checkpoint",
     )
     parser.add_argument(

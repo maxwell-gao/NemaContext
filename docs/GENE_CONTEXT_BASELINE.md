@@ -510,7 +510,7 @@ The only structural difference was:
 
 Multi-cell context:
 
-- checkpoint: `checkpoints_gene_context_compare/best.pt`
+- checkpoint: `checkpoints/gene_context_compare/best.pt`
 - evaluation: `result/gene_context/evaluation_compare_multi.json`
 - result:
   - `total = 1.5694`
@@ -519,7 +519,7 @@ Multi-cell context:
 
 Single-cell control:
 
-- checkpoint: `checkpoints_gene_single_cell_compare/best.pt`
+- checkpoint: `checkpoints/gene_single_cell_compare/best.pt`
 - evaluation: `result/gene_context/evaluation_compare_single.json`
 - result:
   - `total = 2.0261`

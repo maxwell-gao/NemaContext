@@ -26,9 +26,9 @@ def parse_log(filepath):
 
 # Load data
 experiments = {
-    "No Lineage Bias": parse_log("checkpoints_experiments/no_bias.log"),
-    "Lineage Bias (temp=1.0)": parse_log("checkpoints_experiments/with_bias.log"),
-    "Strong Bias (temp=0.5)": parse_log("checkpoints_experiments/strong_bias.log"),
+    "No Lineage Bias": parse_log("checkpoints/experiments/no_bias.log"),
+    "Lineage Bias (temp=1.0)": parse_log("checkpoints/experiments/with_bias.log"),
+    "Strong Bias (temp=0.5)": parse_log("checkpoints/experiments/strong_bias.log"),
 }
 
 # Create figure
@@ -65,8 +65,8 @@ ax.legend()
 ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig("checkpoints_experiments/training_curves.png", dpi=150)
-print("Saved: checkpoints_experiments/training_curves.png")
+plt.savefig("checkpoints/experiments/training_curves.png", dpi=150)
+print("Saved: checkpoints/experiments/training_curves.png")
 
 # Print summary
 print("\n" + "=" * 60)

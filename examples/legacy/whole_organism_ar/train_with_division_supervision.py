@@ -330,7 +330,7 @@ def main():
         "--split_weight", type=float, default=2.0, help="Weight for division loss"
     )
     parser.add_argument(
-        "--save_dir", type=str, default="checkpoints_autoregressive_division"
+        "--save_dir", type=str, default="checkpoints/autoregressive_division"
     )
     args = parser.parse_args()
 

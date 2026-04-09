@@ -95,7 +95,7 @@ def parse_args():
         choices=["none", "relative_position"],
         default="relative_position",
     )
-    p.add_argument("--checkpoint_dir", default="checkpoints_gene_single_cell")
+    p.add_argument("--checkpoint_dir", default="checkpoints/gene_single_cell")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()

@@ -404,7 +404,7 @@ def parse_args():
     p.add_argument("--disc_temperature", type=float, default=0.1)
     p.add_argument("--retrieval_margin", type=float, default=0.2)
     p.add_argument("--ot_weight", type=float, default=0.05)
-    p.add_argument("--checkpoint_dir", default="checkpoints_masked_state_views")
+    p.add_argument("--checkpoint_dir", default="checkpoints/masked_state_views")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()

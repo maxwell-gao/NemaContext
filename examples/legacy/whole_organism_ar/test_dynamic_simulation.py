@@ -21,7 +21,7 @@ def main():
     print("=" * 70)
 
     # Load model
-    checkpoint_path = "checkpoints_autoregressive_dynamic/best.pt"
+    checkpoint_path = "checkpoints/autoregressive_dynamic/best.pt"
     if not Path(checkpoint_path).exists():
         print(f"Checkpoint not found: {checkpoint_path}")
         print("Run train_autoregressive_dynamic.py first")

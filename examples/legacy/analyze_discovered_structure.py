@@ -6,7 +6,7 @@ supervision.
 
 Usage:
     uv run python examples/analyze_discovered_structure.py \
-        --checkpoint checkpoints_experiments/with_bias/best.pt \
+        --checkpoint checkpoints/experiments/with_bias/best.pt \
         --output_dir analysis_results/
 """
 

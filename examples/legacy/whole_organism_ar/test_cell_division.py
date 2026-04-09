@@ -175,7 +175,7 @@ def test_model_predicted_division():
     print("=" * 70)
 
     # Try to load trained checkpoint
-    checkpoint_path = Path("checkpoints_autoregressive_verify/best.pt")
+    checkpoint_path = Path("checkpoints/autoregressive_verify/best.pt")
     if checkpoint_path.exists():
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         model = AutoregressiveNemaModel(

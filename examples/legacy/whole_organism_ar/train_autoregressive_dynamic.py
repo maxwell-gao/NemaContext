@@ -275,7 +275,7 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument(
-        "--save_dir", type=str, default="checkpoints_autoregressive_dynamic"
+        "--save_dir", type=str, default="checkpoints/autoregressive_dynamic"
     )
     args = parser.parse_args()
 

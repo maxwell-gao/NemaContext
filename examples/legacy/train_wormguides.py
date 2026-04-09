@@ -64,7 +64,7 @@ def parse_args():
     p.add_argument("--sinkhorn_blur", type=float, default=0.5)
     p.add_argument("--expected_mass_ratio", type=float, default=2.0)
     p.add_argument("--device", default="cpu")
-    p.add_argument("--checkpoint_dir", default="checkpoints_wg")
+    p.add_argument("--checkpoint_dir", default="checkpoints/wg")
     p.add_argument("--log_every", type=int, default=1)
     return p.parse_args()
 

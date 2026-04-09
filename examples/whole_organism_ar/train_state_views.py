@@ -172,7 +172,7 @@ def parse_args():
     p.add_argument("--head_dim", type=int, default=32)
     p.add_argument("--pairwise_spatial_bias", action="store_true")
     p.add_argument("--ot_weight", type=float, default=0.1)
-    p.add_argument("--checkpoint_dir", default="checkpoints_state_views")
+    p.add_argument("--checkpoint_dir", default="checkpoints/state_views")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()

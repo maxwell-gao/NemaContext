@@ -2,7 +2,7 @@
 # Monitor training progress and auto-run discovery when complete
 
 LOG_FILE="logs/crossmodal_100ep.log"
-CKPT_DIR="checkpoints_trimodal_crossmodal"
+CKPT_DIR="checkpoints/trimodal_crossmodal"
 DISCOVERY_DIR="discoveries"
 
 echo "=== NemaContext Training Monitor ==="

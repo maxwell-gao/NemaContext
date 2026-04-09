@@ -2,7 +2,7 @@
 
 Usage:
     uv run python examples/discover_priors.py \
-        --checkpoint checkpoints_trimodal_crossmodal/best.pt \
+        --checkpoint checkpoints/trimodal_crossmodal/best.pt \
         --output discoveries/
 """
 

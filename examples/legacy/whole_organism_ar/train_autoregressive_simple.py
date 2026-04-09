@@ -166,7 +166,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--save_dir", type=str, default="checkpoints_autoregressive")
+    parser.add_argument("--save_dir", type=str, default="checkpoints/autoregressive")
     args = parser.parse_args()
 
     print("=" * 70)

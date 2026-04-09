@@ -577,7 +577,7 @@ def main():
         help="Probability of dropping sigma conditioning (CFG-style).",
     )
     parser.add_argument(
-        "--save_dir", type=str, default="checkpoints_autoregressive_full"
+        "--save_dir", type=str, default="checkpoints/autoregressive_full"
     )
     parser.add_argument(
         "--init_checkpoint",

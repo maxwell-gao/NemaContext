@@ -9,7 +9,7 @@ gene-spatial relationships without explicit supervision.
 
 Usage:
     uv run python examples/evaluate_modality_completion.py \
-        --checkpoint checkpoints_trimodal_crossmodal/best.pt \
+        --checkpoint checkpoints/trimodal_crossmodal/best.pt \
         --test_mode gene_to_spatial
 """
 

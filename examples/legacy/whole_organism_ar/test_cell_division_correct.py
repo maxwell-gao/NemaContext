@@ -160,7 +160,7 @@ def test_model_learned_asymmetry():
     print()
 
     # Try to load trained model
-    checkpoint_path = Path("checkpoints_autoregressive_division/best.pt")
+    checkpoint_path = Path("checkpoints/autoregressive_division/best.pt")
     if checkpoint_path.exists():
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         model = AutoregressiveNemaModel(

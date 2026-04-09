@@ -302,7 +302,7 @@ def main():
     parser.add_argument("--lambda_del_count", type=float, default=1.0)
     parser.add_argument("--split_threshold", type=float, default=0.5)
     parser.add_argument("--del_threshold", type=float, default=0.7)
-    parser.add_argument("--save_dir", type=str, default="checkpoints_spatial_rollout")
+    parser.add_argument("--save_dir", type=str, default="checkpoints/spatial_rollout")
     args = parser.parse_args()
 
     dataset = SpatialTrajectoryDataset(

@@ -72,7 +72,7 @@ def parse_args():
     p.add_argument("--gene_weight", type=float, default=1.0)
     p.add_argument("--future_latent_weight", type=float, default=1.0)
     p.add_argument("--future_gene_weight", type=float, default=1.0)
-    p.add_argument("--checkpoint_dir", default="checkpoints_embryo_masked_views")
+    p.add_argument("--checkpoint_dir", default="checkpoints/embryo_masked_views")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()

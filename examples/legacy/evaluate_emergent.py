@@ -4,7 +4,7 @@ Compares generated trajectories against known Sulston tree to assess
 how well the model learned developmental organization.
 
 Usage:
-    uv run python examples/evaluate_emergent.py --checkpoint checkpoints_experiments/with_bias/best.pt
+    uv run python examples/evaluate_emergent.py --checkpoint checkpoints/experiments/with_bias/best.pt
 """
 
 from __future__ import annotations

@@ -78,7 +78,7 @@ def parse_args():
     p.add_argument("--position_weight", type=float, default=0.25)
     p.add_argument("--spatial_flag_weight", type=float, default=0.5)
     p.add_argument("--valid_gate_threshold", type=float, default=0.5)
-    p.add_argument("--checkpoint_dir", default="checkpoints_local_cell_code")
+    p.add_argument("--checkpoint_dir", default="checkpoints/local_cell_code")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
