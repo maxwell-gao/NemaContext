@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from .gene_context_dataset_base import GeneContextDataset, _TimePair, collate_gene_context
 from .gene_context_dataset_embryo import EmbryoViewDataset, collate_embryo_view
+from .gene_context_dataset_large2025 import (
+    Large2025WholeEmbryoDataset,
+    collate_large2025_whole_embryo,
+)
 from .gene_context_dataset_patch import (
     MultiPatchSetDataset,
     MultiViewPatchStateDataset,
@@ -24,6 +28,7 @@ from .gene_context_dataset_patch import (
 __all__ = [
     "EmbryoViewDataset",
     "GeneContextDataset",
+    "Large2025WholeEmbryoDataset",
     "MultiPatchSetDataset",
     "MultiViewPatchStateDataset",
     "PatchSetDataset",
@@ -31,6 +36,7 @@ __all__ = [
     "_TimePair",
     "collate_embryo_view",
     "collate_gene_context",
+    "collate_large2025_whole_embryo",
     "collate_history_patch_set",
     "collate_multi_patch_set",
     "collate_multi_view_patch_state",

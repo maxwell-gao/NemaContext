@@ -16,6 +16,7 @@ from .gene_context_embryo import (
 from .gene_context_patch import (
     GeneContextModel,
     GenePatchVideoModel,
+    LineageWholeEmbryoModel,
     JiTGenePatchModel,
     LocalCellCodeModel,
     MultiCellPatchSetModel,
@@ -50,6 +51,7 @@ __all__ = [
     "GeneContextModel",
     "GeneContextOutput",
     "GenePatchVideoModel",
+    "LineageWholeEmbryoModel",
     "GenePatchVideoOutput",
     "JiTGenePatchModel",
     "JiTGenePatchOutput",

@@ -207,3 +207,7 @@ Key classes:
 - Missing data files: Run downloader first, then check `dataset/raw/<source>/` exists
 - AnnData not found: Build with `examples/build_anndata.py` before training
 - Memory issues: Reduce `--batch_size` or `--n_hvg` (number of highly variable genes)
+
+## Stage 1 Lineage-First Rule
+
+For raw Large2025 stage-one pretraining, prefer whole-embryo lineage-first snapshots over strict spatial patch construction. Use lineage as a mandatory structural embedding and keep WormGUIDES-derived spatial information as a later-stage prior or refinement signal, not as a sample eligibility gate.

@@ -5,8 +5,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import gzip
+
+import pandas as pd
 import pytest
 import torch
+from scipy import io as scipy_io
+from scipy import sparse
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -15,14 +20,17 @@ from src.branching_flows.gene_context import (  # noqa: E402
     GeneContextModel,
     GenePatchVideoModel,
     JiTGenePatchModel,
+    LineageWholeEmbryoModel,
     SingleCellGeneTimeModel,
 )
 from src.data.gene_context_dataset import (  # noqa: E402
     GeneContextDataset,
+    Large2025WholeEmbryoDataset,
     PatchSetDataset,
     TemporalPatchSetDataset,
     collate_gene_context,
     collate_history_patch_set,
+    collate_large2025_whole_embryo,
     collate_patch_set,
 )
 
@@ -402,3 +410,123 @@ def test_gene_patch_video_model_forward():
     assert out.pred_future_token_states.shape == (2, 8, 64)
     assert out.pred_future_frame_latent.shape == (2, 64)
     assert out.pred_mean_gene.shape == (2, dataset.gene_dim)
+
+
+
+def _write_toy_large2025(root: Path) -> None:
+    large_dir = root / "large2025"
+    large_dir.mkdir(parents=True, exist_ok=True)
+
+    cell_rows = []
+    expr_rows = []
+    for i in range(6):
+        time = 100.0 if i < 3 else 140.0
+        lineage = ["ABal", "ABar", "MSaa", "ABal", "ABar", "MSaa"][i]
+        cell_type = ["Pharynx", "Neuron", "Hypodermis", "Pharynx", "Neuron", "Hypodermis"][i]
+        packer = ["Pharynx", "All_neuron", "Hypodermis", "Pharynx", "All_neuron", "Hypodermis"][i]
+        expr_rows.append([1 + i, 2 + i, 3 + i, 4 + i])
+        cell_rows.append({
+            "cell_type": cell_type,
+            "lineage_broad": lineage,
+            "species": "C.elegans",
+            "n.umi": 1000 + i,
+            "barcode": f"bc{i}",
+            "packer_cell.type": packer,
+            "packer_cell.subtype": packer,
+            "packer_plot.cell.type": packer,
+            "packer_lineage": lineage,
+            "smoothed.embryo.time": time,
+            "embryo.time.bin": "100_140" if time < 140 else "140_180",
+            "germline_pseudotime": -1,
+            "time.point": "synthetic",
+            "batch": "batch0",
+            "genotype": "wt",
+            "filter": "none",
+            "mt.frac": 0.01,
+            "cel_lineage_broad": lineage,
+            "cbr_lineage_broad": lineage,
+            "cel_lineage_complete": lineage,
+            "cbr_lineage_complete": lineage,
+            "lineage_complete": lineage,
+        })
+
+    genes = pd.DataFrame(
+        {
+            "elegans_gene_short_name": ["g0", "g1", "g2", "g3"],
+            "elegans_gene_long_name": ["g0", "g1", "g2", "g3"],
+            "elegans_id": ["WBGene0", "WBGene1", "WBGene2", "WBGene3"],
+            "briggsae_id": ["CBG0", "CBG1", "CBG2", "CBG3"],
+            "briggsae_gene_short_name": ["cg0", "cg1", "cg2", "cg3"],
+            "briggsae_gene_long_name": ["cg0", "cg1", "cg2", "cg3"],
+            "gene.type": ["common", "common", "common", "common"],
+        }
+    )
+    cells = pd.DataFrame(cell_rows)
+    matrix = sparse.csr_matrix(expr_rows, dtype=float).T
+
+    with gzip.open(large_dir / "GSE292756_cell_annotations.csv.gz", "wt") as f:
+        cells.to_csv(f, index=False)
+    with gzip.open(large_dir / "GSE292756_gene_annotations.csv.gz", "wt") as f:
+        genes.to_csv(f, index=False)
+    with gzip.open(large_dir / "GSE292756_expression_matrix.mtx.gz", "wb") as f:
+        scipy_io.mmwrite(f, matrix)
+
+
+def test_large2025_whole_embryo_dataset_and_model(tmp_path: Path):
+    """Stage 1 raw Large2025 dataset and lineage-first model should run end-to-end."""
+    _write_toy_large2025(tmp_path)
+
+    dataset = Large2025WholeEmbryoDataset(
+        data_dir=tmp_path,
+        n_hvg=4,
+        token_budget=4,
+        history_frames=1,
+        dt_minutes=40.0,
+        time_bin_minutes=40.0,
+        min_cells_per_snapshot=2,
+        split="all",
+        val_fraction=0.5,
+        random_seed=0,
+    )
+    assert len(dataset) == 1
+
+    batch = collate_large2025_whole_embryo([dataset[0]])
+    history_genes = torch.stack([batch["history_frame_0_genes"]], dim=1)
+    history_token_times = torch.stack([batch["history_frame_0_token_times"]], dim=1)
+    history_valid_mask = torch.stack([batch["history_frame_0_valid_mask"]], dim=1)
+    history_lineage_binary = torch.stack([batch["history_frame_0_lineage_binary"]], dim=1)
+    history_founder_ids = torch.stack([batch["history_frame_0_founder_ids"]], dim=1)
+    history_lineage_depth = torch.stack([batch["history_frame_0_lineage_depth"]], dim=1)
+    history_lineage_valid = torch.stack([batch["history_frame_0_lineage_valid"]], dim=1)
+    history_token_rank = torch.stack([batch["history_frame_0_token_rank"]], dim=1)
+
+    model = LineageWholeEmbryoModel(
+        gene_dim=dataset.gene_dim,
+        context_size=4,
+        history_frames=1,
+        lineage_binary_dim=history_lineage_binary.shape[-1],
+        founder_vocab_size=len(dataset.FOUNDER_VOCAB),
+        d_model=32,
+        n_heads=4,
+        n_spatial_layers=1,
+        n_temporal_layers=1,
+        n_decoder_layers=1,
+        head_dim=8,
+    )
+    out = model(
+        genes=history_genes,
+        time=batch["history_frame_0_time"],
+        future_time=batch["future_time"],
+        token_times=history_token_times,
+        valid_mask=history_valid_mask,
+        lineage_binary=history_lineage_binary,
+        founder_ids=history_founder_ids,
+        lineage_depth=history_lineage_depth,
+        lineage_valid=history_lineage_valid,
+        token_rank=history_token_rank,
+    )
+    assert out.pred_future_genes.shape == (1, 4, dataset.gene_dim)
+    assert out.pred_future_token_states.shape == (1, 4, 32)
+    assert out.pred_future_frame_latent.shape == (1, 32)
+    assert out.pred_mean_gene.shape == (1, dataset.gene_dim)
+    assert out.pred_history_genes.shape == (1, 1, 4, dataset.gene_dim)
