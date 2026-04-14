@@ -2,66 +2,61 @@
 
 ## Top-Level
 
-- `src/`: model and data pipeline source code.
-- `examples/whole_organism_ar/`: active scripts for the current local-update validation path and later embryo-scale rollout work.
-- `examples/legacy/`: older experiments kept outside the active path.
-- `tests/`: integration tests.
+- `src/`: active worm-mainline source plus a reduced set of raw-data utilities.
+- `examples/whole_organism_ar/`: active worm-mainline scripts only.
+- `examples/legacy/`: archived experiments and historical entrypoints.
+- `tests/`: worm-mainline tests only.
 - `dataset/`: raw and processed data artifacts.
-- `docs/`: current documentation.
+- `docs/`: current and historical documentation.
 
-Interpretation:
+## Active Source Surface
 
-- the final project target is whole-organism developmental prediction,
-- the current active evidence path is a smaller transcriptomic population-update
-  problem plus embryo-level self-supervised state learning,
-- the repo therefore contains both active local-update tooling and embryo-scale
-  rollout infrastructure.
+The active code path is intentionally small.
 
-## Source Code
+### `src/branching_flows/`
+Only these modules are part of the current mainline:
+- `gene_context.py`: narrow public export for the active worm model.
+- `gene_context_patch.py`: implementation of `LineageWholeEmbryoModel` and shared transformer-based token dynamics.
+- `gene_context_shared.py`: active output dataclasses.
+- `emergent_loss.py`: Sinkhorn / OT-style losses used by the worm benchmark and training path.
+- `autoregressive_model.py`: retained only for `TransformerBlockAutoregressive`, which is still used by the active model.
 
-- `src/branching_flows/`
-  - `gene_context.py`: active multi-cell gene-context baseline model.
-  - `autoregressive_model.py`: whole-organism AR model intended for later embryo-scale rollout phases.
-  - `dynamic_cell_manager.py`: split/delete dynamic cell operations used by downstream rollout experiments.
-  - `fusion.py`: supporting gene/spatial fusion utility.
-  - supporting modules from the current BranchingFlows-derived stack.
-  - `legacy/`: archived trimodal, lineage-biased, and crossmodal modules kept for legacy scripts only.
-- `src/legacy_model/`
-  - archived graph, contact-GNN, and multimodal utilities used only by legacy scripts.
+Everything else that previously lived under `src/branching_flows/` has been removed from the active path.
 
-- `src/data/`
-  - `gene_context_dataset.py`: transcriptome time-window dataset for the active context-validation path.
-  - `trajectory_extractor.py`: whole-embryo trajectory extraction for downstream engineering and rollout diagnostics.
-  - `legacy/trajectory_extractor.py`: archived synthetic and per-founder extraction paths.
-  - `downloader/`: dataset downloaders.
-  - `builder/`: AnnData and integration utilities (legacy + supporting tooling).
+### `src/data/`
+The active data path is also reduced:
+- `gene_context_dataset.py`: narrow public export for the active Large2025 dataset.
+- `gene_context_dataset_large2025.py`: whole-embryo lineage-first dataset used by the worm mainline.
+- `builder/expression_loader.py`: raw Large2025 expression loading.
+- `builder/lineage_encoder.py`: lineage parsing and encoding.
+- `downloader/`: retained data download interfaces for raw sources and later spatial alignment stages.
 
-## Example Scripts
+Old patch/embryo dataset modules, processors, and legacy trajectory utilities are no longer part of the active source tree.
 
-### Active (`examples/whole_organism_ar/`)
+### `src/legacy_model/`
+Archived graph/contact/multimodal utilities kept only as historical material.
+They are not part of the current worm mainline.
 
-- `train_gene_context.py`: active multi-cell gene-context baseline training.
-- `evaluate_gene_context.py`: evaluation and context ablation for the gene-context baseline.
-- `train_gene_single_cell.py`: single-cell control baseline for context comparison.
-- `evaluate_gene_single_cell.py`: evaluation for the single-cell control.
-- `train_patch_set.py`: local patch-to-patch set-level pretext task.
-- `evaluate_patch_set.py`: local patch-set evaluation and ablation.
-- `train_state_views.py`: shared-encoder multi-view local state learning.
-- `train_masked_state_views.py`: strongest current local self-supervised route via masked view, masked future, and masked gene reconstruction.
-- `train_embryo_masked_views.py`: active embryo-level masked multi-view route with masked future views.
-- `train_embryo_future_set.py`: strongest current embryo predictive route via end-to-end reconstruction-backed MAE-style future local-view set completion with an internal pred-x local-code bottleneck.
-- `train_embryo_state.py`: direct embryo summary regression baseline retained as a scaffold and comparison point.
-- `evaluate_embryo_state.py`: embryo summary-regression evaluation helper.
-- `train_autoregressive_full.py`: downstream whole-organism AR training path for later embryo-scale phases.
-- `evaluate_rollout.py`: rollout and perturbation evaluation for the downstream AR path.
-- `train_spatial_rollout.py`: engineering-only spatial rollout baseline.
-- `evaluate_spatial_rollout.py`: evaluation for the spatial baseline.
+## Active Example Scripts
 
-### Legacy (`examples/legacy/`)
+### `examples/whole_organism_ar/`
+Current active scripts:
+- `train_large2025_lineage_stage1.py`
+- `benchmark_worm_dynamics.py`
+- `benchmark_worm_scnode.py`
+- `benchmark_worm_prescient.py`
 
-Trimodal/crossmodal and earlier data-integration training/evaluation scripts.
-These are outside the active path for new development.
+These are the only scripts that should define new work by default.
 
-- `whole_organism_ar/`: older autoregressive scripts that depend on synthetic trajectories,
-  explicit lineage supervision, founder-centric perturbation analysis, or
-  founder-centric demos/visualization, or crossmodal checkpoints.
+### `examples/legacy/`
+Older patch, embryo, autoregressive, trimodal, and historical evaluation scripts.
+These remain for reference only and should be treated as archive material unless explicitly revived.
+
+## Interpretation Rule
+
+The repo is currently organized around one active line:
+- lineage-first whole-embryo gene dynamics on raw Large2025,
+- evaluated with worm-native forecasting metrics,
+- before later WormGUIDES/CShaper spatial alignment.
+
+Anything outside that path is archive or historical context.

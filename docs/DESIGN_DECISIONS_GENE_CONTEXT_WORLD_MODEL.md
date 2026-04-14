@@ -208,7 +208,7 @@ Real scale:
 
 Relevant loader:
 
-- [gene_context_dataset_base.py](/mnt/public/max/NemaContext/src/data/gene_context_dataset_base.py)
+- historical dataset implementation formerly in `src/data/gene_context_dataset_base.py` (removed from active `src`)
 
 But the effective predictive dataset is much smaller after the current
 training contract is applied:
@@ -606,7 +606,7 @@ This led to two practical changes.
 
 A simple baseline was implemented:
 
-- [run_local_region_gene_baseline.py](/mnt/public/max/NemaContext/examples/whole_organism_ar/run_local_region_gene_baseline.py)
+- [run_local_region_gene_baseline.py](/mnt/public/max/NemaContext/examples/legacy/whole_organism_ar/run_local_region_gene_baseline.py)
 
 Task:
 
@@ -675,7 +675,7 @@ That is a cleaner problem than:
 This led to the implementation of:
 
 - [JiTGenePatchModel](/mnt/public/max/NemaContext/src/branching_flows/gene_context_patch.py)
-- [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/whole_organism_ar/train_jit_gene_patch.py)
+- [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/legacy/whole_organism_ar/train_jit_gene_patch.py)
 
 The current design is intentionally simple:
 
@@ -746,8 +746,8 @@ The JiT-like gene patch path was then expanded to use more history.
 
 Implemented dataset and training path:
 
-- [TemporalPatchSetDataset](/mnt/public/max/NemaContext/src/data/gene_context_dataset_patch.py)
-- [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/whole_organism_ar/train_jit_gene_patch.py)
+- historical `TemporalPatchSetDataset` implementation formerly in `src/data/gene_context_dataset_patch.py` (removed from active `src`)
+- [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/legacy/whole_organism_ar/train_jit_gene_patch.py)
 
 Current temporal design:
 
@@ -881,8 +881,8 @@ To understand the current project logic in the right order:
 3. [docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md](/mnt/public/max/NemaContext/docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md)
 4. this document
 5. current active training scripts:
-   - [train_embryo_future_set.py](/mnt/public/max/NemaContext/examples/whole_organism_ar/train_embryo_future_set.py)
-   - [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/whole_organism_ar/train_jit_gene_patch.py)
+   - [train_embryo_future_set.py](/mnt/public/max/NemaContext/examples/legacy/whole_organism_ar/train_embryo_future_set.py)
+   - [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/legacy/whole_organism_ar/train_jit_gene_patch.py)
 
 ## Final Position
 

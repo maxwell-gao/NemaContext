@@ -1,171 +1,70 @@
 # NemaContext
 
-NemaContext is focused on one goal:
+NemaContext is currently focused on one executable mainline:
 
-**Predict whole-organism development from the earliest embryo state, using real transcriptomic context learning as the first validated step toward embryo-scale rollout.**
+**lineage-first multicellular gene dynamics prediction on the *C. elegans* embryo**
 
-## Current Direction
+## Current Mainline
 
-- Final target: **whole-embryo developmental prediction from early embryo state toward the full worm embryo**.
-- Active training tasks:
-  - **patch-to-patch set-level developmental prediction** as the current local-population pretext task,
-  - **shared-encoder multi-view state learning** as the active representation-learning stage built on top of patch views,
-  - **masked self-supervised state learning with gene reconstruction** as the current strongest local self-supervised route,
-  - **embryo-level masked multi-view modeling with masked future views** as the current embryo-scale self-supervised route,
-  - **minimal embryo JEPA** as an exploratory embryo-dynamics alternative under active debugging.
-- Immediate question: **can shared encoders learn stable developmental state representations from multiple local views of the same embryo window?**
-- Near-term priority: **treat patches as training views, not biological units, and move from patch prediction toward multi-view state representation learning**.
-- Later direction: **return to embryo-scale rollout and variable-cell-count generation once the update rule is credible**.
+The active path is now:
+- raw `Large2025` transcriptome data
+- whole-embryo context
+- lineage-conditioned token structure
+- dynamics-first future prediction
+- worm-native forecasting benchmark
 
-Current strongest biological result:
-
-- the broad-coverage `dt = 40` multi-view multi-cell encoder learns a latent
-  that aligns with developmental time and predicts future developmental
-  structure better than the matched broad single-cell control.
-- the strongest explicitly self-supervised route is now
-  `masked view + masked future + masked gene reconstruction`, which preserves
-  biological structure and improves several future developmental probes.
-- the strongest embryo-level route is now `masked future views`, where the
-  current embryo state is trained to recover masked views from both the
-  present and the paired future window.
-- the strongest embryo-scale predictive route is now
-  `reconstruction-backed MAE future-set completion`, where current views plus
-  visible future parts are used to reconstruct masked future local-view sets;
-  this is currently more promising than direct global one-step latent jumps.
-- a minimal embryo JEPA path now exists on the same embryo-view interface; its
-  first failure mode was traced to unstable per-batch target whitening in a
-  highly concentrated latent space, and the stabilized version now trains
-  normally in smoke tests.
-- a first embryo one-step latent predictor now also works on top of that
-  backbone: future embryo latent cosine loss is very low, but jointly trained
-  probe heads are still weak, and later diagnostics show that pure cosine
-  matching does not preserve the biology-readable future-latent manifold.
-- the embryo-level future-set route now has two forms:
-  - an older slot-MLP predictor,
-  - and a stronger MAE-style decoder that conditions on visible future parts.
-  The MAE-style reconstruction-backed version improves predicted future
-  founder/depth/spatial structure relative to the older future-set baseline.
-- temporal discrimination, hard-negative discrimination, queue-based
-  discrimination, and future-retrieval ranking have all failed to become
-  effective training signals in the current setup.
-
-## Repository Layout
-
-- `src/branching_flows/`: core modeling code (`autoregressive_model.py`, `dynamic_cell_manager.py`, `fusion.py`)
-- `src/branching_flows/legacy/`: archived trimodal, lineage-biased, and crossmodal modules
-- `src/legacy_model/`: archived graph and multimodal utilities used only by legacy workflows
-- `src/data/`: transcriptome window datasets, trajectory extraction, and data pipeline
-- `examples/whole_organism_ar/`: active scripts
-- `examples/legacy/`: previous-generation experiments
-- `docs/`: canonical architecture and roadmap
-
-See:
-
-- `docs/ARCHITECTURE_WHOLE_ORGANISM_AR.md`
+This is the path to read and run first:
+- `docs/WORM_MAINLINE.md`
+- `docs/WORM_FORECASTING_RESULTS.md`
 - `docs/REPO_STRUCTURE.md`
-- `docs/ROADMAP.md`
+- `examples/whole_organism_ar/train_large2025_lineage_stage1.py`
+- `examples/whole_organism_ar/benchmark_worm_dynamics.py`
 
-## Quick Start
+Current active source modules are intentionally narrow:
+- `src/branching_flows/gene_context.py`
+- `src/branching_flows/gene_context_patch.py`
+- `src/branching_flows/gene_context_shared.py`
+- `src/branching_flows/emergent_loss.py`
+- `src/data/gene_context_dataset.py`
+- `src/data/gene_context_dataset_large2025.py`
+
+## Current Position
+
+The repo is not yet at whole-organism spatial structure prediction.
+It is at the prior stage:
+- whole-embryo gene dynamics backbone learning
+- followed by worm-native forecasting evaluation
+- before spatial alignment with WormGUIDES/CShaper
+
+## Mainline Commands
 
 ```bash
-# 1) Train the active multi-cell patch-set baseline
-uv run python examples/whole_organism_ar/train_patch_set.py \
-  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
-  --model_type multi_cell \
-  --sampling_strategy spatial_anchor \
-  --context_size 256 \
-  --global_context_size 16 \
-  --spatial_input_mode relative_position \
-  --pairwise_spatial_bias \
-  --epochs 10
+# Train the current worm mainline backbone
+uv run python examples/whole_organism_ar/train_large2025_lineage_stage1.py \
+  --device cuda \
+  --epochs 20 \
+  --batch_size 4 \
+  --token_budget 128 \
+  --experiment_name raw_large2025_stage1_dyn_e20_b4_t128
 
-# 2) Evaluate the active patch-set baseline
-uv run python examples/whole_organism_ar/evaluate_patch_set.py \
-  --checkpoint checkpoints/patch_set/best.pt \
-  --output result/gene_context/evaluation_patch_set.json
-
-# 3) Compare with anchor-only ablation
-uv run python examples/whole_organism_ar/evaluate_patch_set.py \
-  --checkpoint checkpoints/patch_set/best.pt \
-  --context_ablation anchor_only \
-  --output result/gene_context/evaluation_patch_set_anchor_only.json
-
-# 4) Train the broad shared-encoder multi-view state baseline
-uv run python examples/whole_organism_ar/train_state_views.py \
-  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
-  --model_type multi_cell \
-  --sampling_strategy spatial_anchor \
-  --context_size 256 \
-  --global_context_size 32 \
-  --dt_minutes 40 \
-  --pairwise_spatial_bias \
-  --views_per_state 2 \
-  --future_views_per_state 1 \
-  --epochs 10
-
-# 5) Train the strongest current self-supervised state encoder
-uv run python examples/whole_organism_ar/train_masked_state_views.py \
-  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
-  --model_type multi_cell \
-  --sampling_strategy spatial_anchor \
-  --context_size 256 \
-  --global_context_size 32 \
-  --dt_minutes 40 \
-  --pairwise_spatial_bias \
-  --samples_per_pair 16 \
-  --event_subset none \
-  --val_event_subset none \
-  --epochs 10
-
-# 6) Train the active embryo-level masked-future encoder
-uv run python examples/whole_organism_ar/train_embryo_masked_views.py \
-  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
-  --model_type multi_cell \
-  --context_size 256 \
-  --global_context_size 32 \
-  --dt_minutes 40 \
-  --views_per_embryo 8 \
-  --future_views_per_embryo 8 \
-  --samples_per_pair 16 \
-  --pairwise_spatial_bias \
-  --epochs 10
-
-# 7) Train the strongest current embryo predictive route:
-# end-to-end reconstruction-backed MAE future-set completion
-uv run python examples/whole_organism_ar/train_embryo_future_set.py \
-  --backbone_checkpoint checkpoints/embryo_masked_views/best.pt \
-  --context_size 256 \
-  --global_context_size 32 \
-  --dt_minutes 40 \
-  --views_per_embryo 8 \
-  --future_views_per_embryo 8 \
-  --samples_per_pair 16 \
-  --pairwise_spatial_bias \
-  --freeze_backbone \
-  --epochs 10
-
-# 8) Historical token-level baseline remains available for diagnosis
-uv run python examples/whole_organism_ar/train_gene_context.py \
-  --h5ad_path dataset/processed/nema_extended_large2025.h5ad \
-  --sampling_strategy spatial_anchor \
-  --context_size 64 \
-  --global_context_size 16 \
-  --epochs 10
+# Run the worm-native benchmark
+uv run python examples/whole_organism_ar/benchmark_worm_dynamics.py \
+  --checkpoint checkpoints/large2025_lineage_stage1/raw_large2025_stage1_dyn_e20_b4_t128/best.pt \
+  --split_mode time_transition
 ```
 
-Founder-specific perturbation, visualization, and demo scripts are retained under
-`examples/legacy/whole_organism_ar/`, not in the active path.
-Synthetic and per-founder trajectory generation is archived under
-`src/data/legacy/trajectory_extractor.py`.
+## Status
 
-Whole-organism autoregressive rollout remains in the repository as the intended
-destination of the current line of work, but the active evidence path still
-starts with smaller real-data update problems before rollout claims.
-The current embryo-scale step is masked multi-view reconstruction with masked
-future views, followed by end-to-end reconstruction-backed MAE future-set
-completion with an internal pred-x local-code bottleneck, not direct embryo
-summary regression and not global one-step latent jumps.
-Current embryo one-step diagnosis is also sharper than before:
-the future latent target is stable under view resampling and permutation,
-but the latent geometry is too concentrated for cosine alone to enforce
-biology-readable dynamics.
+Current worm forecasting comparisons show that the mainline lineage-first model
+outperforms:
+- persistence
+- a scNODE-style generic latent-dynamics baseline
+- a PRESCIENT-style generic OT baseline
+
+See `docs/WORM_FORECASTING_RESULTS.md` for the current comparison table.
+
+## Historical Work
+
+Older patch, embryo-future-set, autoregressive, and human benchmark side paths
+may still exist in the repository, but they are no longer the canonical route.
+Legacy material is kept only for reference and should not drive new work by default.

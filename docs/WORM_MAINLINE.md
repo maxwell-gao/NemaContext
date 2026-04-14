@@ -50,6 +50,7 @@ Use raw Large2025 directly.
 
 Current dataset path:
 - `src/data/gene_context_dataset_large2025.py`
+- exported through `src/data/gene_context_dataset.py`
 - `Large2025WholeEmbryoDataset`
 
 ### Sample Unit
@@ -79,6 +80,8 @@ Current training path:
 
 Current backbone:
 - `LineageWholeEmbryoModel`
+- implemented in `src/branching_flows/gene_context_patch.py`
+- exported through `src/branching_flows/gene_context.py`
 
 ### Training Objective
 The main training objective is dynamics-first prediction:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the mainline gene-patch predictor on local spatial cell groups."""
+"""Train the narrowed gene-only patch predictor on local spatial cell groups."""
 
 from __future__ import annotations
 
@@ -41,9 +41,9 @@ def parse_args():
     p.add_argument("--sampling_strategy", choices=["random_window", "spatial_neighbors", "spatial_anchor"], default="spatial_anchor")
     p.add_argument("--min_spatial_cells_per_window", type=int, default=8)
     p.add_argument("--spatial_neighbor_pool_size", type=int, default=None)
-    p.add_argument("--use_context_role", action="store_true", default=True)
+    p.add_argument("--use_context_role", action="store_true", default=False)
     p.add_argument("--no_use_context_role", dest="use_context_role", action="store_false")
-    p.add_argument("--use_relative_position", action="store_true", default=True)
+    p.add_argument("--use_relative_position", action="store_true", default=False)
     p.add_argument("--no_use_relative_position", dest="use_relative_position", action="store_false")
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--epochs", type=int, default=10)
@@ -95,7 +95,20 @@ def build_dataset(args, split: str):
 
 
 def _stack_history_tensor(batch: dict[str, torch.Tensor], field: str, n_patches: int) -> torch.Tensor:
-    return torch.stack([batch[f"history_patch_{i}_{field}"] for i in range(n_patches)], dim=1)
+    tensors = [batch[f"history_patch_{i}_{field}"] for i in range(n_patches)]
+    max_len = max(t.shape[1] for t in tensors)
+    padded: list[torch.Tensor] = []
+    for tensor in tensors:
+        pad_len = max_len - tensor.shape[1]
+        if pad_len == 0:
+            padded.append(tensor)
+            continue
+        if tensor.dim() == 3:
+            pad = tensor.new_zeros(tensor.shape[0], pad_len, tensor.shape[2])
+        else:
+            pad = tensor.new_zeros(tensor.shape[0], pad_len)
+        padded.append(torch.cat([tensor, pad], dim=1))
+    return torch.stack(padded, dim=1)
 
 
 def prepare_batch(batch: dict[str, torch.Tensor], device: str) -> dict[str, torch.Tensor]:

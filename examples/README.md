@@ -1,54 +1,30 @@
 # Examples Layout
 
-This directory is organized by project status and scale.
+This directory is now split by project status.
 
-- `examples/whole_organism_ar/`: active scripts for the current path from local
-  population-update validation toward later embryo-scale rollout.
-- `examples/legacy/`: older scripts retained for reference.
+- `examples/whole_organism_ar/`: active worm-mainline scripts only.
+- `examples/legacy/`: archived historical scripts.
 
-If you are starting new work, use `examples/whole_organism_ar/`.
+## Active Entry Points
 
-Current interpretation:
+If you are doing current work, start here:
+- `train_large2025_lineage_stage1.py`
+- `benchmark_worm_dynamics.py`
+- `benchmark_worm_scnode.py`
+- `benchmark_worm_prescient.py`
 
-- the final target is whole-organism developmental prediction,
-- the active executable benchmark is now the local transcriptomic
-  `patch-set` update task,
-- the next active transition is shared-encoder multi-view state learning over
-  multiple patch views of the same embryo window,
-- the active embryo-scale route is embryo masked multi-view learning with
-  masked future views,
-- the strongest embryo predictive route is now reconstruction-backed
-  MAE-style future-set completion,
-- latent-first embryo one-step prediction remains a diagnostic branch rather
-  than the best predictive contract,
-- a minimal embryo JEPA objective is now available on the same embryo-view
-  interface as an alternative future-state prediction contract,
-- downstream rollout scripts remain important, but they are not yet the main
-  evidence source.
+These scripts define the current executable path:
+- lineage-first whole-embryo dynamics on raw Large2025,
+- worm-native forecasting evaluation,
+- generic forecasting baseline comparison.
 
-Recommended current entry points:
+## Legacy Material
 
-- `train_patch_set.py`
-- `evaluate_patch_set.py`
-- `train_state_views.py`
-- `train_masked_state_views.py`
-- `train_embryo_masked_views.py`
-- `train_embryo_future_set.py`
-- `train_gene_context.py`
-- `evaluate_gene_context.py`
-- `train_gene_single_cell.py`
-- `evaluate_gene_single_cell.py`
+Everything else has been moved under `examples/legacy/`.
+That includes:
+- old local patch and gene-context baselines,
+- embryo future-set and masked-view paths,
+- autoregressive rollout experiments,
+- older trimodal/crossmodal work.
 
-Downstream but not current-first entry points:
-
-- `train_autoregressive_full.py`
-- `evaluate_rollout.py`
-- `train_spatial_rollout.py`
-- `evaluate_spatial_rollout.py`
-
-Legacy note:
-
-- `examples/legacy/whole_organism_ar/` contains older autoregressive scripts that rely on
-  synthetic trajectories, explicit lineage supervision, founder-centric
-  perturbation analysis, founder-centric demos/visualization, or trimodal/crossmodal checkpoints.
-  They are archived and are not the current primary entry points.
+Legacy scripts are retained for historical reference only. They should not be treated as the default starting point for new work.

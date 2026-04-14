@@ -1,76 +1,26 @@
-"""
-NemaContext Data Module
+"""Active data surface for the worm mainline."""
 
-Provides data downloading, processing, and AnnData building utilities
-for C. elegans developmental data integration.
+from __future__ import annotations
 
-Submodules:
-    - downloader: Data downloading from GEO, WormGUIDES, WormBase
-    - builder: Trimodal AnnData construction
-    - processors: Data processing utilities
-"""
-
+from .builder.expression_loader import ExpressionLoader
+from .builder.lineage_encoder import LineageEncoder
 from .downloader import (
     DEFAULT_DATA_DIR,
     BaseDownloader,
     NemaContextDownloader,
-    OpenWormDownloader,
-    PackerDownloader,
     WormBaseDownloader,
     WormGUIDESDownloader,
-    main,
 )
-
-
-# Builder exports (lazy import to avoid circular dependencies)
-def __getattr__(name):
-    """Lazy import for builder and processor classes."""
-    if name == "TrimodalAnnDataBuilder":
-        from .builder import TrimodalAnnDataBuilder
-
-        return TrimodalAnnDataBuilder
-    elif name == "ExpressionLoader":
-        from .builder import ExpressionLoader
-
-        return ExpressionLoader
-    elif name == "SpatialMatcher":
-        from .builder import SpatialMatcher
-
-        return SpatialMatcher
-    elif name == "LineageEncoder":
-        from .builder import LineageEncoder
-
-        return LineageEncoder
-    elif name == "WormAtlasMapper":
-        from .builder import WormAtlasMapper
-
-        return WormAtlasMapper
-    elif name == "CellTypeMapper":
-        from .processors import CellTypeMapper
-
-        return CellTypeMapper
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
+from .gene_context_dataset import Large2025WholeEmbryoDataset, collate_large2025_whole_embryo
 
 __all__ = [
-    # Main interface
-    "NemaContextDownloader",
-    "main",
-    # Base class
     "BaseDownloader",
-    # Individual downloaders
-    "PackerDownloader",
-    "OpenWormDownloader",
+    "DEFAULT_DATA_DIR",
+    "ExpressionLoader",
+    "Large2025WholeEmbryoDataset",
+    "LineageEncoder",
+    "NemaContextDownloader",
     "WormBaseDownloader",
     "WormGUIDESDownloader",
-    # Constants
-    "DEFAULT_DATA_DIR",
-    # Builder classes (lazy loaded)
-    "TrimodalAnnDataBuilder",
-    "ExpressionLoader",
-    "SpatialMatcher",
-    "LineageEncoder",
-    "WormAtlasMapper",
-    # Processor classes (lazy loaded)
-    "CellTypeMapper",
+    "collate_large2025_whole_embryo",
 ]

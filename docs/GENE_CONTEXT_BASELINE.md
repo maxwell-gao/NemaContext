@@ -2,18 +2,16 @@
 
 ## Purpose
 
-This document explains the active `gene-context` baseline in biological terms
-and situates it relative to published bioinformatics work on developmental
-state transition modeling.
+This document describes a historical `gene-context` baseline and situates it relative to published bioinformatics work on developmental state transition modeling. It is retained as archive context, not as the active worm mainline.
 
-Relevant code:
+Historical code references:
 
-- `src/data/gene_context_dataset.py`
-- `src/branching_flows/gene_context.py`
-- `examples/whole_organism_ar/train_gene_context.py`
-- `examples/whole_organism_ar/evaluate_gene_context.py`
-- `examples/whole_organism_ar/train_gene_single_cell.py`
-- `examples/whole_organism_ar/evaluate_gene_single_cell.py`
+- `examples/legacy/whole_organism_ar/train_gene_context.py`
+- `examples/legacy/whole_organism_ar/evaluate_gene_context.py`
+- `examples/legacy/whole_organism_ar/train_gene_single_cell.py`
+- `examples/legacy/whole_organism_ar/evaluate_gene_single_cell.py`
+
+The original active `src` modules for this path have been removed from the current source surface during the worm-mainline cleanup.
 
 ## What Biological Problem This Baseline Is Trying To Solve
 
