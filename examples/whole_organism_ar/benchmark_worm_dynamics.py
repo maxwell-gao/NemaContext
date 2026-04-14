@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.branching_flows.emergent_loss import sinkhorn_divergence  # noqa: E402
 from src.branching_flows.gene_context import LineageWholeEmbryoModel  # noqa: E402
 from src.data.gene_context_dataset import Large2025WholeEmbryoDataset, collate_large2025_whole_embryo  # noqa: E402
 
@@ -32,6 +33,7 @@ class EvalRecord:
     current_mean: np.ndarray
     future_mean: np.ndarray
     pred_mean: np.ndarray
+    future_set_sinkhorn: float
 
 
 @dataclass(frozen=True)
@@ -53,8 +55,11 @@ def parse_args():
     p.add_argument('--split_mode', choices=['time_transition', 'founder_group', 'region_group'], default='time_transition')
     p.add_argument('--eval_fraction', type=float, default=0.2)
     p.add_argument('--top_k_de', type=int, default=20)
+    p.add_argument('--gene_sinkhorn_blur', type=float, default=0.1)
     p.add_argument('--output_json', default='result/gene_context/benchmark_worm_dynamics.json')
     p.add_argument('--output_csv', default='result/gene_context/benchmark_worm_dynamics.csv')
+    p.add_argument('--output_common_csv', default=None)
+    p.add_argument('--output_structure_csv', default=None)
     return p.parse_args()
 
 
@@ -162,6 +167,7 @@ def compute_metrics(records: list[EvalRecord], top_de_idx: np.ndarray) -> dict[s
     top_true = true_delta[:, top_de_idx]
     top_pred = pred_delta[:, top_de_idx]
     return {
+        'future_set_sinkhorn': float(np.mean([r.future_set_sinkhorn for r in records])),
         'mean_gene_mse': float(np.mean((pred - future) ** 2)),
         'mean_gene_pearson': safe_pearson(pred, future),
         'delta_gene_mse': float(np.mean((pred_delta - true_delta) ** 2)),
@@ -203,15 +209,15 @@ def collect_records(dataset, model, args):
                 lineage_valid=batch['history_lineage_valid'],
                 token_rank=batch['history_token_rank'],
             )
-            current = batch['history_genes'][:, -1].cpu().numpy().astype(np.float32)
-            current_valid = batch['history_valid_mask'][:, -1].cpu().numpy().astype(bool)
-            current_founder = batch['history_founder_ids'][:, -1].cpu().numpy().astype(np.int64)
-            current_region = batch['history_region_ids'][:, -1].cpu().numpy().astype(np.int64)
-            future = batch['future_genes'].cpu().numpy().astype(np.float32)
-            future_valid = batch['future_valid_mask'].cpu().numpy().astype(bool)
-            future_founder = batch['future_founder_ids'].cpu().numpy().astype(np.int64)
-            future_region = batch['future_region_ids'].cpu().numpy().astype(np.int64)
-            pred = out.pred_future_genes.cpu().numpy().astype(np.float32)
+            current = batch['history_genes'][:, -1].detach().cpu().numpy().astype(np.float32)
+            current_valid = batch['history_valid_mask'][:, -1].detach().cpu().numpy().astype(bool)
+            current_founder = batch['history_founder_ids'][:, -1].detach().cpu().numpy().astype(np.int64)
+            current_region = batch['history_region_ids'][:, -1].detach().cpu().numpy().astype(np.int64)
+            future = batch['future_genes'].detach().cpu().numpy().astype(np.float32)
+            future_valid = batch['future_valid_mask'].detach().cpu().numpy().astype(bool)
+            future_founder = batch['future_founder_ids'].detach().cpu().numpy().astype(np.int64)
+            future_region = batch['future_region_ids'].detach().cpu().numpy().astype(np.int64)
+            pred = out.pred_future_genes.detach().cpu().numpy().astype(np.float32)
             batch_size = pred.shape[0]
 
             for i in range(batch_size):
@@ -219,8 +225,11 @@ def collect_records(dataset, model, args):
                 cur_mean = current[i][current_valid[i]].mean(axis=0)
                 fut_mean = future[i][future_valid[i]].mean(axis=0)
                 pred_mean = pred[i][future_valid[i]].mean(axis=0)
-                whole_records.append(EvalRecord(split_key, cur_mean, fut_mean, pred_mean))
-                persistence_records.append(EvalRecord(split_key, cur_mean, fut_mean, cur_mean.copy()))
+                model_sinkhorn = float(sinkhorn_divergence(out.pred_future_genes[i:i+1], batch['future_genes'][i:i+1], blur=args.gene_sinkhorn_blur).item())
+                persist_current = batch['history_genes'][i:i+1, -1]
+                persist_sinkhorn = float(sinkhorn_divergence(persist_current, batch['future_genes'][i:i+1], blur=args.gene_sinkhorn_blur).item())
+                whole_records.append(EvalRecord(split_key, cur_mean, fut_mean, pred_mean, model_sinkhorn))
+                persistence_records.append(EvalRecord(split_key, cur_mean, fut_mean, cur_mean.copy(), persist_sinkhorn))
 
                 valid_founders = sorted(set(future_founder[i][future_valid[i]].tolist()))
                 for founder_id in valid_founders:
@@ -312,15 +321,60 @@ def main():
     }
     out_json = Path(args.output_json)
     out_csv = Path(args.output_csv)
+    common_csv = Path(args.output_common_csv) if args.output_common_csv else out_csv.with_name(out_csv.stem + '_common.csv')
+    structure_csv = Path(args.output_structure_csv) if args.output_structure_csv else out_csv.with_name(out_csv.stem + '_structure.csv')
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
+    common_csv.parent.mkdir(parents=True, exist_ok=True)
+    structure_csv.parent.mkdir(parents=True, exist_ok=True)
+
+    common_metrics = {}
+    structure_metrics = {}
+    for method, metrics in results['metrics'].items():
+        common_metrics[method] = {
+            'future_set_sinkhorn': metrics['future_set_sinkhorn'],
+            'mean_gene_mse': metrics['mean_gene_mse'],
+            'mean_gene_pearson': metrics['mean_gene_pearson'],
+            'delta_gene_mse': metrics['delta_gene_mse'],
+            'delta_gene_pearson': metrics['delta_gene_pearson'],
+            'top_de_delta_pearson': metrics['top_de_delta_pearson'],
+            'top_de_sign_acc': metrics['top_de_sign_acc'],
+        }
+        structure_metrics[method] = {
+            'founder_group_pseudobulk_pearson': metrics['founder_group_pseudobulk_pearson'],
+            'region_group_pseudobulk_pearson': metrics['region_group_pseudobulk_pearson'],
+        }
+
+    results['tables'] = {
+        'common_forecasting': common_metrics,
+        'structure_preservation': structure_metrics,
+    }
+
     with open(out_json, 'w') as f:
         json.dump(results, f, indent=2)
-    with open(out_csv, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['method', 'mean_gene_mse', 'mean_gene_pearson', 'delta_gene_mse', 'delta_gene_pearson', 'top_de_delta_pearson', 'top_de_sign_acc', 'founder_group_pseudobulk_pearson', 'region_group_pseudobulk_pearson'])
+
+    with open(common_csv, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['method', 'future_set_sinkhorn', 'mean_gene_mse', 'mean_gene_pearson', 'delta_gene_mse', 'delta_gene_pearson', 'top_de_delta_pearson', 'top_de_sign_acc'])
         writer.writeheader()
-        for method, metrics in results['metrics'].items():
+        for method, metrics in common_metrics.items():
             writer.writerow({'method': method, **metrics})
+
+    with open(structure_csv, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['method', 'founder_group_pseudobulk_pearson', 'region_group_pseudobulk_pearson'])
+        writer.writeheader()
+        for method, metrics in structure_metrics.items():
+            writer.writerow({'method': method, **metrics})
+
+    with open(out_csv, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['table', 'method', 'metric', 'value'])
+        writer.writeheader()
+        for method, metrics in common_metrics.items():
+            for metric, value in metrics.items():
+                writer.writerow({'table': 'common_forecasting', 'method': method, 'metric': metric, 'value': value})
+        for method, metrics in structure_metrics.items():
+            for metric, value in metrics.items():
+                writer.writerow({'table': 'structure_preservation', 'method': method, 'metric': metric, 'value': value})
+
     print(json.dumps(results, indent=2))
 
 
