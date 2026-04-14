@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 1 lineage-first whole-embryo pretraining on raw Large2025."""
+"""Stage 1 lineage-first whole-embryo dynamics training on raw Large2025."""
 
 from __future__ import annotations
 
@@ -45,10 +45,10 @@ def parse_args():
     p.add_argument("--n_temporal_layers", type=int, default=4)
     p.add_argument("--n_decoder_layers", type=int, default=2)
     p.add_argument("--head_dim", type=int, default=32)
-    p.add_argument("--mask_ratio", type=float, default=0.3)
-    p.add_argument("--masked_gene_weight", type=float, default=1.0)
-    p.add_argument("--gene_set_weight", type=float, default=0.2)
-    p.add_argument("--mean_gene_weight", type=float, default=0.05)
+    p.add_argument("--mask_ratio", type=float, default=0.0)
+    p.add_argument("--masked_gene_weight", type=float, default=0.0)
+    p.add_argument("--gene_set_weight", type=float, default=1.0)
+    p.add_argument("--mean_gene_weight", type=float, default=0.2)
     p.add_argument("--gene_sinkhorn_blur", type=float, default=0.1)
     p.add_argument("--checkpoint_dir", default="checkpoints/large2025_lineage_stage1")
     p.add_argument("--experiment_name", default=None)
@@ -128,8 +128,9 @@ def compute_current_mean_gene(batch: dict[str, torch.Tensor]) -> torch.Tensor:
 
 
 def compute_loss(model: LineageWholeEmbryoModel, batch: dict[str, torch.Tensor], args, apply_mask: bool):
-    history_mask = sample_history_mask(batch["history_valid_mask"], args.mask_ratio) if apply_mask else torch.zeros_like(batch["history_valid_mask"], dtype=torch.bool)
-    input_history_genes = apply_history_mask(batch["history_genes"], history_mask) if apply_mask else batch["history_genes"]
+    use_mask = apply_mask and args.masked_gene_weight > 0.0 and args.mask_ratio > 0.0
+    history_mask = sample_history_mask(batch["history_valid_mask"], args.mask_ratio) if use_mask else torch.zeros_like(batch["history_valid_mask"], dtype=torch.bool)
+    input_history_genes = apply_history_mask(batch["history_genes"], history_mask) if use_mask else batch["history_genes"]
     out = model(
         genes=input_history_genes,
         time=batch["history_time"],

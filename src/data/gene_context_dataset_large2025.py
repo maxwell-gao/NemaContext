@@ -130,6 +130,10 @@ class Large2025WholeEmbryoDataset(Dataset):
         self.cell_types = np.asarray(cell_df["cell_type"].astype(str))
         self.packer_cell_types = np.asarray(cell_df["packer_cell_type"].astype(str))
         self.lineages = np.asarray(cell_df["lineage_complete"].astype(str))
+        region_labels = [self._region_label_from_values(packer, cell_type) for packer, cell_type in zip(self.packer_cell_types.tolist(), self.cell_types.tolist(), strict=False)]
+        self.region_vocab = sorted(set(region_labels) | {"unknown"})
+        self._region_to_id = {label: idx for idx, label in enumerate(self.region_vocab)}
+        self.region_ids = np.asarray([self._region_to_id[label] for label in region_labels], dtype=np.int64)
 
         parsed = [self.lineage_encoder.parse_lineage(lin) for lin in self.lineages.tolist()]
         self.lineage_valid = np.asarray([item is not None for item in parsed], dtype=bool)
@@ -197,14 +201,16 @@ class Large2025WholeEmbryoDataset(Dataset):
     def __len__(self) -> int:
         return len(self.snapshot_pairs)
 
-    def _region_label(self, idx: int) -> str:
-        packer = self.packer_cell_types[idx]
+    @staticmethod
+    def _region_label_from_values(packer: str, cell_type: str) -> str:
         if packer and packer != "unannotated":
             return packer
-        cell_type = self.cell_types[idx]
         if cell_type and cell_type != "unassigned":
             return cell_type
         return "unknown"
+
+    def _region_label(self, idx: int) -> str:
+        return self._region_label_from_values(self.packer_cell_types[idx], self.cell_types[idx])
 
     def _snapshot_sort_key(self, idx: int) -> tuple:
         return (
@@ -253,6 +259,7 @@ class Large2025WholeEmbryoDataset(Dataset):
         founder_ids = np.zeros((self.token_budget,), dtype=np.int64)
         lineage_depth = np.full((self.token_budget,), -1.0, dtype=np.float32)
         lineage_valid = np.zeros((self.token_budget,), dtype=bool)
+        region_ids = np.zeros((self.token_budget,), dtype=np.int64)
         token_rank = np.arange(self.token_budget, dtype=np.int64)
 
         if n_valid > 0:
@@ -263,6 +270,7 @@ class Large2025WholeEmbryoDataset(Dataset):
             founder_ids[:n_valid] = self.founder_ids[indices]
             lineage_depth[:n_valid] = self.lineage_depth[indices]
             lineage_valid[:n_valid] = self.lineage_valid[indices]
+            region_ids[:n_valid] = self.region_ids[indices]
 
         view = {
             "genes": torch.from_numpy(genes),
@@ -272,6 +280,7 @@ class Large2025WholeEmbryoDataset(Dataset):
             "founder_ids": torch.from_numpy(founder_ids),
             "lineage_depth": torch.from_numpy(lineage_depth),
             "lineage_valid": torch.from_numpy(lineage_valid),
+            "region_ids": torch.from_numpy(region_ids),
             "token_rank": torch.from_numpy(token_rank),
             "time": torch.tensor(float(bin_id), dtype=torch.float32),
             "time_bin": torch.tensor(int(bin_id), dtype=torch.long),
@@ -291,6 +300,9 @@ class Large2025WholeEmbryoDataset(Dataset):
         future_view = self._build_snapshot_view(pair.future_bin)
         output["future_genes"] = future_view["genes"]
         output["future_valid_mask"] = future_view["valid_mask"]
+        output["future_founder_ids"] = future_view["founder_ids"]
+        output["future_lineage_valid"] = future_view["lineage_valid"]
+        output["future_region_ids"] = future_view["region_ids"]
         output["future_mean_gene"] = future_view["genes"][future_view["valid_mask"]].mean(dim=0)
         output["future_time"] = future_view["time"]
         output["future_time_bin"] = future_view["time_bin"]

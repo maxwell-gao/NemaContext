@@ -491,6 +491,9 @@ def test_large2025_whole_embryo_dataset_and_model(tmp_path: Path):
     assert len(dataset) == 1
 
     batch = collate_large2025_whole_embryo([dataset[0]])
+    assert batch['history_frame_0_region_ids'].shape == (1, 4)
+    assert batch['future_region_ids'].shape == (1, 4)
+    assert batch['future_founder_ids'].shape == (1, 4)
     history_genes = torch.stack([batch["history_frame_0_genes"]], dim=1)
     history_token_times = torch.stack([batch["history_frame_0_token_times"]], dim=1)
     history_valid_mask = torch.stack([batch["history_frame_0_valid_mask"]], dim=1)
