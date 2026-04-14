@@ -1,535 +1,215 @@
-"""Focused tests for token-level gene-context baselines and supervision masks."""
+"""Worm mainline tests for the active Large2025 lineage dynamics path."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
-import gzip
-
+import numpy as np
 import pandas as pd
 import pytest
 import torch
-from scipy import io as scipy_io
 from scipy import sparse
+from torch.utils.data import DataLoader
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.branching_flows.gene_context import (  # noqa: E402
-    GeneContextModel,
-    GenePatchVideoModel,
-    JiTGenePatchModel,
-    LineageWholeEmbryoModel,
-    SingleCellGeneTimeModel,
+from examples.whole_organism_ar.train_large2025_lineage_stage1 import (  # noqa: E402
+    compute_loss,
+    prepare_batch,
+    run_epoch,
 )
+from src.branching_flows.gene_context import LineageWholeEmbryoModel  # noqa: E402
+from src.data.builder.expression_loader import ExpressionLoader  # noqa: E402
 from src.data.gene_context_dataset import (  # noqa: E402
-    GeneContextDataset,
     Large2025WholeEmbryoDataset,
-    PatchSetDataset,
-    TemporalPatchSetDataset,
-    collate_gene_context,
-    collate_history_patch_set,
     collate_large2025_whole_embryo,
-    collate_patch_set,
 )
 
 
-def test_single_cell_model_has_no_cross_token_information_flow():
-    """Single-cell baseline should be invariant to changes in other tokens."""
-    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
-    if not h5ad_path.exists():
-        pytest.skip("Processed gene-context dataset not available")
+@pytest.fixture
+def synthetic_large2025(monkeypatch):
+    gene_dim = 8
+    cells_per_bin = 4
+    time_bins = [0.0, 40.0, 80.0]
+    total_cells = cells_per_bin * len(time_bins)
 
-    dataset = GeneContextDataset(
-        h5ad_path=h5ad_path,
-        n_hvg=32,
-        context_size=8,
-        global_context_size=2,
-        samples_per_pair=2,
-        split="train",
-        sampling_strategy="spatial_anchor",
-        supervision_mode="anchor_only",
-        random_seed=0,
-    )
-    if len(dataset) < 2:
-        pytest.skip("Insufficient dataset samples for cross-token sanity check")
-
-    item0 = dataset[0]
-    item1 = dataset[1]
-    batch = collate_gene_context([item0, item1])
-    perturbed = {k: v.clone() for k, v in batch.items()}
-
-    mask0 = (~batch["anchor_mask"][0]) & batch["valid_mask"][0]
-    mask1 = (~batch["anchor_mask"][1]) & batch["valid_mask"][1]
-    n_replace = min(int(mask0.sum().item()), int(mask1.sum().item()))
-    if n_replace == 0:
-        pytest.skip("No non-anchor tokens available for perturbation")
-
-    idx0 = torch.nonzero(mask0, as_tuple=False).squeeze(-1)[:n_replace]
-    idx1 = torch.nonzero(mask1, as_tuple=False).squeeze(-1)[:n_replace]
-    for key in [
-        "genes",
-        "token_times",
-        "valid_mask",
-        "context_role",
-        "relative_position",
-    ]:
-        perturbed[key][0, idx0] = batch[key][1, idx1]
-
-    single = SingleCellGeneTimeModel(gene_dim=dataset.gene_dim, d_model=64, n_layers=2)
-    multi = GeneContextModel(
-        gene_dim=dataset.gene_dim,
-        d_model=64,
-        n_heads=4,
-        n_layers=2,
-        head_dim=16,
-    )
-    single.eval()
-    multi.eval()
-
-    with torch.no_grad():
-        single_before = single(
-            genes=batch["genes"],
-            time=batch["time"],
-            future_time=batch["future_time"],
-            token_times=batch["token_times"],
-            valid_mask=batch["valid_mask"],
-            relative_position=batch["relative_position"],
-        )
-        single_after = single(
-            genes=perturbed["genes"],
-            time=perturbed["time"],
-            future_time=perturbed["future_time"],
-            token_times=perturbed["token_times"],
-            valid_mask=perturbed["valid_mask"],
-            relative_position=perturbed["relative_position"],
-        )
-        multi_before = multi(
-            genes=batch["genes"],
-            time=batch["time"],
-            future_time=batch["future_time"],
-            token_times=batch["token_times"],
-            valid_mask=batch["valid_mask"],
-            context_role=batch["context_role"],
-            relative_position=batch["relative_position"],
-        )
-        multi_after = multi(
-            genes=perturbed["genes"],
-            time=perturbed["time"],
-            future_time=perturbed["future_time"],
-            token_times=perturbed["token_times"],
-            valid_mask=perturbed["valid_mask"],
-            context_role=perturbed["context_role"],
-            relative_position=perturbed["relative_position"],
-        )
-
-    anchor_idx = torch.nonzero(batch["anchor_mask"][0], as_tuple=False).squeeze(-1)
-    assert anchor_idx.numel() == 1
-    anchor_idx = int(anchor_idx.item())
-
-    assert torch.equal(
-        single_before.gene_delta[0, anchor_idx],
-        single_after.gene_delta[0, anchor_idx],
-    )
-    assert torch.equal(
-        single_before.split_logits[0, anchor_idx],
-        single_after.split_logits[0, anchor_idx],
-    )
-    assert torch.equal(
-        single_before.del_logits[0, anchor_idx],
-        single_after.del_logits[0, anchor_idx],
-    )
-
-    multi_gene_changed = not torch.equal(
-        multi_before.gene_delta[0, anchor_idx],
-        multi_after.gene_delta[0, anchor_idx],
-    )
-    multi_split_changed = not torch.equal(
-        multi_before.split_logits[0, anchor_idx],
-        multi_after.split_logits[0, anchor_idx],
-    )
-    multi_del_changed = not torch.equal(
-        multi_before.del_logits[0, anchor_idx],
-        multi_after.del_logits[0, anchor_idx],
-    )
-    assert multi_gene_changed or multi_split_changed or multi_del_changed
-
-
-def test_matched_local_patch_supervision_masks_only_matched_local_tokens():
-    """Matched local patch supervision should exclude unmatched locals and globals."""
-    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
-    if not h5ad_path.exists():
-        pytest.skip("Processed gene-context dataset not available")
-
-    dataset = GeneContextDataset(
-        h5ad_path=h5ad_path,
-        n_hvg=32,
-        context_size=16,
-        global_context_size=4,
-        samples_per_pair=2,
-        split="train",
-        sampling_strategy="spatial_anchor",
-        supervision_mode="matched_local_patch",
-        random_seed=0,
-    )
-    if len(dataset) == 0:
-        pytest.skip("No dataset samples available")
-
-    item = None
-    for i in range(min(len(dataset), 32)):
-        candidate = dataset[i]
-        context_role = candidate["context_role"]
-        match_type = candidate["match_type"]
-        local_positions = torch.nonzero(context_role == 2, as_tuple=False).squeeze(-1)
-        if local_positions.numel() == 0:
-            continue
-        matched_local = local_positions[
-            (match_type[local_positions] != GeneContextDataset.MATCH_UNMATCHED)
-            & (match_type[local_positions] != GeneContextDataset.MATCH_UNSUPERVISED)
-        ]
-        if matched_local.numel() > 0:
-            item = candidate
-            break
-
-    if item is None:
-        pytest.skip("No matched local patch sample found")
-
-    supervision_mask = item["supervision_mask"]
-    context_role = item["context_role"]
-    match_type = item["match_type"]
-    anchor_mask = item["anchor_mask"]
-
-    assert anchor_mask.sum().item() == 1
-    assert supervision_mask[anchor_mask].all()
-
-    global_positions = torch.nonzero(context_role == 3, as_tuple=False).squeeze(-1)
-    if global_positions.numel() > 0:
-        assert not supervision_mask[global_positions].any()
-
-    local_positions = torch.nonzero(context_role == 2, as_tuple=False).squeeze(-1)
-    unmatched_local = local_positions[
-        (match_type[local_positions] == GeneContextDataset.MATCH_UNMATCHED)
-        | (match_type[local_positions] == GeneContextDataset.MATCH_UNSUPERVISED)
-    ]
-    if unmatched_local.numel() > 0:
-        assert not supervision_mask[unmatched_local].any()
-
-    matched_local = local_positions[
-        (match_type[local_positions] != GeneContextDataset.MATCH_UNMATCHED)
-        & (match_type[local_positions] != GeneContextDataset.MATCH_UNSUPERVISED)
-    ]
-    assert matched_local.numel() > 0
-    assert supervision_mask[matched_local].all()
-    assert not torch.any(match_type[matched_local] == GeneContextDataset.MATCH_UNSUPERVISED)
-
-
-def test_jit_gene_patch_model_forward():
-    """JiT-style gene patch model should directly predict future clean gene tokens."""
-    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
-    if not h5ad_path.exists():
-        pytest.skip("Processed gene-context dataset not available")
-
-    dataset = PatchSetDataset(
-        h5ad_path=h5ad_path,
-        n_hvg=32,
-        context_size=8,
-        global_context_size=0,
-        dt_minutes=40.0,
-        samples_per_pair=2,
-        split="train",
-        sampling_strategy="spatial_anchor",
-        random_seed=0,
-    )
-    if len(dataset) < 2:
-        pytest.skip("Insufficient patch-set samples")
-
-    batch = collate_patch_set([dataset[0], dataset[1]])
-    model = JiTGenePatchModel(
-        gene_dim=dataset.gene_dim,
-        context_size=8,
-        d_model=64,
-        n_heads=4,
-        n_layers=2,
-        head_dim=16,
-    )
-    out = model(
-        genes=batch["current_genes"],
-        time=batch["current_time"],
-        future_time=batch["future_time"],
-        token_times=batch["current_token_times"],
-        valid_mask=batch["current_valid_mask"],
-        context_role=batch["current_context_role"],
-        relative_position=batch["current_relative_position"],
-    )
-    assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
-    assert out.pred_future_token_states.shape == (2, 8, 64)
-    assert out.pred_mean_gene.shape == (2, dataset.gene_dim)
-
-
-def test_temporal_jit_gene_patch_model_forward():
-    """JiT-style gene patch model should accept multiple historical patches as one long sequence."""
-    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
-    if not h5ad_path.exists():
-        pytest.skip("Processed gene-context dataset not available")
-
-    dataset = TemporalPatchSetDataset(
-        h5ad_path=h5ad_path,
-        n_hvg=32,
-        context_size=8,
-        global_context_size=0,
-        dt_minutes=40.0,
-        samples_per_pair=2,
-        split="train",
-        sampling_strategy="spatial_anchor",
-        random_seed=0,
-        history_patches=3,
-    )
-    if len(dataset) < 2:
-        pytest.skip("Insufficient temporal patch-set samples")
-
-    batch = collate_history_patch_set([dataset[0], dataset[1]])
-    history_genes = torch.stack([batch[f"history_patch_{i}_genes"] for i in range(3)], dim=1)
-    history_context_role = torch.stack([batch[f"history_patch_{i}_context_role"] for i in range(3)], dim=1)
-    history_relative_position = torch.stack([batch[f"history_patch_{i}_relative_position"] for i in range(3)], dim=1)
-    history_token_times = torch.stack([batch[f"history_patch_{i}_token_times"] for i in range(3)], dim=1)
-    history_valid_mask = torch.stack([batch[f"history_patch_{i}_valid_mask"] for i in range(3)], dim=1)
-
-    model = JiTGenePatchModel(
-        gene_dim=dataset.gene_dim,
-        context_size=8,
-        d_model=64,
-        n_heads=4,
-        n_layers=2,
-        head_dim=16,
-    )
-    out = model(
-        genes=history_genes.flatten(1, 2),
-        time=batch["history_patch_2_time"],
-        future_time=batch["future_time"],
-        token_times=history_token_times.flatten(1, 2),
-        valid_mask=history_valid_mask.flatten(1, 2),
-        context_role=history_context_role.flatten(1, 2),
-        relative_position=history_relative_position.flatten(1, 2),
-    )
-    assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
-    assert out.pred_future_token_states.shape == (2, 8, 64)
-
-
-def test_local_only_spatial_anchor_patch_has_no_global_tokens():
-    """Local-only patch composition should never mix in global background cells."""
-    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
-    if not h5ad_path.exists():
-        pytest.skip("Processed gene-context dataset not available")
-
-    dataset = PatchSetDataset(
-        h5ad_path=h5ad_path,
-        n_hvg=32,
-        context_size=12,
-        global_context_size=4,
-        dt_minutes=40.0,
-        samples_per_pair=2,
-        split="train",
-        sampling_strategy="spatial_anchor",
-        random_seed=0,
-        patch_composition="local_only",
-    )
-    if len(dataset) == 0:
-        pytest.skip("No patch-set samples available")
-
-    item = dataset[0]
-    assert not torch.any(item["current_context_role"] == 3)
-    assert not torch.any(item["future_context_role"] == 3)
-    assert torch.all(item["current_relative_position"][:, 4] == 1.0)
-    assert torch.all(item["future_relative_position"][:, 4] == 1.0)
-    assert item["current_anchor_mask"].sum().item() == 1
-    assert item["future_anchor_mask"].sum().item() == 1
-
-
-def test_gene_patch_video_model_forward():
-    """GenePatchVideoModel should predict a next-frame future patch from history frames."""
-    h5ad_path = Path("dataset/processed/nema_extended_large2025.h5ad")
-    if not h5ad_path.exists():
-        pytest.skip("Processed gene-context dataset not available")
-
-    dataset = TemporalPatchSetDataset(
-        h5ad_path=h5ad_path,
-        n_hvg=32,
-        context_size=8,
-        global_context_size=0,
-        dt_minutes=40.0,
-        samples_per_pair=2,
-        split="train",
-        sampling_strategy="spatial_anchor",
-        random_seed=0,
-        history_patches=3,
-        patch_composition="local_only",
-    )
-    if len(dataset) < 2:
-        pytest.skip("Insufficient temporal patch-set samples")
-
-    batch = collate_history_patch_set([dataset[0], dataset[1]])
-
-    def _stack(field: str) -> torch.Tensor:
-        tensors = [batch[f"history_patch_{i}_{field}"] for i in range(3)]
-        max_len = max(t.shape[1] for t in tensors)
-        padded = []
-        for tensor in tensors:
-            pad_len = max_len - tensor.shape[1]
-            if pad_len == 0:
-                padded.append(tensor)
-                continue
-            if tensor.dim() == 3:
-                pad = tensor.new_zeros(tensor.shape[0], pad_len, tensor.shape[2])
-            else:
-                pad = tensor.new_zeros(tensor.shape[0], pad_len)
-            padded.append(torch.cat([tensor, pad], dim=1))
-        return torch.stack(padded, dim=1)
-
-    model = GenePatchVideoModel(
-        gene_dim=dataset.gene_dim,
-        context_size=8,
-        history_frames=3,
-        d_model=64,
-        n_heads=4,
-        n_spatial_layers=1,
-        n_temporal_layers=2,
-        n_decoder_layers=1,
-        head_dim=16,
-    )
-    out = model(
-        genes=_stack("genes"),
-        time=batch["history_patch_2_time"],
-        future_time=batch["future_time"],
-        token_times=_stack("token_times"),
-        valid_mask=_stack("valid_mask"),
-        context_role=None,
-        relative_position=None,
-    )
-    assert out.pred_future_genes.shape == (2, 8, dataset.gene_dim)
-    assert out.pred_future_token_states.shape == (2, 8, 64)
-    assert out.pred_future_frame_latent.shape == (2, 64)
-    assert out.pred_mean_gene.shape == (2, dataset.gene_dim)
-
-
-
-def _write_toy_large2025(root: Path) -> None:
-    large_dir = root / "large2025"
-    large_dir.mkdir(parents=True, exist_ok=True)
-
+    expr = np.arange(total_cells * gene_dim, dtype=np.float32).reshape(total_cells, gene_dim) + 1.0
+    expr = sparse.csr_matrix(expr)
     cell_rows = []
-    expr_rows = []
-    for i in range(6):
-        time = 100.0 if i < 3 else 140.0
-        lineage = ["ABal", "ABar", "MSaa", "ABal", "ABar", "MSaa"][i]
-        cell_type = ["Pharynx", "Neuron", "Hypodermis", "Pharynx", "Neuron", "Hypodermis"][i]
-        packer = ["Pharynx", "All_neuron", "Hypodermis", "Pharynx", "All_neuron", "Hypodermis"][i]
-        expr_rows.append([1 + i, 2 + i, 3 + i, 4 + i])
-        cell_rows.append({
-            "cell_type": cell_type,
-            "lineage_broad": lineage,
-            "species": "C.elegans",
-            "n.umi": 1000 + i,
-            "barcode": f"bc{i}",
-            "packer_cell.type": packer,
-            "packer_cell.subtype": packer,
-            "packer_plot.cell.type": packer,
-            "packer_lineage": lineage,
-            "smoothed.embryo.time": time,
-            "embryo.time.bin": "100_140" if time < 140 else "140_180",
-            "germline_pseudotime": -1,
-            "time.point": "synthetic",
-            "batch": "batch0",
-            "genotype": "wt",
-            "filter": "none",
-            "mt.frac": 0.01,
-            "cel_lineage_broad": lineage,
-            "cbr_lineage_broad": lineage,
-            "cel_lineage_complete": lineage,
-            "cbr_lineage_complete": lineage,
-            "lineage_complete": lineage,
-        })
+    lineages = [
+        "ABa",
+        "ABp",
+        "MSa",
+        "E",
+        "ABal",
+        "ABpl",
+        "MSap",
+        "C",
+        "ABala",
+        "ABpla",
+        "MSapp",
+        "D",
+    ]
+    for idx, time_bin in enumerate(time_bins):
+        for j in range(cells_per_bin):
+            cell_idx = idx * cells_per_bin + j
+            cell_rows.append(
+                {
+                    "barcode": f"cell_{cell_idx}",
+                    "smoothed_embryo_time": time_bin,
+                    "cell_type": f"ctype_{j % 2}",
+                    "packer_cell_type": f"packer_{j % 2}",
+                    "lineage_complete": lineages[cell_idx],
+                    "species": "C.elegans",
+                }
+            )
+    cell_df = pd.DataFrame(cell_rows)
+    gene_df = pd.DataFrame({"gene_short_name": [f"gene_{i}" for i in range(gene_dim)]})
 
-    genes = pd.DataFrame(
-        {
-            "elegans_gene_short_name": ["g0", "g1", "g2", "g3"],
-            "elegans_gene_long_name": ["g0", "g1", "g2", "g3"],
-            "elegans_id": ["WBGene0", "WBGene1", "WBGene2", "WBGene3"],
-            "briggsae_id": ["CBG0", "CBG1", "CBG2", "CBG3"],
-            "briggsae_gene_short_name": ["cg0", "cg1", "cg2", "cg3"],
-            "briggsae_gene_long_name": ["cg0", "cg1", "cg2", "cg3"],
-            "gene.type": ["common", "common", "common", "common"],
-        }
-    )
-    cells = pd.DataFrame(cell_rows)
-    matrix = sparse.csr_matrix(expr_rows, dtype=float).T
+    def _fake_load_large2025(self, species_filter="C.elegans", min_umi=0):
+        return expr.copy(), cell_df.copy(), gene_df.copy()
 
-    with gzip.open(large_dir / "GSE292756_cell_annotations.csv.gz", "wt") as f:
-        cells.to_csv(f, index=False)
-    with gzip.open(large_dir / "GSE292756_gene_annotations.csv.gz", "wt") as f:
-        genes.to_csv(f, index=False)
-    with gzip.open(large_dir / "GSE292756_expression_matrix.mtx.gz", "wb") as f:
-        scipy_io.mmwrite(f, matrix)
+    monkeypatch.setattr(ExpressionLoader, "load_large2025", _fake_load_large2025)
+    return {
+        "gene_dim": gene_dim,
+        "token_budget": cells_per_bin,
+    }
 
 
-def test_large2025_whole_embryo_dataset_and_model(tmp_path: Path):
-    """Stage 1 raw Large2025 dataset and lineage-first model should run end-to-end."""
-    _write_toy_large2025(tmp_path)
-
-    dataset = Large2025WholeEmbryoDataset(
-        data_dir=tmp_path,
-        n_hvg=4,
+def build_dataset(split: str = "all") -> Large2025WholeEmbryoDataset:
+    return Large2025WholeEmbryoDataset(
+        data_dir="dataset/raw",
+        n_hvg=8,
         token_budget=4,
         history_frames=1,
         dt_minutes=40.0,
         time_bin_minutes=40.0,
         min_cells_per_snapshot=2,
-        split="all",
-        val_fraction=0.5,
+        split=split,
+        val_fraction=0.34,
         random_seed=0,
+        species_filter="C.elegans",
+        min_umi=0,
     )
-    assert len(dataset) == 1
 
-    batch = collate_large2025_whole_embryo([dataset[0]])
-    assert batch['history_frame_0_region_ids'].shape == (1, 4)
-    assert batch['future_region_ids'].shape == (1, 4)
-    assert batch['future_founder_ids'].shape == (1, 4)
-    history_genes = torch.stack([batch["history_frame_0_genes"]], dim=1)
-    history_token_times = torch.stack([batch["history_frame_0_token_times"]], dim=1)
-    history_valid_mask = torch.stack([batch["history_frame_0_valid_mask"]], dim=1)
-    history_lineage_binary = torch.stack([batch["history_frame_0_lineage_binary"]], dim=1)
-    history_founder_ids = torch.stack([batch["history_frame_0_founder_ids"]], dim=1)
-    history_lineage_depth = torch.stack([batch["history_frame_0_lineage_depth"]], dim=1)
-    history_lineage_valid = torch.stack([batch["history_frame_0_lineage_valid"]], dim=1)
-    history_token_rank = torch.stack([batch["history_frame_0_token_rank"]], dim=1)
+
+def test_large2025_dataset_and_collate(synthetic_large2025):
+    dataset = build_dataset(split="all")
+    assert len(dataset) == 2
+
+    item = dataset[0]
+    required = {
+        "history_frames",
+        "history_frame_0_genes",
+        "history_frame_0_valid_mask",
+        "history_frame_0_founder_ids",
+        "history_frame_0_region_ids",
+        "future_genes",
+        "future_valid_mask",
+        "future_founder_ids",
+        "future_region_ids",
+        "future_mean_gene",
+    }
+    assert required.issubset(item.keys())
+    assert item["history_frame_0_genes"].shape == (4, synthetic_large2025["gene_dim"])
+    assert item["future_genes"].shape == (4, synthetic_large2025["gene_dim"])
+
+    batch = collate_large2025_whole_embryo([dataset[0], dataset[1]])
+    assert batch["history_frame_0_genes"].shape == (2, 4, synthetic_large2025["gene_dim"])
+    assert batch["future_genes"].shape == (2, 4, synthetic_large2025["gene_dim"])
+    assert batch["future_mean_gene"].shape == (2, synthetic_large2025["gene_dim"])
+    assert torch.all(batch["history_frame_0_valid_mask"].sum(dim=1) >= 2)
+
+
+def test_lineage_whole_embryo_model_forward(synthetic_large2025):
+    dataset = build_dataset(split="all")
+    batch = collate_large2025_whole_embryo([dataset[0], dataset[1]])
+    batch = prepare_batch(batch, "cpu")
 
     model = LineageWholeEmbryoModel(
         gene_dim=dataset.gene_dim,
-        context_size=4,
-        history_frames=1,
-        lineage_binary_dim=history_lineage_binary.shape[-1],
+        context_size=dataset.token_budget,
+        history_frames=dataset.history_frames,
+        lineage_binary_dim=dataset.lineage_binary.shape[1],
         founder_vocab_size=len(dataset.FOUNDER_VOCAB),
-        d_model=32,
+        d_model=64,
         n_heads=4,
         n_spatial_layers=1,
         n_temporal_layers=1,
         n_decoder_layers=1,
-        head_dim=8,
+        head_dim=16,
     )
     out = model(
-        genes=history_genes,
-        time=batch["history_frame_0_time"],
+        genes=batch["history_genes"],
+        time=batch["history_time"],
         future_time=batch["future_time"],
-        token_times=history_token_times,
-        valid_mask=history_valid_mask,
-        lineage_binary=history_lineage_binary,
-        founder_ids=history_founder_ids,
-        lineage_depth=history_lineage_depth,
-        lineage_valid=history_lineage_valid,
-        token_rank=history_token_rank,
+        token_times=batch["history_token_times"],
+        valid_mask=batch["history_valid_mask"],
+        lineage_binary=batch["history_lineage_binary"],
+        founder_ids=batch["history_founder_ids"],
+        lineage_depth=batch["history_lineage_depth"],
+        lineage_valid=batch["history_lineage_valid"],
+        token_rank=batch["history_token_rank"],
     )
-    assert out.pred_future_genes.shape == (1, 4, dataset.gene_dim)
-    assert out.pred_future_token_states.shape == (1, 4, 32)
-    assert out.pred_future_frame_latent.shape == (1, 32)
-    assert out.pred_mean_gene.shape == (1, dataset.gene_dim)
-    assert out.pred_history_genes.shape == (1, 1, 4, dataset.gene_dim)
+
+    assert out.pred_future_genes.shape == batch["future_genes"].shape
+    assert out.pred_history_genes.shape == batch["history_genes"].shape
+    assert out.pred_future_token_states.shape[:2] == batch["future_genes"].shape[:2]
+    assert out.pred_mean_gene.shape == batch["future_mean_gene"].shape
+
+
+def test_stage1_dynamics_training_helpers(synthetic_large2025):
+    dataset = build_dataset(split="all")
+    loader = DataLoader(
+        [dataset[0], dataset[1]],
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collate_large2025_whole_embryo,
+    )
+    batch = next(iter(loader))
+    batch = prepare_batch(batch, "cpu")
+
+    model = LineageWholeEmbryoModel(
+        gene_dim=dataset.gene_dim,
+        context_size=dataset.token_budget,
+        history_frames=dataset.history_frames,
+        lineage_binary_dim=dataset.lineage_binary.shape[1],
+        founder_vocab_size=len(dataset.FOUNDER_VOCAB),
+        d_model=64,
+        n_heads=4,
+        n_spatial_layers=1,
+        n_temporal_layers=1,
+        n_decoder_layers=1,
+        head_dim=16,
+    )
+    args = SimpleNamespace(
+        device="cpu",
+        mask_ratio=0.0,
+        masked_gene_weight=0.0,
+        gene_set_weight=1.0,
+        mean_gene_weight=0.2,
+        gene_sinkhorn_blur=0.1,
+    )
+
+    loss, metrics = compute_loss(model, batch, args, apply_mask=True)
+    assert loss.numel() == 1
+    assert metrics["masked_gene"] == 0.0
+    assert metrics["gene_set"] > 0.0
+    assert metrics["mean_gene"] >= 0.0
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    train_metrics = run_epoch(model, loader, args, optimizer=optimizer)
+    eval_metrics = run_epoch(model, loader, args, optimizer=None)
+    for result in (train_metrics, eval_metrics):
+        assert set(result) == {
+            "total",
+            "masked_gene",
+            "gene_set",
+            "mean_gene",
+            "persistence_mean_gene",
+        }
+        assert result["masked_gene"] == 0.0
+        assert result["gene_set"] > 0.0
