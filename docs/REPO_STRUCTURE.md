@@ -16,7 +16,7 @@ The active code path is intentionally small.
 ### `src/branching_flows/`
 Only these modules are part of the current mainline:
 - `gene_context.py`: narrow public export for the active worm model.
-- `gene_context_patch.py`: implementation of `LineageWholeEmbryoModel` and shared transformer-based token dynamics.
+- `lineage_backbone.py`: implementation of the active lineage-first temporal backbone and its future refinement head.
 - `gene_context_shared.py`: active output dataclasses.
 - `emergent_loss.py`: Sinkhorn / OT-style losses used by the worm benchmark and training path.
 - `autoregressive_model.py`: retained only for `TransformerBlockAutoregressive`, which is still used by the active model.

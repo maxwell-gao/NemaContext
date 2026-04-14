@@ -22,7 +22,7 @@ This is the path to read and run first:
 
 Current active source modules are intentionally narrow:
 - `src/branching_flows/gene_context.py`
-- `src/branching_flows/gene_context_patch.py`
+- `src/branching_flows/lineage_backbone.py`
 - `src/branching_flows/gene_context_shared.py`
 - `src/branching_flows/emergent_loss.py`
 - `src/data/gene_context_dataset.py`

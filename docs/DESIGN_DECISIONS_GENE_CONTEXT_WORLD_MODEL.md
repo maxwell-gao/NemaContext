@@ -674,7 +674,7 @@ That is a cleaner problem than:
 
 This led to the implementation of:
 
-- [JiTGenePatchModel](/mnt/public/max/NemaContext/src/branching_flows/gene_context_patch.py)
+- historical JiT gene patch implementation formerly in `src/branching_flows/gene_context_patch.py` (removed from active `src`)
 - [train_jit_gene_patch.py](/mnt/public/max/NemaContext/examples/legacy/whole_organism_ar/train_jit_gene_patch.py)
 
 The current design is intentionally simple:

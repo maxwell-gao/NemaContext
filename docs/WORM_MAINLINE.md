@@ -80,7 +80,7 @@ Current training path:
 
 Current backbone:
 - `LineageWholeEmbryoModel`
-- implemented in `src/branching_flows/gene_context_patch.py`
+- implemented in `src/branching_flows/lineage_backbone.py`
 - exported through `src/branching_flows/gene_context.py`
 
 ### Training Objective
